@@ -1,0 +1,22 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "ES2020",
+    "moduleResolution": "Bundler",
+    "lib": [
+      "DOM",
+      "ES2020"
+    ],
+    "types": ["node"],
+    "rootDir": "src",
+    "strict": false,
+    "skipLibCheck": true,
+    "noEmitOnError": false,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": false
+  },
+  "include": [
+    "src/main.ts",
+    "src/dependencies/assets/**/*.ts"
+  ]
+}

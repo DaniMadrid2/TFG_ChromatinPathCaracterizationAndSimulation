@@ -1,0 +1,146 @@
+@charset "UTF-8";
+/* Firefox */
+html {
+  scrollbar-width: thin;
+  scrollbar-color: #566db8 #5d6a65;
+  scroll-padding-top: 6rem; }
+
+html, body {
+  margin: 0;
+  background-attachment: scroll;
+  overflow: unset;
+  max-width: 100vw;
+  overflow-x: hidden; }
+
+nav {
+  overflow: visible; }
+
+.content {
+  position: relative;
+  z-index: 1; }
+
+canvas {
+  height: 100%;
+  width: min-content;
+  border: 1px solid;
+  border-bottom-width: 1px;
+  border-color: var(--mix-border-white);
+  pointer-events: all; }
+
+#article-list-bg {
+  background: linear-gradient(to top left, rgba(0, 0, 0, 0) 0%, rgba(0, 0, 0, 0) calc(60% - 0.8px), var(--visual-navcolor) 60%, var(--visual-navcolor) calc(60% + 5.8px), rgba(0, 0, 0, 0) calc(60% + 5.9px), rgba(0, 0, 0, 0) calc(76% - 0.8px), var(--visual-navcolor) 76%, var(--visual-navcolor) calc(76% + 4.6px), rgba(0, 0, 0, 0) calc(76% + 4.7px), rgba(0, 0, 0, 0) calc(88% - 0.8px), var(--visual-navcolor) 88%, var(--visual-navcolor) calc(88% + 3.6px), rgba(0, 0, 0, 0) calc(88% + 3.7px), rgba(0, 0, 0, 0) 100%); }
+
+#ArticleListButton {
+  top: 85px;
+  margin-top: 15px;
+  z-index: 300;
+  transition: all cubic-bezier(0.075, 0.82, 0.165, 1) 200ms;
+  padding-bottom: 38px; }
+  #ArticleListButton > h3 {
+    display: none; }
+
+#article-list-bg {
+  cursor: pointer; }
+
+#ArticleListButton.list-active {
+  left: 6px;
+  top: 95px;
+  background-color: var(--bgcolor);
+  border: var(--visual-navcolor) 2px;
+  border-style: groove;
+  min-width: 300px; }
+  #ArticleListButton.list-active > h3 {
+    display: block; }
+
+#ArticleListButton h3 {
+  padding-top: 0.1em;
+  width: 100%;
+  border-bottom: var(--visual-navcolor) 2px groove;
+  text-align: center;
+  color: var(--dnti-h3-color); }
+
+#article-list {
+  max-height: 86vh;
+  overflow-y: scroll;
+  scrollbar-width: 0;
+  scroll-behavior: smooth;
+  scrollbar-color: transparent transparent; }
+
+#article-list > ul {
+  list-style: none;
+  padding-left: 0;
+  line-height: 1.6em;
+  color: var(--text-color); }
+
+#article-list > ul > li {
+  margin-left: 0.23em; }
+  #article-list > ul > li > ul > li {
+    margin-left: 0.42em; }
+    #article-list > ul > li > ul > li > ul > li {
+      margin-left: 0.72em; }
+      #article-list > ul > li > ul > li > ul > li > ul > li {
+        margin-left: 0.72em; }
+
+#article-list > ul > li > ul > li > ul > li > ul {
+  width: fit-content; }
+  #article-list > ul > li > ul > li > ul > li > ul li, #article-list > ul > li > ul > li > ul > li > ul li > a {
+    line-height: 1.8em; }
+    #article-list > ul > li > ul > li > ul > li > ul li:first-child, #article-list > ul > li > ul > li > ul > li > ul li > a:first-child {
+      margin-top: -0.2em; }
+  #article-list > ul > li > ul > li > ul > li > ul li {
+    width: auto;
+    border-bottom: var(--visual-navcolor) 1px groove; }
+    #article-list > ul > li > ul > li > ul > li > ul li:last-child {
+      border-bottom: none; }
+    #article-list > ul > li > ul > li > ul > li > ul li a:hover {
+      cursor: pointer;
+      text-decoration: underline; }
+
+.parallax {
+  background-color: #e3d9d8; }
+
+#tit {
+  font-size: 2.3rem;
+  text-shadow: #354646 2px 2px; }
+
+[data-id], .dnti-inside, .dnti-outside {
+  pointer-events: none; }
+
+.dnti-outside > {
+  pointer-events: all; }
+
+main {
+  font-family: "Noto Sans Math", sans-serif;
+  font-weight: 400;
+  font-style: normal; }
+
+wave {
+  position: absolute;
+  top: 30vh;
+  /* Ajusta este valor para cambiar la altura de la onda */
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-color: #FF6F61;
+  /* Color de fondo superior */
+  z-index: 0; }
+
+.wave svg {
+  width: 100%;
+  height: auto;
+  padding-top: 0;
+  z-index: 0; }
+
+.fill-section {
+  width: 100%;
+  position: absolute;
+  left: 0;
+  z-index: 0; }
+
+/* Ajuste de tamaño de texto específico para pantallas pequeñas */
+@media (max-width: 800px) {
+  .prose-blog a {
+    font-size: clamp(0.007rem, 2em, 1rem) !important;
+    /* Ajuste para tamaños aún más pequeños */
+    line-height: 1.2;
+    max-width: 45%; } }

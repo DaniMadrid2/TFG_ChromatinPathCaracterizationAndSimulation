@@ -1,0 +1,39 @@
+{
+  "scopeName": "source.ts-snippet",
+  "name": "TS Snippet",
+  "patterns": [
+    {
+      "name": "comment.line.snippet-branch.ts-snippet",
+      "match": "^\\s*//\\$\\d+\\s*-\\s*(?:Begin|End|END)\\b.*$"
+    },
+    {
+      "begin": "\\$\\[",
+      "beginCaptures": {
+        "0": {
+          "name": "punctuation.definition.snippet-placeholder.begin.ts-snippet"
+        }
+      },
+      "end": "\\]\\$",
+      "endCaptures": {
+        "0": {
+          "name": "punctuation.definition.snippet-placeholder.end.ts-snippet"
+        }
+      },
+      "name": "meta.snippet-placeholder.ts-snippet",
+      "patterns": [
+        {
+          "name": "punctuation.separator.snippet-placeholder.ts-snippet",
+          "match": ","
+        },
+        {
+          "name": "variable.parameter.snippet-placeholder.option.ts-snippet",
+          "match": "[^,\\]]+"
+        }
+      ]
+    },
+    {
+      "include": "source.ts"
+    }
+  ],
+  "uuid": "5b1f95eb-8527-4ae6-9569-b2cc18e4bb3f"
+}

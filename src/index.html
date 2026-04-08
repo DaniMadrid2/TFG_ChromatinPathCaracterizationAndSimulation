@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="es" class=" dark dark:[--scroll-mt:9.875rem] bg-gradient-to-r from-primary-light  to-gray-500 lg:[--scroll-mt:6.3125rem] js-focus-visible" data-js-focus-visible="">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Intro a la reología</title>
+    <script>
+        MathJax = {
+            tex: {
+                inlineMath: [['$', '$'], ['\\(', '\\)']]
+            },
+            options: {
+                enableMenu: false
+            }
+
+        };
+        window.blogDirName=".";
+        window.dntiDir=".";
+    </script>
+    <link href="./dependencies/static/mathjax/text2svg.js" rel="preload" as="script">
+    <script async src="./dependencies/static/mathjax/text2svg.js" type="text/javascript">
+        // MathJax.Hub.Register.StartupHook("TeX color Ready", function() {
+        //     var color = MathJax.Extension["TeX/color"];
+        //     color.colors["col1"] = color.getColor('RGB','10,220,70');
+        // });
+    </script>
+    <style>
+      mjx-container > svg{
+        display: inline !important;
+      }
+    </style>
+    <script type="importmap">
+      {
+        "imports": {
+          "/Code/": "./dependencies/Code/",
+          "/DNTI_Templates/": "./dependencies/DNTI_Templates/",
+          "/ExternalCode/": "./dependencies/ExternalCode/"
+        }
+      }
+    </script>
+    <script defer type="module" src="./main.js"></script>
+    <script defer type="module" src="./generated/generatedParser.js"></script>
+    <script defer type="module" src="./generated/generatedParserC2.js"></script>
+    <script defer type="module" src="./generated/generatedParserC3.js"></script>
+    <link rel="stylesheet" href="./dependencies/static/main.css">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="stylesheet" href="./dependencies/static/styles.css">
+</head>
+<body class="bg-grupos-fondos-uno text-primary dark:bg-primary-darker">
+
+<!--!.............. Invisible Wave ..............-->
+<div class="wave invisible hidden h-0">
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 200">
+      <!--fill="#f9ffff" filldark="#242629"-->
+      <path fill="https://images.unsplash.com/photo-1598449356475-b9f71db7d847?q=80&w=2070&auto=format&fit=crop&ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D" transform="scale(1,0.5)" fill-opacity="1" d="M0,96L12.6,90.7C25.3,85,51,75,76,90.7C101.1,107,126,149,152,144C176.8,139,202,85,227,101.3C252.6,117,278,203,303,202.7C328.4,203,354,117,379,106.7C404.2,96,429,160,455,170.7C480,181,505,139,531,144C555.8,149,581,203,606,218.7C631.6,235,657,213,682,224C707.4,235,733,277,758,261.3C783.2,245,808,171,834,144C858.9,117,884,139,909,160C934.7,181,960,203,985,213.3C1010.5,224,1036,224,1061,186.7C1086.3,149,1112,75,1137,53.3C1162.1,32,1187,64,1213,90.7C1237.9,117,1263,139,1288,133.3C1313.7,128,1339,96,1364,80C1389.5,64,1415,64,1427,64L1440,64L1440,320L1427.4,320C1414.7,320,1389,320,1364,320C1338.9,320,1314,320,1288,320C1263.2,320,1238,320,1213,320C1187.4,320,1162,320,1137,320C1111.6,320,1086,320,1061,320C1035.8,320,1011,320,985,320C960,320,935,320,909,320C884.2,320,859,320,834,320C808.4,320,783,320,758,320C732.6,320,707,320,682,320C656.8,320,632,320,606,320C581.1,320,556,320,531,320C505.3,320,480,320,455,320C429.5,320,404,320,379,320C353.7,320,328,320,303,320C277.9,320,253,320,227,320C202.1,320,177,320,152,320C126.3,320,101,320,76,320C50.5,320,25,320,13,320L0,320Z"></path>
+  </svg>
+</div>
+
+    <div class="content">
+      
+      <a class="screen-reader screen-reader-focusable" href="#main-title">Saltar al contenido del artículo</a>
+      <!-- Nav and sticky -->
+      <nav id="nav" class=""></nav>
+      <nav id="mininav" class="hidden fixed bg-[#4a9fdb] min-w-[99vw] sm:min-w-full dark:bg-primary-dark flex-row justify-center align-middle z-[10] h-[30px] top-[28px] -translate-y-[100%] opacity-0 pointer-events-none" style="box-shadow: 0 10px 10px rgba(0, 0, 0, 0.19), 0 6px 6px rgba(0, 0, 0, 0.18); box-sizing: inherit; cursor: pointer;">
+        <div class="my-auto">&#x21a5;</div>
+      </nav>
+      <!-- Article List -->
+      <div id="ArticleListButton" class="absolute left-0">
+          <h3>Archivo del Blog</h3>
+          <div id="article-list-bg" class="w-[46px] h-[46px] "></div>
+          <div id="article-list" class="hidden"></div>
+      </div>
+      
+      
+      
+      
+
+      <br><br>
+      <!--?.............. Header / Imágen principal ...............?-->
+      <header class=" p-4 flex flex-col self-center align-middle">
+          <h1 id="main-title" tabindex="0" class="tabindex mb-space-3 text-h1 text-center text-black dark:text-chat-gris-claro">
+            <!--? Título ?-->
+            Introducción a la Reología
+          </h1>
+          <img class="max-w-2xl w-full mx-auto invisible" src="./dependencies/static/Images/blog/02_Fisica/Gravedad_Satelites_01.jpg">
+      </header><br><br>
+
+
+      <!--!.............. Neighbour Articles 1 ..............-->
+      <section class="neighbour-articles-section max-w-[90%] mx-auto bg-transparent mt-6 mb-4 w-full px-auto flex flex-row justify-between p-4 prose prose-blog dark:prose-blogdark">
+        <div tabindex="0" aria-label="(link) ir a a artículo anterior"  class="previous-article text-secondary dark:text-secondary2-bright cursor-pointer max-w-[30%] overflow-visible md:max-w-[45%] bg-transparent flex flex-row w-auto float-left" style="font-size: clamp(0.8rem, 1.5vw, 1.5rem); line-height: 1.2; white-space: normal; overflow-wrap: break-word;">
+          <div class="mr-[2px]">&#8592;</div> <div>Anterior</div>
+        </div>
+        <div tabindex="0" aria-label="(link) ir a a artículo siguiente"  class="next-article text-secondary dark:text-secondary2-bright cursor-pointer max-w-[30%] overflow-visible md:max-w-[45%] bg-transparent flex flex-row w-auto float-right" style="font-size: clamp(0.8rem, 1.5vw, 1.5rem); line-height: 1.2; white-space: normal; overflow-wrap: break-word;">
+          <div class="float-right text-right">Siguiente</div><div class="ml-[2px]">&#8594;</div>
+        </div>
+      </section>
+      <br>
+     
+<!--?.............. Wave ..............-->
+<div class="wave" style="transform: translateY(0px); height: 12px;">
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 200">
+      <path fill="#567b96" filldark="#234760" transform="scale(1,0.5)" 
+      fill-opacity="1" d="M0,96L12.6,90.7C25.3,85,51,75,76,90.7C101.1,107,126,149,152,144C176.8,139,202,85,227,101.3C252.6,117,278,203,303,202.7C328.4,203,354,117,379,106.7C404.2,96,429,160,455,170.7C480,181,505,139,531,144C555.8,149,581,203,606,218.7C631.6,235,657,213,682,224C707.4,235,733,277,758,261.3C783.2,245,808,171,834,144C858.9,117,884,139,909,160C934.7,181,960,203,985,213.3C1010.5,224,1036,224,1061,186.7C1086.3,149,1112,75,1137,53.3C1162.1,32,1187,64,1213,90.7C1237.9,117,1263,139,1288,133.3C1313.7,128,1339,96,1364,80C1389.5,64,1415,64,1427,64L1440,64L1440,320L1427.4,320C1414.7,320,1389,320,1364,320C1338.9,320,1314,320,1288,320C1263.2,320,1238,320,1213,320C1187.4,320,1162,320,1137,320C1111.6,320,1086,320,1061,320C1035.8,320,1011,320,985,320C960,320,935,320,909,320C884.2,320,859,320,834,320C808.4,320,783,320,758,320C732.6,320,707,320,682,320C656.8,320,632,320,606,320C581.1,320,556,320,531,320C505.3,320,480,320,455,320C429.5,320,404,320,379,320C353.7,320,328,320,303,320C277.9,320,253,320,227,320C202.1,320,177,320,152,320C126.3,320,101,320,76,320C50.5,320,25,320,13,320L0,320Z"></path>
+  </svg>
+</div>
+
+<!--?.............. Wave ..............-->
+<div class="wave" style="transform: translateY(0px); height: 17px;">
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 200">
+      <path fill="#6c9bbc" filldark="#1c303e" transform="scale(1,0.5)" 
+      fill-opacity="1" d="M0,96L12.6,90.7C25.3,85,51,75,76,90.7C101.1,107,126,149,152,144C176.8,139,202,85,227,101.3C252.6,117,278,203,303,202.7C328.4,203,354,117,379,106.7C404.2,96,429,160,455,170.7C480,181,505,139,531,144C555.8,149,581,203,606,218.7C631.6,235,657,213,682,224C707.4,235,733,277,758,261.3C783.2,245,808,171,834,144C858.9,117,884,139,909,160C934.7,181,960,203,985,213.3C1010.5,224,1036,224,1061,186.7C1086.3,149,1112,75,1137,53.3C1162.1,32,1187,64,1213,90.7C1237.9,117,1263,139,1288,133.3C1313.7,128,1339,96,1364,80C1389.5,64,1415,64,1427,64L1440,64L1440,320L1427.4,320C1414.7,320,1389,320,1364,320C1338.9,320,1314,320,1288,320C1263.2,320,1238,320,1213,320C1187.4,320,1162,320,1137,320C1111.6,320,1086,320,1061,320C1035.8,320,1011,320,985,320C960,320,935,320,909,320C884.2,320,859,320,834,320C808.4,320,783,320,758,320C732.6,320,707,320,682,320C656.8,320,632,320,606,320C581.1,320,556,320,531,320C505.3,320,480,320,455,320C429.5,320,404,320,379,320C353.7,320,328,320,303,320C277.9,320,253,320,227,320C202.1,320,177,320,152,320C126.3,320,101,320,76,320C50.5,320,25,320,13,320L0,320Z"></path>
+      <!-- fill-opacity="1" d="M 0 96 L 12.6 90.7 C 25.3 85 51 75 84 102 C 101.1 107 126 149 149 153 C 176.8 139 202 85 230 110 C 251 159 278 203 305 192 C 328.4 203 363 121 391 111 C 417 105 429 160 464 174 C 480 181 505 139 540 142 C 555.8 149 581 203 618 203 C 647 218 661 201 688 214 C 707.4 235 733 277 762 258 C 780 237 811 153 845 135 C 874 121 884 139 909 160 C 939 201 966 214 997 228 C 1026 231 1047 214 1060 188 C 1084 131 1112 75 1139 57 C 1169.011 38.365 1199 48 1221 85 C 1237.9 117 1265 142 1298 118 C 1315 113 1337 92 1361 78 C 1385 63 1420 59 1431 53 L 1427.4 53 L 1427.4 320 L 1427.4 320 C 1414.7 320 1389 320 1364 320 C 1338.9 320 1314 320 1288 320 C 1263.2 320 1238 320 1213 320 C 1187.4 320 1162 320 1137 320 C 1111.6 320 1086 320 1061 320 C 1035.8 320 1011 320 985 320 C 960 320 935 320 909 320 C 884.2 320 859 320 834 320 C 808.4 320 783 320 758 320 C 732.6 320 707 320 682 320 C 656.8 320 632 320 606 320 C 581.1 320 556 320 531 320 C 505.3 320 480 320 455 320 C 429.5 320 404 320 379 320 C 353.7 320 328 320 303 320 C 277.9 320 253 320 227 320 C 202.1 320 177 320 152 320 C 126.3 320 101 320 76 320 C 50.5 320 25 320 13 320 L 0 320 Z"></path> -->
+  </svg>
+</div>
+
+<!--?.............. Wave ..............-->
+<div class="wave" style="transform: translateY(0px); height: min(calc(50px+10vw),80px);">
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 200">
+      <path fill="#80bae4" filldark="#141e25" transform="scale(1,0.5)" 
+      fill-opacity="1" d="M0,96L12.6,90.7C25.3,85,51,75,76,90.7C101.1,107,126,149,152,144C176.8,139,202,85,227,101.3C252.6,117,278,203,303,202.7C328.4,203,354,117,379,106.7C404.2,96,429,160,455,170.7C480,181,505,139,531,144C555.8,149,581,203,606,218.7C631.6,235,657,213,682,224C707.4,235,733,277,758,261.3C783.2,245,808,171,834,144C858.9,117,884,139,909,160C934.7,181,960,203,985,213.3C1010.5,224,1036,224,1061,186.7C1086.3,149,1112,75,1137,53.3C1162.1,32,1187,64,1213,90.7C1237.9,117,1263,139,1288,133.3C1313.7,128,1339,96,1364,80C1389.5,64,1415,64,1427,64L1440,64L1440,320L1427.4,320C1414.7,320,1389,320,1364,320C1338.9,320,1314,320,1288,320C1263.2,320,1238,320,1213,320C1187.4,320,1162,320,1137,320C1111.6,320,1086,320,1061,320C1035.8,320,1011,320,985,320C960,320,935,320,909,320C884.2,320,859,320,834,320C808.4,320,783,320,758,320C732.6,320,707,320,682,320C656.8,320,632,320,606,320C581.1,320,556,320,531,320C505.3,320,480,320,455,320C429.5,320,404,320,379,320C353.7,320,328,320,303,320C277.9,320,253,320,227,320C202.1,320,177,320,152,320C126.3,320,101,320,76,320C50.5,320,25,320,13,320L0,320Z"></path>
+      <!-- fill-opacity="1" d="M 0 96 L 15 99 C 27 99 51 75 94 94 C 123 108 129 133 156 135 C 181 136 190 92 218 111 C 266 152 269 183 299 188 C 331 186 353 121 385 112 C 435 105 439 160 470 172 C 495 181 513 146 551 143 C 590 159 579 196 618 193 C 648 186 666 200 683 219 C 707.4 235 717 269 750 244 C 784 239 811 153 845 135 C 874 121 889 142 911 171 C 939 201 965 208 983 211 C 1005 214 1037 212 1064 163 C 1080 125 1088 91 1126 57 C 1154 30 1195 44 1210 71 C 1247 120 1261 124 1298 118 C 1320 99 1337 92 1359 71 C 1381 55 1419 53 1431 53 L 1427.4 53 L 1427.4 320 L 1427.4 320 C 1414.7 320 1389 320 1364 320 C 1338.9 320 1314 320 1288 320 C 1263.2 320 1238 320 1213 320 C 1187.4 320 1162 320 1137 320 C 1111.6 320 1086 320 1061 320 C 1035.8 320 1011 320 985 320 C 960 320 935 320 909 320 C 884.2 320 859 320 834 320 C 808.4 320 783 320 758 320 C 732.6 320 707 320 682 320 C 656.8 320 632 320 606 320 C 581.1 320 556 320 531 320 C 505.3 320 480 320 455 320 C 429.5 320 404 320 379 320 C 353.7 320 328 320 303 320 C 277.9 320 253 320 227 320 C 202.1 320 177 320 152 320 C 126.3 320 101 320 76 320 C 50.5 320 25 320 13 320 L 0 320 Z"></path> -->
+  </svg>
+</div>
+      <!-- Cuerpo del artículo -->
+      <main class="mx-auto max-w-7xl p-4 prose prose-blog dark:prose-blogdark">
+          <!-- Abstract -->
+          <section class="text-center max-w-xl mx-auto mb-6">
+            <p tabindex="0" class="text-lg font-semibold">¿Qué&nbsp;es&nbsp;la&nbsp;viscosidad&nbsp;y&nbsp;como&nbsp;se&nbsp;mide? </p>
+          </section><br><br>
+          
+          <div style="height: var(--dnti-separator-xlittle);"></div>
+          $
+          \definecolor{pcol}{rgb}{0.0, 0.203, 0.9} 
+          \definecolor{matrixcolor}{rgb}{0.229, 0.603, 0.676} 
+          \definecolor{darkpastelgreen}{rgb}{0.01, 0.75, 0.24}
+          \definecolor{lambdacolor}{rgb}{ 0.066, 0.588, 0.749}
+          \definecolor{vcolor}{rgb}{0, 0.95, 0.04}
+          $
+          <!-- Desarrollo -->
+          <section class="mx-auto max-w-7xl my-8">
+            <div class="half-text-half-canvas flex flex-row">
+              <div class="left-dnti-section">
+                <h2 tabindex="0" class=" mb-4 " id="F1">Datos de las cromatinas en 3D (realización 1)</h2>
+                <p tabindex="0" class="scr1000:w-[510px]">
+                  Tenemos aquí una realización de al rededor de 20 cromatinas, las cuáles se ha medido su posición en 2D a miscroscopio.
+                  <br>
+                  Esta realización dura 10segundos a una frecuencia de muestras de 253.2Hz lo que da unas 2532 posiciones por cromatina, es decir, 2532*20 posiciones en total.
+                </p>
+                <p tabindex="0" class="text-center w-full scr1000:w-fit " 
+                aria-label="El vector final (el multiplicado por la matriz) es igual a él mismo multiplicado por un número lambda"
+                >
+                  \( \Large \frac{\partial {\color{pcol}\textbf P}}{\partial t} = D \frac{\partial ^2 {\color{pcol}\textbf P}}{\partial x^2} \)</p>
+                  <!-- \( \Large {\color{pcolor}v'}= {\color{matrixcolor}A}{\color{vcolor}v} = {\color{lambdacolor}\lambda}{\color{vcolor}v} \ \ \ {\color{lambdacolor}\lambda} \in \mathbb{R} \)</p> -->
+                <p tabindex="0" aria-live="polite" class="scr1000:w-[510px]">
+                  
+                </p>
+              </div>
+              <div class="dnti-outside">
+                <div data-id="c1">
+                    <div id="c1" ></div>
+                </div>
+              </div>
+            </div>
+          </section>
+          <div class="dnti-inside" flex-on="1000px"><div class="flex flex-row justify-center" data-id="c1"></div></div>
+
+          <section class="mx-auto max-w-7xl my-8">
+            <div class="half-text-half-canvas flex flex-row">
+              <div class="left-dnti-section">
+                <h2 tabindex="0" class=" mb-4 " id="F2">Cálculo tau/subsecuencia (cromatina 1, eje x)</h2>
+                <p tabindex="0" class="scr1000:w-[510px]">
+                  Este segundo canvas se usa para los cálculos por tau y subsecuencia de la cromatina 1 sobre el eje \( x \). Los controles comunes de cromatina, rango de tau, tau seleccionado y subsecuencia están aquí y gobiernan también el canvas C3.
+                </p>
+                <div id="c2-msd-progress" style="max-width:510px; margin:10px 0 0 0;">
+                  <p id="c2-msd-progress-label" tabindex="0" style="margin:0 0 4px 0; font-family:monospace; font-size:12px;">MSD SSE C2: en espera</p>
+                  <div style="width:100%; height:10px; background:#1b1b1b; border:1px solid #3a3a3a; border-radius:999px; overflow:hidden;">
+                    <div id="c2-msd-progress-fill" style="width:0%; height:100%; background:linear-gradient(90deg,#8a5a1f 0%,#e0b24a 100%);"></div>
+                  </div>
+                </div>
+              </div>
+              <div class="dnti-outside">
+                <div data-id="c2">
+                    <div id="c2"></div>
+                </div>
+              </div>
+            </div>
+          </section>
+          <div class="dnti-inside" flex-on="1000px"><div class="flex flex-row justify-center" data-id="c2"></div></div>
+
+          <section class="mx-auto max-w-7xl my-8">
+            <div class="half-text-half-canvas flex flex-row">
+              <div class="left-dnti-section">
+                <h2 tabindex="0" class=" mb-4 " id="F3">Cálculo tau/subsecuencia (cromatina 1, eje y)</h2>
+                <p tabindex="0" class="scr1000:w-[510px]">
+                  Este tercer canvas repite exactamente el análisis de tau/subsecuencia, pero usando la componente \( y \) de la misma cromatina.
+                </p>
+                <p tabindex="0" class="scr1000:w-[510px]">
+                  C2 y C3 deben leerse juntos: si los mejores modelos cambian mucho entre ambos ejes, la dinámica efectiva no es isótropa y conviene no resumirla con una sola proyección.
+                </p>
+                <div id="c3-msd-progress" style="max-width:510px; margin:10px 0 0 0;">
+                  <p id="c3-msd-progress-label" tabindex="0" style="margin:0 0 4px 0; font-family:monospace; font-size:12px;">MSD SSE C3: en espera</p>
+                  <div style="width:100%; height:10px; background:#1b1b1b; border:1px solid #3a3a3a; border-radius:999px; overflow:hidden;">
+                    <div id="c3-msd-progress-fill" style="width:0%; height:100%; background:linear-gradient(90deg,#205a84 0%,#4cc3ff 100%);"></div>
+                  </div>
+                </div>
+              </div>
+              <div class="dnti-outside">
+                <div data-id="c3">
+                    <div id="c3"></div>
+                </div>
+              </div>
+            </div>
+          </section>
+          <div class="dnti-inside" flex-on="1000px"><div class="flex flex-row justify-center" data-id="c3"></div></div>
+          
+          <section class="mx-auto max-w-7xl my-8">
+            <div class="left-dnti-section">
+              <h2 tabindex="0" class="mb-4">Reconstrucci&oacute;n de trayectorias en C2, C3 y C1</h2>
+              <p tabindex="0" class="scr1000:w-[780px]">
+                En esta versi&oacute;n no se reconstruye primero una trayectoria 2D y luego se proyecta, sino que se resuelven dos problemas 1D distintos. C2 usa la se&ntilde;al escalar \( X_n \) del eje \( x \), y C3 usa la se&ntilde;al escalar \( Y_n \) del eje \( y \). En ambos casos el pipeline de \( (\tau,\mathrm{subseq}) \) estima un campo de deriva \( f \) y una amplitud difusiva \( s \) sobre bins del eje correspondiente.
+              </p>
+              <p tabindex="0" class="scr1000:w-[780px]">
+                Si llamamos \( Z_n \) a la coordenada 1D activa del canvas, la recomposici&oacute;n usa un esquema de Euler-Maruyama escalar sobre la coordenada normalizada \( u_n=(Z_n-x_{\min})/(x_{\max}-x_{\min}) \): $$Z_{n+1}=Z_n + f(u_n)\,(x_{\max}-x_{\min})\,\Delta t\,g + s(u_n)\,(x_{\max}-x_{\min})\,\sqrt{\Delta t}\,\eta_n\,(0.45)\,g.$$ Aqu&iacute; \( g \) es un factor de reescala que iguala la magnitud media del paso simulado con la magnitud media observada en el eje original, y \( \eta_n\in[-1,1] \) es un ruido seudodeterminista para mantener repetibilidad visual.
+              </p>
+              <p tabindex="0" class="scr1000:w-[780px]">
+                En modo de una sola subsecuencia se toma directamente el par \( (f,s) \) del modelo elegido por \( (\tau,\mathrm{subseq}) \). En modo promedio se simula una trayectoria por cada subsecuencia v&aacute;lida \( r=0,\dots,\tau-1 \) y luego se calcula la media puntual $$\bar Z_n = \frac{1}{N_n}\sum_{k=1}^{N_n} Z_n^{(k)}.$$ Se ha corregido el acumulador para que esa media use solo trayectorias simuladas; antes pod&iacute;a arrastrar la muestra inicial observada y sesgar el promedio.
+              </p>
+              <p tabindex="0" class="scr1000:w-[780px]">
+                C1 recompone la trayectoria bidimensional final usando la &uacute;ltima reconstrucci&oacute;n disponible de cada eje. Formalmente, la trayectoria mostrada en C1 es $$\mathbf R_n^{\mathrm{sim}} = (X_n^{\mathrm{sim}},Y_n^{\mathrm{sim}}),$$ con \( X_n^{\mathrm{sim}} \) generado en C2 y \( Y_n^{\mathrm{sim}} \) generado en C3. Eso permite comparar visualmente combinaciones distintas de \( \tau \) y subsecuencia entre ambos ejes, aunque ya no impone que las dos ramas correspondan al mismo candidato.
+              </p>
+              <p tabindex="0" class="scr1000:w-[780px]">
+                Criterio de revisor: este procedimiento equivale a asumir una din&aacute;mica efectiva separable por ejes. Es una aproximaci&oacute;n razonable si el acoplamiento cruzado es peque&ntilde;o o si se quiere inspeccionar anisotrop&iacute;as eje a eje; si el sistema tuviera un acoplamiento fuerte \( dX_t\leftrightarrow dY_t \), entonces habr&iacute;a que pasar a un modelo vectorial con deriva \( \mathbf f(x,y) \) y matriz de difusi&oacute;n completa.
+              </p>
+            </div>
+          </section>
+
+          <section class="mx-auto max-w-7xl my-8">
+            <div class="left-dnti-section">
+              <h2 tabindex="0" class="mb-4">Por qu&eacute; la reconstrucci&oacute;n 2D actual suele derivar en una direcci&oacute;n</h2>
+              <p tabindex="0" class="scr1000:w-[780px]">
+                En la versi&oacute;n actual no se est&aacute; simulando una ecuaci&oacute;n estoc&aacute;stica bidimensional acoplada, sino dos ecuaciones 1D independientes, una para \( X_n \) y otra para \( Y_n \), que despu&eacute;s se recombinan geom&eacute;tricamente en C1. Es decir, el modelo efectivo que se usa es \( X_{n+1}=X_n+f_x(X_n)\Delta t+s_x(X_n)\sqrt{\Delta t}\,\eta_n^{(x)} \) y \( Y_{n+1}=Y_n+f_y(Y_n)\Delta t+s_y(Y_n)\sqrt{\Delta t}\,\eta_n^{(y)} \), y luego se representa \( \mathbf R_n^{\mathrm{sim}}=(X_n^{\mathrm{sim}},Y_n^{\mathrm{sim}}) \). Por eso, si en un eje la deriva domina, la trayectoria 2D completa parece avanzar preferentemente en esa direcci&oacute;n.
+              </p>
+              <p tabindex="0" class="scr1000:w-[780px]">
+                Adem&aacute;s, la integraci&oacute;n temporal no impone condiciones de contorno reflectantes. El update es puramente aditivo, \( Z_{n+1}=Z_n+\text{paso determinista}+\text{paso estoc&aacute;stico} \), de modo que no existe un mecanismo expl&iacute;cito de rebote en los bordes. Aunque la curva ajustada de deriva sugiera una regi&oacute;n de retorno, la simulaci&oacute;n no implementa ni reflexi&oacute;n, ni absorci&oacute;n, ni reentrada forzada: si el drift neto sigue teniendo un signo predominante, la trayectoria seguir&aacute; avanzando.
+              </p>
+              <p tabindex="0" class="scr1000:w-[780px]">
+                Hay un detalle adicional importante: la coordenada reducida que alimenta el modelo se normaliza como \( u=(x-x_{\min})/(x_{\max}-x_{\min}) \), pero luego se recorta a \( \tilde u=\operatorname{clamp}(u,0,1) \). Eso significa que, cuando la trayectoria sale del rango donde se ajust&oacute; el modelo, ya no se eval&uacute;a el campo en la posici&oacute;n real, sino siempre en el valor de borde \( \tilde u=0 \) o \( \tilde u=1 \). Si en ese borde la deriva conserva un signo fijo, la din&aacute;mica queda efectivamente saturada y visualmente parece una marcha casi mon&oacute;tona.
+              </p>
+              <p tabindex="0" class="scr1000:w-[780px]">
+                Tambi&eacute;n hay que tener en cuenta que la amplitud global de la simulaci&oacute;n no viene solo del ajuste SINDy, sino de un factor emp&iacute;rico \( g \) que reescala el tama&ntilde;o medio del paso para aproximarlo al observado en la se&ntilde;al experimental. Si ese reescalado es grande, un drift moderado puede pasar a dominar visualmente sobre el t&eacute;rmino difusivo, haciendo que la trayectoria 2D parezca preferentemente dirigida.
+              </p>
+              <p tabindex="0" class="scr1000:w-[780px]">
+                Por &uacute;ltimo, en la implementaci&oacute;n actual hay una limitaci&oacute;n relevante: aunque el pipeline GLSL permite ajustar una base polin&oacute;mica m&aacute;s rica para \( s(x) \), la integraci&oacute;n temporal que reconstruye la trayectoria todav&iacute;a usa en la pr&aacute;ctica una versi&oacute;n escalar muy reducida del coeficiente difusivo. Por eso, aumentar `tauSDegrees` a listas como \( [0,1,2,3] \) no garantiza por s&iacute; solo una difusi&oacute;n espacialmente estructurada en la trayectoria reconstruida. En otras palabras, hoy el aumento de complejidad en \( s(x) \) puede afectar al ajuste y a algunas curvas diagn&oacute;sticas, pero no se traduce todav&iacute;a de forma completa en la simulaci&oacute;n temporal final.
+              </p>
+            </div>
+          </section>
+          
+<div style="height: var(--dnti-separator-middle);"></div>
+      </main>
+        
+
+      <!-- Neighbour Articles 2 -->
+      <div class="neighbour-articles-wrapper relative before:content-[''] 
+        before:absolute before:top-0 before:left-1/2 before:-translate-x-1/2 before:bottom-0 
+        before:pointer-events-none -z-[1000]
+        before:w-[105vw] before:bg-[rgba(0,20,160,0.18)] before:dark:bg-[rgba(0,10,60,0.18)]
+        ">
+      <hr class="neighbour-articles-decoration border-[#4a9fdb] border-y-2   dark:border-secondary2-bright">    
+      <section class="neighbour-articles-section max-w-[90%] mx-auto bg-transparent mt-4 mb-4 w-full px-auto flex flex-row justify-between p-4 prose prose-blog dark:prose-blogdark">
+        <div tabindex="0" aria-label="(link) ir a a artículo anterior"  class="previous-article text-secondary dark:text-secondary2-bright cursor-pointer max-w-[30%] overflow-visible md:max-w-[45%] bg-transparent flex flex-row w-auto float-left" style="font-size: clamp(0.8rem, 1.5vw, 1.5rem); line-height: 1.2; white-space: normal; overflow-wrap: break-word;">
+          <div class="mr-[2px]">&#8592;</div> <div>Anterior</div>
+        </div>
+        <div tabindex="0" aria-label="(link) ir a a artículo siguiente"  class="next-article text-secondary dark:text-secondary2-bright cursor-pointer max-w-[30%] overflow-visible md:max-w-[45%] bg-transparent flex flex-row w-auto float-right" style="font-size: clamp(0.8rem, 1.5vw, 1.5rem); line-height: 1.2; white-space: normal; overflow-wrap: break-word;">
+          <div class="float-right text-right">Siguiente </div><div class="ml-[2px]">&#8594;</div>
+        </div>
+      </section>
+      <hr class="neighbour-articles-decoration border-[#4a9fdb] border-y-2   dark:border-secondary2-bright">
+      </div>
+
+
+<!--  Interactive change of an equation, step by step, horizontal, on the left the starting and on the right the ending
+  equation we wanted to derive (or showed). When hovered we will display dots that connect to each other,
+  at first hollow, then filled by the position we are. (1)->(2)->(3)->(4).
+-->
+<div class="wave">
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 200">
+      <path fill="#1e9bef" filldark="#176491" transform="scale(1,0.5)" fill-opacity="1" d="M0,96L12.6,90.7C25.3,85,51,75,76,90.7C101.1,107,126,149,152,144C176.8,139,202,85,227,101.3C252.6,117,278,203,303,202.7C328.4,203,354,117,379,106.7C404.2,96,429,160,455,170.7C480,181,505,139,531,144C555.8,149,581,203,606,218.7C631.6,235,657,213,682,224C707.4,235,733,277,758,261.3C783.2,245,808,171,834,144C858.9,117,884,139,909,160C934.7,181,960,203,985,213.3C1010.5,224,1036,224,1061,186.7C1086.3,149,1112,75,1137,53.3C1162.1,32,1187,64,1213,90.7C1237.9,117,1263,139,1288,133.3C1313.7,128,1339,96,1364,80C1389.5,64,1415,64,1427,64L1440,64L1440,320L1427.4,320C1414.7,320,1389,320,1364,320C1338.9,320,1314,320,1288,320C1263.2,320,1238,320,1213,320C1187.4,320,1162,320,1137,320C1111.6,320,1086,320,1061,320C1035.8,320,1011,320,985,320C960,320,935,320,909,320C884.2,320,859,320,834,320C808.4,320,783,320,758,320C732.6,320,707,320,682,320C656.8,320,632,320,606,320C581.1,320,556,320,531,320C505.3,320,480,320,455,320C429.5,320,404,320,379,320C353.7,320,328,320,303,320C277.9,320,253,320,227,320C202.1,320,177,320,152,320C126.3,320,101,320,76,320C50.5,320,25,320,13,320L0,320Z"></path>
+  </svg>
+</div>
+
+      <!-- Pie de Articulo -->
+      <footer class="bg-primary.light p-4 text-center">
+          <p tabindex="0" class="text-small text-white ">© 2025 DanielTI.COM Todos los derechos reservados.</p>
+      </footer>
+    </div>
+</body>
+</html>

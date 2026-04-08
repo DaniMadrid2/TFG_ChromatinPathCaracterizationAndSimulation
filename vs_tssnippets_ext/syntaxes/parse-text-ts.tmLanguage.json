@@ -1,0 +1,52 @@
+{
+  "scopeName": "source.parse-text-ts",
+  "name": "ParseText TS",
+  "patterns": [
+    {
+      "name": "comment.line.phase.parse-text-ts",
+      "match": "^\\s*//\\?.*$"
+    },
+    {
+      "name": "keyword.control.anchor.parse-text-ts",
+      "match": "<(?:Pre|Pre/|Pos|Mid)>"
+    },
+    {
+      "name": "keyword.operator.assignment.pipe.parse-text-ts",
+      "match": "\\|="
+    },
+    {
+      "name": "keyword.operator.arrow.parse-text-ts",
+      "match": "->"
+    },
+    {
+      "name": "variable.other.dollar-macro.parse-text-ts",
+      "match": "\\$[A-Za-z_][A-Za-z0-9_]*\\$"
+    },
+    {
+      "name": "support.function.vec.parse-text-ts",
+      "match": "\\b(?:vec2|vec3|vec4|mat2|mat3|mat4)\\s*(?=\\()"
+    },
+    {
+      "name": "support.function.parser-helpers.parse-text-ts",
+      "match": "\\b(?:lduse|use|start|stop|drawTriangles|viewport|log|framebuffer|program|resource|rebind|uniforms|glslFilters|tex2D|tick|OnKeyPress|MeshProgram|MeshFillerProgram|Axis3DGroup|Camera3D|Camera2D|Program|createIdealMesh|fillMeshTexture)\\b"
+    },
+    {
+      "name": "entity.name.type.parser-block.parse-text-ts",
+      "match": "^\\s*[A-Za-z_][A-Za-z0-9_]*\\s*(?:\\([^\\n{}]*\\))?\\s*(?=\\{)"
+    },
+    {
+      "name": "meta.interpolation.braces.parse-text-ts",
+      "begin": "\\{",
+      "end": "\\}",
+      "patterns": [
+        {
+          "include": "source.ts"
+        }
+      ]
+    },
+    {
+      "include": "source.ts"
+    }
+  ],
+  "uuid": "45bc57fb-9d78-4c91-b885-97cb9c1152c0"
+}

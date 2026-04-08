@@ -1,0 +1,21 @@
+{
+  "name": "tfg_chromatinpathcaracterizationandsimulation",
+  "version": "1.0.0",
+  "description": "Local static bundle for TFG_ChromatinPathCaracterizationAndSimulation",
+  "main": "src/main.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "watch": "tsc -p tsconfig.json -w",
+    "tailwind": "npx tailwindcss -c ./tailwind.config.js -i ./src/dependencies/static/tailwind.input.css -o ./src/dependencies/static/main.css",
+    "tailwind:watch": "npx tailwindcss -c ./tailwind.config.js -i ./src/dependencies/static/tailwind.input.css -o ./src/dependencies/static/main.css --watch"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@tailwindcss/typography": "^0.5.16",
+    "@types/node": "^25.5.2",
+    "tailwindcss": "^3.4.17",
+    "typescript": "^6.0.2"
+  }
+}

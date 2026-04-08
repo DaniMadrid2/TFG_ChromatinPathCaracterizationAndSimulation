@@ -1,0 +1,77 @@
+{
+  "name": "dnti-snippets-and-shader-dsl-ext",
+  "displayName": "DNTI TS Snippets and Shader DSL language support",
+  "version": "1.0.0",
+  "description": "VS Code language mode for .snippet.ts and .shaderdsl.ts files syntax highlighting.",
+  "publisher": "danimadrid2",
+  "main": "./extension.js",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "activationEvents": [
+    "*",
+    "onLanguage:ts-snippet",
+    "onLanguage:parse-text-ts",
+    "onStartupFinished"
+  ],
+  "scripts": {
+    "package": "npx @vscode/vsce package --allow-missing-repository",
+    "install-vsix": "code --install-extension .\\dnti-snippets-and-shader-dsl-ext-0.0.1.vsix"
+  },
+  "contributes": {
+    "commands": [
+      {
+        "command": "vsTSSnippets.setTsSnippetLanguage",
+        "title": "Set Language Mode: TS Snippet"
+      },
+      {
+        "command": "vsTSSnippets.setShaderDslLanguage",
+        "title": "Set Language Mode: Shader DSL"
+      }
+    ],
+    "languages": [
+      {
+        "id": "ts-snippet",
+        "aliases": [
+          "TS Snippet",
+          "ts-snippet"
+        ],
+        "extensions": [
+          ".snippet.ts"
+        ],
+        "configuration": "./language-configuration.json"
+      },
+      {
+        "id": "parse-text-ts",
+        "aliases": [
+          "Shader DSL",
+          "ParseText TS",
+          "parse-text-ts"
+        ],
+        "extensions": [
+          ".shaderdsl.ts"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "ts-snippet",
+        "scopeName": "source.ts-snippet",
+        "path": "./syntaxes/ts-snippet.tmLanguage.json"
+      },
+      {
+        "language": "parse-text-ts",
+        "scopeName": "source.parse-text-ts",
+        "path": "./syntaxes/parse-text-ts.tmLanguage.json"
+      }
+    ]
+  },
+  "keywords": ["DNTI"],
+  "author": "DaniMadrid2",
+  "license": "Unlicense"
+}
+

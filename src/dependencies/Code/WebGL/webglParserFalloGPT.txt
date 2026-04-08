@@ -1,0 +1,275 @@
+import {Camera2D, createCanvas, createLayer, GameObject, ImgLoader, ModernCtx, Scene,MouseManager, ListenerManager, openFullscreen, keypress, mousepos, mouseclick, KeyManager, W, H, MCTX} from "../Game/Game.js";
+import { Matrix2D, MatrixStack2D, Vector2D, Vector3D } from "../Matrix/Matrix.js";
+import {loadShaders, loadShadersFromString} 
+    from "../opengl/opengl.js"
+import {Funcion, Arrow, Field,Axis,Axis2D,Funcion2D,Funcion3D,MatrixObject,axisprops,addMapStyle,mapstyle, setMapStyle,
+    Waiter, Changer, PosChanger, NearPosChanger, ChangerArr, MathFs, KeyWaiter, TimeWaiter, LogerW,
+    Easer, Handler, PosChangerByRotation,
+    EaserConstant, Ellipse
+ } from "../MathRender/MathRender.js"
+import {addFunc, start, stop, Timer} from "../Start/start.js"
+import { MathJaxLoader } from "../MathJax/MathJax.js";
+
+import { Axis3DGroup, MeshRenderingProgram, MeshFillerProgram } from "../WebGL/webglCapsules.js";
+import { Camera3D } from "../Game3D/Game3D.js";
+import { WebGLMan, WebProgram, BindableTexture, parseTexUnitType } from "../WebGL/webglMan.js";
+
+
+
+/* =========================================================
+   DetailedParser – DSL Runtime + Parser + Executor
+   ========================================================= */
+
+type AnyMap = Map<string | number, any>;
+
+class DetailedParser {
+
+    /* ============================
+       CONTEXTOS
+       ============================ */
+
+    static ctx = {
+        vars: new Map<string, any>(),
+        tickBlocks: [] as Function[],
+        drawBlocks: [] as Function[],
+        startBlocks: [] as Function[]
+    };
+
+    static GlobalContext: any = {};
+    static ExternalContext: any = null;
+
+    static lastUsedProgram: any = null;
+
+    /* ============================
+       UTILIDADES DE CONTEXTO
+       ============================ */
+
+    static getVar(name: any): any {
+        if (typeof name !== "string") return name;
+
+        if (DetailedParser.ctx.vars.has(name))
+            return DetailedParser.ctx.vars.get(name);
+
+        if (DetailedParser.GlobalContext && name in DetailedParser.GlobalContext)
+            return DetailedParser.GlobalContext[name];
+
+        if (DetailedParser.ExternalContext && name in DetailedParser.ExternalContext)
+            return DetailedParser.ExternalContext[name];
+
+        return undefined;
+    }
+
+    static setVar(name: string, value: any) {
+        DetailedParser.ctx.vars.set(name, value);
+        return value;
+    }
+
+    /* ============================
+       EXPRESIONES { }
+       ============================ */
+
+    static evalExpr(expr: string): any {
+        const replaced = expr.replace(/\{([^}]+)\}/g, (_, body) => {
+            return `(${body})`;
+        });
+
+        const fn = new Function(
+            "ctx", "g", "ext",
+            `with(ctx){with(g){with(ext||{}){return (${replaced});}}}`
+        );
+
+        return fn(
+            Object.fromEntries(DetailedParser.ctx.vars),
+            DetailedParser.GlobalContext,
+            DetailedParser.ExternalContext
+        );
+    }
+
+    /* ============================
+       $func$ ESCAPE
+       ============================ */
+
+    static resolveToken(token: string): any {
+        if (token.startsWith("$") && token.endsWith("$")) {
+            const name = token.slice(1, -1);
+            return DetailedParser.ExternalContext?.[name];
+        }
+        if (token.startsWith("{") && token.endsWith("}")) {
+            return DetailedParser.evalExpr(token);
+        }
+        return DetailedParser.getVar(token) ?? token;
+    }
+
+    /* ============================
+       TOKENIZADOR SIMPLE
+       ============================ */
+
+    static tokenize(line: string): string[] {
+        const out: string[] = [];
+        let buf = "", depth = 0;
+
+        for (let c of line) {
+            if (c === "{" || c === "(") depth++;
+            if (c === "}" || c === ")") depth--;
+
+            if (c === " " && depth === 0) {
+                if (buf) out.push(buf), buf = "";
+            } else buf += c;
+        }
+        if (buf) out.push(buf);
+        return out;
+    }
+
+    /* ============================
+       OBJECT REGISTRY
+       ============================ */
+
+    static ObjectRegistry: Record<string, Function> = {
+
+        Program: async (params: AnyMap, gl: WebGL2RenderingContext) => {
+            const prog = new (DetailedParser.GlobalContext.WebProgram)(gl);
+            DetailedParser.lastUsedProgram = prog;
+            return prog;
+        },
+
+        Camera3D: (params: AnyMap) => {
+            const cam = new (DetailedParser.GlobalContext.Camera3D)(params.get("pos"));
+            DetailedParser.setVar("camera", cam);
+            return cam;
+        },
+
+        texture2DArray: (params: AnyMap) => {
+            const prog = DetailedParser.lastUsedProgram;
+            return prog.texture2DArray({
+                format: params.get(0),
+                data: DetailedParser.getVar(params.get(1)),
+                name: params.get(2),
+                texUnit: params.get(3),
+                size: params.get(4)
+            });
+        }
+    };
+
+    /* ============================
+       FUNCTION REGISTRY
+       ============================ */
+
+    static FunctionRegistry: Record<string, Function> = {
+
+        use: async (params: AnyMap) => {
+            const p = DetailedParser.getVar(params.get(0));
+            await p.loadProgram();
+            p.use();
+            DetailedParser.lastUsedProgram = p;
+        },
+
+        drawArrays: (params: AnyMap, gl: WebGL2RenderingContext) => {
+            DetailedParser.lastUsedProgram.drawArrays(
+                gl[params.get(0)],
+                params.get(1),
+                params.get(2)
+            );
+        },
+
+        uVec: (params: AnyMap) => {
+            const p = DetailedParser.lastUsedProgram;
+            return p.uVec(params.get(0), params.get(1));
+        },
+
+        uFloat: (params: AnyMap) => {
+            const p = DetailedParser.lastUsedProgram;
+            return p.uFloat(params.get(0));
+        },
+
+        uInt: (params: AnyMap) => {
+            const p = DetailedParser.lastUsedProgram;
+            return p.uInt(params.get(0));
+        }
+    };
+
+    /* ============================
+       BLOQUES tick / draw
+       ============================ */
+
+    static compileBlock(lines: string[]): Function {
+        const body = lines.map(l => {
+            if (l.includes("{") && l.includes("}"))
+                return l.replace(/\{([^}]+)\}/g, (_, e) => `DetailedParser.evalExpr("${e}")`);
+            return l;
+        }).join("\n");
+
+        return new Function("DetailedParser", body).bind(null, DetailedParser);
+    }
+
+    /* ============================
+       PARSER PRINCIPAL
+       ============================ */
+
+    static async parse(text: string, gl: WebGL2RenderingContext) {
+
+        const lines = text.split("\n").map(l => l.trim()).filter(Boolean);
+        let i = 0;
+
+        while (i < lines.length) {
+            const line = lines[i];
+
+            /* ----- BLOQUES ----- */
+            if (line === "tick {") {
+                const block: string[] = [];
+                i++;
+                while (lines[i] !== "}") block.push(lines[i++]);
+                DetailedParser.ctx.tickBlocks.push(
+                    DetailedParser.compileBlock(block)
+                );
+            }
+
+            else if (line === "draw {") {
+                const block: string[] = [];
+                i++;
+                while (lines[i] !== "}") block.push(lines[i++]);
+                DetailedParser.ctx.drawBlocks.push(
+                    DetailedParser.compileBlock(block)
+                );
+            }
+
+            else if (line === "start") {
+                DetailedParser.ctx.startBlocks.push(() => {});
+            }
+
+            /* ----- ASIGNACIONES |= ----- */
+            else if (line.includes("|=")) {
+                const [left, right] = line.split("|=").map(s => s.trim());
+                const [type, ...rest] = DetailedParser.tokenize(right);
+                const params = new Map<number, any>();
+                rest.forEach((r, idx) => params.set(idx, DetailedParser.resolveToken(r)));
+
+                const obj = await DetailedParser.ObjectRegistry[type](params, gl);
+
+                DetailedParser.setVar(left, obj);
+                DetailedParser.setVar(rest[0], obj);
+            }
+
+            /* ----- LLAMADAS ----- */
+            else {
+                const tokens = DetailedParser.tokenize(line);
+                const name = tokens[0];
+                const params = new Map<number, any>();
+                tokens.slice(1).forEach((t, idx) => {
+                    params.set(idx, DetailedParser.resolveToken(t));
+                });
+
+                if (DetailedParser.FunctionRegistry[name]) {
+                    await DetailedParser.FunctionRegistry[name](params, gl);
+                }
+            }
+
+            i++;
+        }
+    }
+}
+
+/* =========================================================
+   EXPORT
+   ========================================================= */
+
+export { DetailedParser };
