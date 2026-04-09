@@ -55,13 +55,14 @@ export const createCanvasNextTo = function (isResized = ((cid) => isResizedC(cid
         const was_resized = isResized;
         isResized = (() => was_resized);
     }
-    const nextToElement = getElementBySelector(nextToid);
+    const placeholder = document.querySelector(`[data-id="${cid}"]`);
+    const anchorElement = placeholder ?? getElementBySelector(nextToid);
     const getoffx = (c) => {
         var _a, _b, _c;
         let isResizedCanvas = isResized(cid);
-        if (!nextToElement)
+        if (!anchorElement)
             return 0;
-        return isResizedCanvas ? 0 : (((_a = getPositionOf(nextToElement)) === null || _a === void 0 ? void 0 : _a.right) + (-(((_c = getPositionOf((_b = c === null || c === void 0 ? void 0 : c.parentElement) === null || _b === void 0 ? void 0 : _b.parentElement)) === null || _c === void 0 ? void 0 : _c.left) || 0)));
+        return isResizedCanvas ? 0 : (((_a = getPositionOf(anchorElement)) === null || _a === void 0 ? void 0 : _a.right) + (-(((_c = getPositionOf((_b = c === null || c === void 0 ? void 0 : c.parentElement) === null || _b === void 0 ? void 0 : _b.parentElement)) === null || _c === void 0 ? void 0 : _c.left) || 0)));
     };
     let initialBoxCanvas = {
         x: (c) => {

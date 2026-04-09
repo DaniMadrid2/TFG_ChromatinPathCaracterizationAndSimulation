@@ -186,7 +186,7 @@ void main(){
             alpha = max(alpha, 0.90);
         }
 
-        if(inPdf > 0.5){
+        if(false && inPdf > 0.5){
             float xu = clamp((vUV.x - xL) / max(0.001, (xR - xL)), 0.0, 1.0);
             vec4 ps = sampleRowLinear(tauFPStationary, xu);
             float h = (yPdf1 - yPdf0);
@@ -257,8 +257,10 @@ void main(){
         alpha = 0.95;
     }
 
+    const float pdfBandTop = 0.035;
+    const float lowerPanelFloor = 0.005;
     // Panel inferior izquierda: KL mapa
-    if(vUV.y < 0.46 && vUV.x < 0.49){
+    if(vUV.y < 0.46 && vUV.y > lowerPanelFloor && vUV.x < 0.49){
         vec2 uv = vec2(vUV.x/0.49, vUV.y/0.46);
         ivec2 p = ivec2(tMin0 + clamp(int(floor(uv.x*float(tCount))),0,tCount-1),
                         clamp(int(floor(uv.y*float(tauMax))),0,tauMax-1));
@@ -270,7 +272,7 @@ void main(){
     }
 
     // Panel inferior derecha: coste bruto mapa
-    if(vUV.y < 0.46 && vUV.x > 0.51){
+    if(vUV.y < 0.46 && vUV.y > lowerPanelFloor && vUV.x > 0.51){
         vec2 uv = vec2((vUV.x-0.51)/0.49, vUV.y/0.46);
         ivec2 p = ivec2(tMin0 + clamp(int(floor(uv.x*float(tCount))),0,tCount-1),
                         clamp(int(floor(uv.y*float(tauMax))),0,tauMax-1));
@@ -324,24 +326,24 @@ void main(){
     }
 
     // Banda inferior: p_hist vs p_steady inicial/final (modelo seleccionado)
-    if(vUV.y > 0.005 && vUV.y < 0.035){
-        int b = clamp(int(floor(vUV.x * float(nBins))), 0, nBins - 1);
-        vec4 ps = texelFetch(tauFPStationary, ivec2(b, 0), 0); // [pHist,pInit,pFinal,valid]
-        float yH = 0.008 + 0.025 * clamp(ps.x * 28.0, 0.0, 1.0);
-        float yI = 0.008 + 0.025 * clamp(ps.y * 28.0, 0.0, 1.0);
-        float yF = 0.008 + 0.025 * clamp(ps.z * 28.0, 0.0, 1.0);
+    // if(vUV.y > 0.005 && vUV.y < pdfBandTop){
+    //     int b = clamp(int(floor(vUV.x * float(nBins))), 0, nBins - 1);
+    //     vec4 ps = texelFetch(tauFPStationary, ivec2(b, 0), 0); // [pHist,pInit,pFinal,valid]
+    //     float yH = 0.008 + 0.025 * clamp(ps.x * 28.0, 0.0, 1.0);
+    //     float yI = 0.008 + 0.025 * clamp(ps.y * 28.0, 0.0, 1.0);
+    //     float yF = 0.008 + 0.025 * clamp(ps.z * 28.0, 0.0, 1.0);
 
-        float lH = 1.0 - smoothstep(0.0, 0.0014, abs(vUV.y - yH));
-        float lI = 1.0 - smoothstep(0.0, 0.0014, abs(vUV.y - yI));
-        float lF = 1.0 - smoothstep(0.0, 0.0014, abs(vUV.y - yF));
+    //     float lH = 1.0 - smoothstep(0.0, 0.0014, abs(vUV.y - yH));
+    //     float lI = 1.0 - smoothstep(0.0, 0.0014, abs(vUV.y - yI));
+    //     float lF = 1.0 - smoothstep(0.0, 0.0014, abs(vUV.y - yF));
 
-        col = vec3(0.06, 0.06, 0.08);
-        col += vec3(0.1, 0.9, 1.0) * lH;
-        col += vec3(0.9, 0.2, 0.9) * lI;
-        col += vec3(1.0, 0.65, 0.15) * lF;
-        if(ps.w < 0.5) col *= vec3(0.5, 0.4, 0.4);
-        alpha = 0.96;
-    }
+    //     col = vec3(0.06, 0.06, 0.08);
+    //     col += vec3(0.1, 0.9, 1.0) * lH;
+    //     col += vec3(0.9, 0.2, 0.9) * lI;
+    //     col += vec3(1.0, 0.65, 0.15) * lF;
+    //     if(ps.w < 0.5) col *= vec3(0.5, 0.4, 0.4);
+    //     alpha = 0.96;
+    // }
 
     if((vUV.y>=0.459 && vUV.y<=0.461) || (vUV.y>=0.519 && vUV.y<=0.521)){ col = vec3(0.9); alpha = 0.8; }
     if(vUV.x>=0.49 && vUV.x<=0.51 && vUV.y<0.46){ col = vec3(0.9); alpha = 0.8; }

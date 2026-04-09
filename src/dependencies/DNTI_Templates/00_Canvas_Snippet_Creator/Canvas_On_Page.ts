@@ -75,11 +75,12 @@ export const createCanvasNextTo=function(isResized:((string)=>boolean)|boolean=(
     } 
 
 
-    const nextToElement=getElementBySelector(nextToid)
+    const placeholder = document.querySelector(`[data-id="${cid}"]`) as HTMLElement | null;
+    const anchorElement = placeholder ?? getElementBySelector(nextToid);
     const getoffx=(c?)=>{
         let isResizedCanvas=(isResized as any)(cid);
-        if(!nextToElement) return 0;
-        return isResizedCanvas?0:(getPositionOf(nextToElement)?.right+(-(getPositionOf((c as any)?.parentElement?.parentElement)?.left||0)));
+        if(!anchorElement) return 0;
+        return isResizedCanvas?0:(getPositionOf(anchorElement)?.right+(-(getPositionOf((c as any)?.parentElement?.parentElement)?.left||0)));
     }
     let initialBoxCanvas={
         x:(c?)=>{
