@@ -7,9 +7,8 @@ let {
   autoPickBest=true, useLSView=false
   afpLrF=0.04, afpLrS=0.06
   afpL1F=0.0004, afpL1S=0.0002, afpIters=5
-  afpOptLrF=0.02, afpOptLrS=0.03
-  afpOptL1F=0.0002, afpOptL1S=0.0001
-  afpOptL2F=0.0008, afpOptL2S=0.0008, afpOptIters=7
+  afpOptL2F=0.0008, afpOptL2S=0.0008
+  nelderShift=0.02, nelderAlpha=1.0, nelderGamma=2.0, nelderRho=0.5, nelderSigma=0.5, nelderIters=12
   keepTopPercent=20, useFPFilter=true
   fpLogSpanMax=42, modelKLSpanMax=42
   showFPStationary=true, showTauCurves=false
@@ -257,20 +256,21 @@ tick {
       // Entrada: momentos y soluciÃ³n refinada anterior (tauXiFOpt,tauXiSOpt,tauXiMetaOpt).
       // Salida: tauXiFFinal, tauXiSFinal, tauXiMetaFinal.
       // Llamadas: 1 por cada recomputeTau.
-      // Efecto de variables: afpOptLr, afpOptL1, afpOptL2 y afpOptIters aÃ±aden la segunda pasada
-      // de refinamiento, ahora con penalizaciÃ³n L2 para estabilizar coeficientes.
+      // Efecto de variables: Nelder-Mead explora el coste local con penalizaciÃ³n L2 y deja
+      // intacta la rejilla de subsecuencias.
       use tauAFPOpt
       uniforms tauAFPOpt {
          tauMax = {tauMaxVeces}i
          tauMin = {tauMinVeces}i
          nBins = {nBins}i
-         lrF = {afpOptLrF}f
-         lrS = {afpOptLrS}f
-         l1F = {afpOptL1F}f
-         l1S = {afpOptL1S}f
          l2F = {afpOptL2F}f
          l2S = {afpOptL2S}f
-         nIter = {afpOptIters}i
+         nelderShift = {nelderShift}f
+         nelderAlpha = {nelderAlpha}f
+         nelderGamma = {nelderGamma}f
+         nelderRho = {nelderRho}f
+         nelderSigma = {nelderSigma}f
+         nelderIters = {nelderIters}i
       }
       rebind tauAFPOpt {
          tauMom1 -> TexUnit14
@@ -812,6 +812,4 @@ OnKeyPress "c" {
 start
 
 <Pos>
-
-
 
