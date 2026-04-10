@@ -124,7 +124,7 @@ async function __c1Main(){
     
     
     
-                            const __fsTargetC1=canvas as any;
+                                const __fsTargetC1=canvas as any;
     const __baseCanvasW=canvas.width;
     const __baseCanvasH=canvas.height;
     const __baseCanvasStyle={
@@ -179,6 +179,7 @@ async function __c1Main(){
     });
     document.addEventListener("fullscreenchange", __applyCanvasFullscreenC1);
     window.addEventListener("resize", __applyCanvasFullscreenC1);
+
 
 
 
@@ -541,10 +542,6 @@ if((e as any)?.repeat) return;
     showPCA = (!showPCA);
 });
 KeyManager.OnPress("u", async (e)=>{ // OnKeyPress
-if((e as any)?.repeat) return;
-    showSimulatedChrom = (!showSimulatedChrom);
-});
-KeyManager.OnPress("t", async (e)=>{ // OnKeyPress
 if((e as any)?.repeat) return;
     showSimulatedChrom = (!showSimulatedChrom);
 });

@@ -403,3 +403,76 @@ Conviene dejarlo en `*.shaderdsl.ts` cuando:
 - `*.snippet.ts` aporta TypeScript auxiliar inyectado
 - `parsers/testParser*.ts` transforman ambos en `generated/*.ts`
 - `glsl/` contiene los shaders reales compilados por los programas del DSL
+
+
+# TODO
+Estructura compute:
+
+Esto:
+   use tauXi
+   uniforms tauXi {
+      tauMax = {tauMaxVeces}i
+      tauMin = {tauMinVeces}i
+      nBins = {nBins}i
+   }
+   rebind tauXi {
+      tauMom1 -> TexUnit14
+      tauMom2 -> TexUnit15
+   }
+   framebuffer tauXiFBO [tauXiF, tauXiS, tauXiMeta]
+   viewport [0,0,tauMaxVeces,tauMaxVeces]
+   drawTriangles 0 6
+
+Poderse escribir así:
+
+constantAction tauXiActions{
+   uniforms tauXi {
+      tauMax = {tauMaxVeces}i
+      tauMin = {tauMinVeces}i
+      nBins = {nBins}i
+   }
+}
+
+constantAction exampleActions{
+   rebind tauAdjCost {
+      exampleTexture -> TexUnit10
+   }
+   uniforms tauXi {
+      l2F = {afpOptL2F}f
+      l2S = {afpOptL2S}f
+   }
+}
+
+
+compute tauXi -> [tauXiF, tauXiS, tauXiMeta] {
+   // El lenguaje deduce que si el output son 3 texturas, 
+   // debe crear/bindear un FBO con 3 attachments.
+   actions: tauXiActions, exampleActions
+   viewport: [tauMaxVeces, tauMaxVeces]
+   uniforms: {
+      //Otros uniforms que pueden no ser constantes
+   }
+}
+
+o
+
+
+compute tauXi -> [tauXiF, tauXiS, tauXiMeta] {
+   // El lenguaje deduce que si el output son 3 texturas, 
+   // debe crear/bindear un FBO con 3 attachments.
+   actions: {
+      tauXiActions, exampleActions, 
+      otherExampleActions,
+      //Heredan la utilidad pero actúan en tauXi
+   }
+   viewport: [tauMaxVeces, tauMaxVeces]
+   uniforms: {
+      //Otros uniforms que pueden no ser constantes
+   }
+}
+
+
+
+Función readFBO
+
+let exampleArray = readFBO tauMomFBO ColAtch1 [0,0,4,1] TexExamples.RGBAFloat16 dim=4

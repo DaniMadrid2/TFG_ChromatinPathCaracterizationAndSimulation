@@ -293,35 +293,17 @@ void main(){
         alpha = 0.95;
     }
 
-    // Banda central: curvas sindy inicial/final del modelo seleccionado
+    // Banda central: solo f(x) final del modelo seleccionado.
     if(vUV.y > 0.47 && vUV.y < 0.51){
         int b = clamp(int(floor(vUV.x * float(nBins))), 0, nBins - 1);
-        vec4 sf0 = texelFetch(tauSindyInit, ivec2(b, 0), 0); // inicial
         vec4 sf1 = texelFetch(tauSindy, ivec2(b, 0), 0);     // final
 
-        float yF0 = 0.49 - 0.015 * tanh(sf0.y * 0.15);
-        float yA0 = 0.49 - 0.015 * tanh(sf0.w * 0.15);
-        float yS0 = 0.49 - 0.015 * tanh(sf0.z * 0.15);
-
         float yF1 = 0.49 - 0.015 * tanh(sf1.y * 0.15);
-        float yA1 = 0.49 - 0.015 * tanh(sf1.w * 0.15);
-        float yS1 = 0.49 - 0.015 * tanh(sf1.z * 0.15);
-
-        float lF0 = 1.0 - smoothstep(0.0, 0.0014, abs(vUV.y - yF0));
-        float lA0 = 1.0 - smoothstep(0.0, 0.0014, abs(vUV.y - yA0));
-        float lS0 = 1.0 - smoothstep(0.0, 0.0014, abs(vUV.y - yS0));
 
         float lF1 = 1.0 - smoothstep(0.0, 0.0018, abs(vUV.y - yF1));
-        float lA1 = 1.0 - smoothstep(0.0, 0.0018, abs(vUV.y - yA1));
-        float lS1 = 1.0 - smoothstep(0.0, 0.0018, abs(vUV.y - yS1));
 
         col = vec3(0.08, 0.08, 0.1);
-        col += vec3(0.06, 0.45, 0.55) * lF0;
-        col += vec3(0.55, 0.45, 0.08) * lA0;
-        col += vec3(0.55, 0.10, 0.45) * lS0;
         col += vec3(0.1, 0.85, 1.0) * lF1;
-        col += vec3(1.0, 0.82, 0.2) * lA1;
-        col += vec3(1.0, 0.2, 0.85) * lS1;
         alpha = 0.95;
     }
 

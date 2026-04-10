@@ -30,22 +30,22 @@ Se invoca 4 vez/veces desde `main()`.
 
 ## 4. Desglose de `main()`
 ### 4.1. 1 porque tau empieza en 1
-Este subproceso aparece explícitamente señalado por la estructura interna del shader y conviene leerlo como una fase diferenciada del cálculo total.
+Falta desarrollar
 
 ### 4.2. Calcula tau y subseq a partir de modelIdx (1 a tauMax^2)
-Este subproceso aparece explícitamente señalado por la estructura interna del shader y conviene leerlo como una fase diferenciada del cálculo total.
+Falta desarrollar
 
 ### 4.3. Nº de saltos, es decir longitud de la subsecuencia
-Este subproceso aparece explícitamente señalado por la estructura interna del shader y conviene leerlo como una fase diferenciada del cálculo total.
+Falta desarrollar
 
 ### 4.4. Calculamos la diferencia máxima
-Este subproceso aparece explícitamente señalado por la estructura interna del shader y conviene leerlo como una fase diferenciada del cálculo total.
+Falta desarrollar
 
 ### 4.5. SafeMax=maxAbs||1e-9, bw=binWidth, lo=binLowerBound, hi=binUpperBound
-Este subproceso aparece explícitamente señalado por la estructura interna del shader y conviene leerlo como una fase diferenciada del cálculo total.
+Falta desarrollar
 
 ### 4.6. Estos datos se usarán para calcular los momentos de Kramers-Moyal en el shader de SINDY fitting.
-Este subproceso aparece explícitamente señalado por la estructura interna del shader y conviene leerlo como una fase diferenciada del cálculo total.
+Falta desarrollar
 
 ## 5. Resumen matemático
 ### Procesos identificados
@@ -55,6 +55,3 @@ Este subproceso aparece explícitamente señalado por la estructura interna del 
 - \[\\Delta X = X_{t+\\tau}-X_t\]
 - \[f_{KM} \\approx \\langle \\Delta X \\rangle / \\Delta t\]
 - \[a_{KM} \\approx \\langle (\\Delta X)^2 \\rangle / \\Delta t\]
-
-### Observación final
-Este documento se ha construido a partir del propio código del fragmento: comentarios embebidos, firmas, nombres de funciones y estructura del `main()`. En los shaders analíticos conviene contrastarlo también con el vertex asociado y con el bloque del parser que fija uniforms, texturas y FBOs.

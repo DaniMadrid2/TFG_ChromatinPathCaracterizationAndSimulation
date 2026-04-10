@@ -109,14 +109,25 @@ Objetivos:
         let meanXiS=0;
         let meanCnt=0;
         if(!(tauSel>1)) return {meanXiF,meanXiS,meanCnt};
-        const texF=((typeof tauXiFFinal!=="undefined" && tauXiFFinal)?tauXiFFinal:((typeof tauXiF!=="undefined")?tauXiF:null));
-        const texS=((typeof tauXiSFinal!=="undefined" && tauXiSFinal)?tauXiSFinal:((typeof tauXiS!=="undefined")?tauXiS:null));
-        if(!texF || !texS) return {meanXiF,meanXiS,meanCnt};
+        const texFF=((typeof tauXiFFinal!=="undefined" && tauXiFFinal)?tauXiFFinal:null);
+        const texSF=((typeof tauXiSFinal!=="undefined" && tauXiSFinal)?tauXiSFinal:null);
+        const texMF=((typeof tauXiMetaFinal!=="undefined" && tauXiMetaFinal)?tauXiMetaFinal:null);
+        const texFI=((typeof tauXiF!=="undefined")?tauXiF:null);
+        const texSI=((typeof tauXiS!=="undefined")?tauXiS:null);
+        const texMI=((typeof tauXiMeta!=="undefined")?tauXiMeta:null);
+        if((!texFF || !texSF || !texMF) && (!texFI || !texSI || !texMI)) return {meanXiF,meanXiS,meanCnt};
         for(let subseqIdx=0; subseqIdx<tauSel; subseqIdx++){
-            const pf=__readTexPixel(texF,tauSel-1,subseqIdx);
-            const ps=__readTexPixel(texS,tauSel-1,subseqIdx);
-            if(!pf || !ps) continue;
-            const valid=(Number.isFinite(ps[2])?ps[2]:1);
+            let pf=texFF?__readTexPixel(texFF,tauSel-1,subseqIdx):null;
+            let ps=texSF?__readTexPixel(texSF,tauSel-1,subseqIdx):null;
+            let pm=texMF?__readTexPixel(texMF,tauSel-1,subseqIdx):null;
+            let valid=(pm && Number.isFinite(pm[1]))?pm[1]:0;
+            if(valid<=0.5 && texFI && texSI && texMI){
+                pf=__readTexPixel(texFI,tauSel-1,subseqIdx);
+                ps=__readTexPixel(texSI,tauSel-1,subseqIdx);
+                pm=__readTexPixel(texMI,tauSel-1,subseqIdx);
+                valid=(pm && Number.isFinite(pm[1]))?pm[1]:0;
+            }
+            if(!pf || !ps || !pm) continue;
             if(valid<=0.5) continue;
             meanXiF[0]+=Number.isFinite(pf[0])?pf[0]:0;
             meanXiF[1]+=Number.isFinite(pf[1])?pf[1]:0;
@@ -150,6 +161,15 @@ Objetivos:
         realStepMean/=Math.max(1,n-1);
         return {minX,maxX,rangeX:Math.max(1e-6,maxX-minX),realStepMean};
     };
+    const __rowHasSignal=(row:Float32Array|null, bins:number)=>{
+        if(!row || row.length < 4) return false;
+        for(let i=0;i<bins;i++){
+            const k=i*4;
+            const f=row[k+1], s=row[k+2], a=row[k+3];
+            if((Number.isFinite(f) && Math.abs(f)>1e-8) || (Number.isFinite(s) && Math.abs(s)>1e-8) || (Number.isFinite(a) && Math.abs(a)>1e-10)) return true;
+        }
+        return false;
+    };
     // Ajusta una ganancia para que el paso simulado tenga una escala comparable a la observada.
     const __estimateAxisGain=(
         src:Float32Array, n:number,
@@ -174,7 +194,8 @@ Objetivos:
         modelStepMean/=Math.max(1,n-1);
         return {
             modelStepMean,
-            gain:Math.max(0.1,Math.min(250.0,__safeNum(realStepMean/Math.max(1e-6,modelStepMean),1)))
+            // La ganancia ya compensa el paso medio; limitarla evita que la simulacion explote de escala.
+            gain:Math.max(0.1,Math.min(10.0,__safeNum(realStepMean/Math.max(1e-6,modelStepMean),1)))
         };
     };
     //</BridgeSimulationHelpers>
@@ -218,7 +239,11 @@ Objetivos:
         ].join("|");
         if(!force && simKey===__lastSimKey) return false;
 
-        const row=__readTexRow(tauSindyTex,bins,0);
+        let row=__readTexRow(tauSindyTex,bins,0);
+        if(!__rowHasSignal(row,bins) && (typeof tauSindyInitTex!=="undefined") && tauSindyInitTex){
+            const rowInit=__readTexRow(tauSindyInitTex,bins,0);
+            if(__rowHasSignal(rowInit,bins)) row=rowInit;
+        }
         if(!row) return false;
 
         const src=(datos$[X,Y]$1 instanceof Float32Array)?datos$[X,Y]$1:new Float32Array(datos$[X,Y]$1);
@@ -234,7 +259,7 @@ Objetivos:
         const gainInfo=__estimateAxisGain(src,n,minX,rangeX,dt,bins,row,meanXiF,meanXiS,meanCoeffCount,realStepMean);
         const modelStepMean=gainInfo.modelStepMean;
         const gain=gainInfo.gain;
-        const meanAmpBoost=tauSel*0.5;
+        const meanAmpBoost=1.0;
         const useAO=(__aOverrideEnabled && __aOverrideA!==null)?__aOverrideA:null;
 
         const sim$[X,Y]$=new Float32Array(n);
@@ -246,15 +271,26 @@ Objetivos:
             // En promedio sobre subsecuencias acumulamos trayectorias simuladas completas
             // y solo dividimos al final en cada punto para no sesgar la media.
             sim$[X,Y]$.fill(0);
-            const texF=((typeof tauXiFFinal!=="undefined" && tauXiFFinal)?tauXiFFinal:((typeof tauXiF!=="undefined")?tauXiF:null));
-            const texS=((typeof tauXiSFinal!=="undefined" && tauXiSFinal)?tauXiSFinal:((typeof tauXiS!=="undefined")?tauXiS:null));
+            const texFF=((typeof tauXiFFinal!=="undefined" && tauXiFFinal)?tauXiFFinal:null);
+            const texSF=((typeof tauXiSFinal!=="undefined" && tauXiSFinal)?tauXiSFinal:null);
+            const texMF=((typeof tauXiMetaFinal!=="undefined" && tauXiMetaFinal)?tauXiMetaFinal:null);
+            const texFI=((typeof tauXiF!=="undefined")?tauXiF:null);
+            const texSI=((typeof tauXiS!=="undefined")?tauXiS:null);
+            const texMI=((typeof tauXiMeta!=="undefined")?tauXiMeta:null);
             let nUsed=0;
             const cntPerPt=new Uint16Array(n);
             for(let subseqIdx=0; subseqIdx<tauSel; subseqIdx++){
-                const pf=texF?__readTexPixel(texF,tauSel-1,subseqIdx):null;
-                const ps=texS?__readTexPixel(texS,tauSel-1,subseqIdx):null;
-                if(!pf || !ps) continue;
-                const valid=(Number.isFinite(ps[2])?ps[2]:1);
+                let pf=texFF?__readTexPixel(texFF,tauSel-1,subseqIdx):null;
+                let ps=texSF?__readTexPixel(texSF,tauSel-1,subseqIdx):null;
+                let pm=texMF?__readTexPixel(texMF,tauSel-1,subseqIdx):null;
+                let valid=(pm && Number.isFinite(pm[1]))?pm[1]:0;
+                if(valid<=0.5 && texFI && texSI && texMI){
+                    pf=__readTexPixel(texFI,tauSel-1,subseqIdx);
+                    ps=__readTexPixel(texSI,tauSel-1,subseqIdx);
+                    pm=__readTexPixel(texMI,tauSel-1,subseqIdx);
+                    valid=(pm && Number.isFinite(pm[1]))?pm[1]:0;
+                }
+                if(!pf || !ps || !pm) continue;
                 if(valid<=0.5) continue;
                 const coeffF:[number,number,number,number]=[
                     Number.isFinite(pf[0])?pf[0]:0,

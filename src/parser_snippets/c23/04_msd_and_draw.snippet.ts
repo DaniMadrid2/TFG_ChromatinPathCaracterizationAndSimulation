@@ -548,7 +548,7 @@ Objetivos:
             hud.textBaseline="alphabetic";
         };
 
-        drawAxes(xL,yTop0,xR,yTop1,"f(t): init/final",mkLabels(__tauHudRanges.f));
+        drawAxes(xL,yTop0,xR,yTop1,"f(t): final",mkLabels(__tauHudRanges.f));
         drawAxes(xBL0,yBot0,xBL1,yBot1,"s(t): init/final",mkLabelsFixed(0,sRef));
         drawAxes(xBR0,yBot0,xBR1,yBot1,"a(t): init/final",mkLabelsFixed(0,aRef));
         drawAxes(xL,yPdf0,xR,yPdf1,"pdf: hist/init/final",mkLabels(__tauHudRanges.p));
@@ -759,7 +759,7 @@ Objetivos:
             const dBotY=Math.min(H2-8, yBot1 + Math.max(17,Math.round(H2*0.021)) + 3);
             const dPdfY=Math.min(H2-6, yPdf1 + Math.max(20,Math.round(H2*0.023)) + 3); // +3..5px extra para no chocar con idx
 
-            const dTop1="f(t): drift reconstruido con SINDy+AFP; si final difiere de init, corrige sesgo numerico y explica mejor la tendencia neta de movimiento.";
+            const dTop1="f(t): drift final reconstruido con SINDy+AFP para el modelo seleccionado; resume la tendencia neta de movimiento a lo largo del eje.";
             const dBL=[
                 "s(t): amplitud previa de difusion dependiente de posicion.",
                 "Interpretacion practica: cuanto crece el ruido local del proceso.",

@@ -128,10 +128,6 @@ OnKeyPress "u" {
    showSimulatedChrom={!showSimulatedChrom}
 }
 
-OnKeyPress "t" {
-   showSimulatedChrom={!showSimulatedChrom}
-}
-
 OnKeyPress "g" {
    showOtherChromatins={!showOtherChromatins}
 }

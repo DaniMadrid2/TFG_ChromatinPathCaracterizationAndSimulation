@@ -770,6 +770,18 @@ export class DetailedParser {
                     });
                     continue;
                 }
+                const whileMatch = line.match(/^while\s*\(([\s\S]+)\)\s*\{$/);
+                if (whileMatch) {
+                    body.push(`${ind()}while(${_a.transpileExpr(whileMatch[1])}){`);
+                    indent++;
+                    blockStack.push({
+                        kind: "while",
+                        name: "while",
+                        ifDepth: 0,
+                        loopCount: 0,
+                    });
+                    continue;
+                }
                 const blockMatch = line.match(/^(?:(async)\s+)?(\w+)\s*(?:\((.*?)\))?\s*\{$/);
                 if (blockMatch) {
                     const isAsync = blockMatch[1] === "async";
@@ -814,6 +826,11 @@ export class DetailedParser {
                         continue;
                     }
                     const closing = blockStack.pop();
+                    if (closing.kind === "while") {
+                        indent--;
+                        body.push(`${ind()}}`);
+                        continue;
+                    }
                     if (closing.kind === "special" || closing.kind === "named") {
                         for (let j = 0; j < closing.loopCount; j++) {
                             indent--;

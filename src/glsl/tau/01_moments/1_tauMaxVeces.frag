@@ -75,10 +75,16 @@ void main(){
 
     for (int j=0; j<MAX_PAIRS; j++){
         if (j >= m) break;
-        int i0 = subseq + j * tau;
+        //i0 es el indice del punto de partida, 
+        int i0 = subseq + j * tau; 
+        //i1 es el indice del punto final a tau pasos. 
         int i1 = i0 + tau;
+        //La diferencia d = X(i1) - X(i0) es el incremento 
+        //que se usará para calcular los momentos de Kramers-Moyal.
         float d = sampleX(i1) - sampleX(i0);
         float ad = abs(d);
+        //Lo calculamos para cada par y luego filtramos si estamos 
+        //en el bin correcto. (Esto se hace por cada tau, subseq y bin).
         bool inBin = (b == nBins - 1) ? (ad >= lo && ad <= hi) : (ad >= lo && ad < hi);
         if(!inBin) continue;
         float d2 = d * d;

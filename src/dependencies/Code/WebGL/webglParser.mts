@@ -2207,7 +2207,7 @@ export class DetailedParser {
         let scaffoldInserted = false;
 
         type TBlock = {
-            kind: "special" | "named" | "uniforms" | "key" | "keyRelease" | "groupedLet" | "resource" | "programBlock" | "rebind" | "framebufferBlock" | "unbindFBOBlock",
+            kind: "special" | "named" | "uniforms" | "key" | "keyRelease" | "groupedLet" | "resource" | "programBlock" | "rebind" | "framebufferBlock" | "unbindFBOBlock" | "while",
             name: string,
             ifDepth: number,
             loopCount: number,
@@ -2393,6 +2393,19 @@ export class DetailedParser {
                 continue;
             }
 
+            const whileMatch = line.match(/^while\s*\(([\s\S]+)\)\s*\{$/);
+            if (whileMatch) {
+                body.push(`${ind()}while(${DetailedParser.transpileExpr(whileMatch[1])}){`);
+                blockStack.push({
+                    kind: "while",
+                    name: "while",
+                    ifDepth: 0,
+                    loopCount: 0,
+                } as any);
+                indent++;
+                continue;
+            }
+
             const uniformsStart = line.match(/^uniforms(?:\s+(.+?))?\s*\{$/);
             if (uniformsStart) {
                 const programs = uniformsStart[1]
@@ -2522,6 +2535,11 @@ export class DetailedParser {
                     body.push(`${ind()}}`);
                     indent--;
                     body.push(`${ind()});`);
+                    continue;
+                }
+                if (closing.kind === "while") {
+                    indent--;
+                    body.push(`${ind()}}`);
                     continue;
                 }
                 if (closing.kind === "special" || closing.kind === "named") {

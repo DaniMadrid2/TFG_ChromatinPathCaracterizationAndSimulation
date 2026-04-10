@@ -1,14 +1,19 @@
 let {
-  tauMaxVeces=100, tauMinVeces=1
+  tauMaxVeces=10, tauMinVeces=1
   chromatinIndex=1, nBins=64
   tauEStar=1.0, dtSample=1.0
-  recomputeTau=true, tauDebugFrames=4, c2DrawLogFrames=3
+  recomputeTau=false, tauDebugFrames=4, c2DrawLogFrames=3
   bestTau=1, bestSubseq=0
   autoPickBest=true, useLSView=false
   afpLrF=0.04, afpLrS=0.06
   afpL1F=0.0004, afpL1S=0.0002, afpIters=5
   afpOptL2F=0.0008, afpOptL2S=0.0008
-  nelderShift=0.02, nelderAlpha=1.0, nelderGamma=2.0, nelderRho=0.5, nelderSigma=0.5, nelderIters=12
+  nelderShift=0.02, nelderAlpha=1.0, nelderGamma=2.0, 
+  nelderRho=0.5, nelderSigma=0.5, 
+  nelderIters=12, //nº máximo de iteraciones totales de Nelder-Mead (en bloques)
+  nelderChunkIters=5, //nº de iteraciones internas de Nelder-Mead antes de volver a CPU a comprobar flags
+  nelderStopEps=1e-4, // Recomendado para nuestra escala: 1e-5..1e-4
+  useAdjointAFP=true // true: coste con AdjFP truncado; false: coste directo antiguo
   keepTopPercent=20, useFPFilter=true
   fpLogSpanMax=42, modelKLSpanMax=42
   showFPStationary=true, showTauCurves=false
@@ -26,6 +31,7 @@ let tauPolyExpr=(deg)=>deg<0?"0.0":deg===0?"1.0":deg===1?"x":Array(deg).fill("x"
 let tauFTerms=tauFDegrees.length
 let tauSTerms=tauSDegrees.length
 let tauTotalTerms=tauFTerms+tauSTerms
+//Convierte [a,b,c,d] -> x**a+x**b+x**c+x**d
 let tauBasisBody=(degrees)=>degrees.map((d,i)=>"if(termIdx=="+i+") return "+tauPolyExpr(d)+";").join(" ")
 if(tauTotalTerms>8) throw new Error("tauTotalTerms debe ser <= 8 con el empaquetado actual (dos RGBA).")
 
@@ -87,6 +93,33 @@ program tauAFPOpt "tau/03_afp/2_tauAFPOpt" {
 }
 
 
+// file://./glsl/tau/03_afp/3_tauAdjointCost.frag
+program tauAdjCost "tau/03_afp/3_tauAdjointCost" {
+}
+
+
+// file://./glsl/tau/03_afp/4_tauNMSimplexInit.frag
+program tauNMSimplexInit "tau/03_afp/4_tauNMSimplexInit" {
+   tex2D tauNMXiF0[tauMaxVeces,tauMaxVeces*9] TauFloatTex TexUnit4
+   tex2D tauNMXiS0[tauMaxVeces,tauMaxVeces*9] TauFloatTex TexUnit5
+   tex2D tauNMMeta0[tauMaxVeces,tauMaxVeces*9] TauFloatTex TexUnit6
+   tex2D tauNMXiF1[tauMaxVeces,tauMaxVeces*9] TauFloatTex TexUnit7
+   tex2D tauNMXiS1[tauMaxVeces,tauMaxVeces*9] TauFloatTex TexUnit8
+   tex2D tauNMMeta1[tauMaxVeces,tauMaxVeces*9] TauFloatTex TexUnit9
+   tex2D tauNMCost[tauMaxVeces,tauMaxVeces*9] TauFloatTex TexUnit11
+}
+
+
+// file://./glsl/tau/03_afp/5_tauNMStep.frag
+program tauNMStep "tau/03_afp/5_tauNMStep" {
+}
+
+
+// file://./glsl/tau/03_afp/6_tauNMFinalize.frag
+program tauNMFinalize "tau/03_afp/6_tauNMFinalize" {
+}
+
+
 // file://./glsl/tau/04_stats_mask/1_tauModelStats.frag
 program tauStats "tau/04_stats_mask/1_tauModelStats" {
    tex2D tauStats|tauStatsTex[1,1] TauFloatTex TexUnit21
@@ -107,13 +140,13 @@ program tauFP "tau/05_filters/1_tauFPProxy" {
 
 // file://./glsl/tau/05_filters/2_tauModelKL.frag
 program tauKL "tau/05_filters/2_tauModelKL" {
-   tex2D tauKL|tauKLTex[tauMaxVeces,tauMaxVeces] TauFloatTex TexUnit28
+   tex2D tauKL|tauKLTex[tauMaxVeces,tauMaxVeces] TauFloatTex TexUnit4
 }
 
 
 // file://./glsl/tau/05_filters/3_tauModelScore.frag
 program tauScore "tau/05_filters/3_tauModelScore" {
-   tex2D tauScore|tauScoreTex[tauMaxVeces,tauMaxVeces] TauFloatTex TexUnit29
+   tex2D tauScore|tauScoreTex[tauMaxVeces,tauMaxVeces] TauFloatTex TexUnit5
 }
 
 
@@ -125,9 +158,9 @@ program tauBest "tau/06_select/1_tauBestModel" {
 
 // file://./glsl/tau/07_fields/1_tauSindyFields.frag
 program tauSindy "tau/07_fields/1_tauSindyFields" {
-   tex2D tauSindy|tauSindyTex[nBins,1] TauFloatTex TexUnit30
-   tex2D tauSindyInit|tauSindyInitTex[nBins,1] TauFloatTex TexUnit31
-   tex2D tauSindyTau1Ref|tauSindyTau1RefTex[nBins,1] TauFloatTex TexUnit9
+   tex2D tauSindy|tauSindyTex[nBins,1] TauFloatTex TexUnit6
+   tex2D tauSindyInit|tauSindyInitTex[nBins,1] TauFloatTex TexUnit7
+   tex2D tauSindyTau1Ref|tauSindyTau1RefTex[nBins,1] TauFloatTex TexUnit8
 }
 
 
@@ -144,14 +177,14 @@ program drawTau "tau/08_draw/1_drawTauMaxVeces" {
 rebind drawTau {
   tauXiMetaFinal -> TexUnit27
   tauBest -> TexUnit17
-  tauSindy -> TexUnit30
-  tauSindyInit -> TexUnit31
-  tauSindyTau1Ref -> TexUnit9
+  tauSindy -> TexUnit6
+  tauSindyInit -> TexUnit7
+  tauSindyTau1Ref -> TexUnit8
   tauModelMask -> TexUnit22
   tauFPProxy -> TexUnit23
   tauFPStationary -> TexUnit24
-  tauModelKL -> TexUnit28
-  tauModelScore -> TexUnit29
+  tauModelKL -> TexUnit4
+  tauModelScore -> TexUnit5
   tauStats -> TexUnit21
 }
 uniforms drawTau {
@@ -252,41 +285,150 @@ tick {
       drawTriangles 0 6
 
 
-      //? phase 03_afp - tauAFP - file://./glsl/tau/03_afp/1_tauAFP0.frag
-      // Entrada: momentos y soluciÃ³n refinada anterior (tauXiFOpt,tauXiSOpt,tauXiMetaOpt).
+      //? phase 03_afp - tauAFPOpt multipass - file://./glsl/tau/03_afp/2_tauAFPOpt.frag
+      // Entrada: momentos y semilla AFP0 (tauXiFOpt,tauXiSOpt,tauXiMetaOpt).
       // Salida: tauXiFFinal, tauXiSFinal, tauXiMetaFinal.
-      // Llamadas: 1 por cada recomputeTau.
-      // Efecto de variables: Nelder-Mead explora el coste local con penalizaciÃ³n L2 y deja
-      // intacta la rejilla de subsecuencias.
-      use tauAFPOpt
-      uniforms tauAFPOpt {
+      // Llamadas: multipaso dentro del while. Cada iteraci?n hace coste real por v?rtice + paso Nelder-Mead.
+      // Efecto de variables: Nelder-Mead ya se propaga con el coste del shader adjoint, no con uno simplificado fuera del bucle.
+      use tauNMSimplexInit
+      uniforms tauNMSimplexInit {
          tauMax = {tauMaxVeces}i
          tauMin = {tauMinVeces}i
-         nBins = {nBins}i
-         l2F = {afpOptL2F}f
-         l2S = {afpOptL2S}f
          nelderShift = {nelderShift}f
-         nelderAlpha = {nelderAlpha}f
-         nelderGamma = {nelderGamma}f
-         nelderRho = {nelderRho}f
-         nelderSigma = {nelderSigma}f
-         nelderIters = {nelderIters}i
       }
-      rebind tauAFPOpt {
-         tauMom1 -> TexUnit14
-         tauMom2 -> TexUnit15
+      rebind tauNMSimplexInit {
          tauXiFOpt -> TexUnit18
          tauXiSOpt -> TexUnit19
          tauXiMetaOpt -> TexUnit20
       }
-      framebuffer tauAFPOptFBO {
-         tauXiFFinal -> ColAtch0
-         tauXiSFinal -> ColAtch1
-         tauXiMetaFinal -> 2
-      }
-      viewport [0,0,tauMaxVeces,tauMaxVeces]
+      framebuffer tauNMInitFBO [tauNMXiF0, tauNMXiS0, tauNMMeta0]
+      viewport [0,0,tauMaxVeces,tauMaxVeces*9]
       drawTriangles 0 6
 
+      let tauNMReadF=tauNMXiF0
+      let tauNMReadS=tauNMXiS0
+      let tauNMReadM=tauNMMeta0
+      let tauNMWriteF=tauNMXiF1
+      let tauNMWriteS=tauNMXiS1
+      let tauNMWriteM=tauNMMeta1
+      let tauAFPOptDone=false
+      let tauAFPOptPass=0
+      let tauAFPOptMaxPasses={Math.max(1,~~nelderIters)}
+      let tauAFPOptCheckEvery={Math.max(1,~~nelderChunkIters)}
+      while(tauAFPOptPass<tauAFPOptMaxPasses && !tauAFPOptDone){
+         let tauAFPOptChunk={Math.min(tauAFPOptCheckEvery, tauAFPOptMaxPasses-tauAFPOptPass)}
+         let tauNMInner=0
+         while(tauNMInner<tauAFPOptChunk){
+            use tauAdjCost
+            uniforms tauAdjCost {
+               tauMax = {tauMaxVeces}i
+               tauMin = {tauMinVeces}i
+               nBins = {nBins}i
+               l2F = {afpOptL2F}f
+               l2S = {afpOptL2S}f
+               adjointTauScale = {tauEStar * dtSample}f
+               useAdjointAFP = {!!useAdjointAFP?1:0}i
+            }
+            rebind tauAdjCost {
+               tauMom1 -> TexUnit14
+               tauMom2 -> TexUnit15
+               tauNMXiFRead -> TexUnit4
+               tauNMXiSRead -> TexUnit5
+               tauNMMetaRead -> TexUnit6
+            }
+            tauNMReadF.bind("TexUnit4")
+            tauNMReadS.bind("TexUnit5")
+            tauNMReadM.bind("TexUnit6")
+            framebuffer tauNMCostFBO [tauNMCost]
+            viewport [0,0,tauMaxVeces,tauMaxVeces*9]
+            drawTriangles 0 6
+
+            use tauNMStep
+            uniforms tauNMStep {
+               tauMax = {tauMaxVeces}i
+               tauMin = {tauMinVeces}i
+               nelderAlpha = {nelderAlpha}f
+               nelderGamma = {nelderGamma}f
+               nelderRho = {nelderRho}f
+               nelderSigma = {nelderSigma}f
+               nelderStopEps = {nelderStopEps}f
+            }
+            rebind tauNMStep {
+               tauNMXiFRead -> TexUnit4
+               tauNMXiSRead -> TexUnit5
+               tauNMCost -> TexUnit11
+            }
+            tauNMReadF.bind("TexUnit4")
+            tauNMReadS.bind("TexUnit5")
+            tauNMCost.bind("TexUnit11")
+            framebuffer tauNMStepFBO [tauNMWriteF, tauNMWriteS, tauNMWriteM]
+            viewport [0,0,tauMaxVeces,tauMaxVeces*9]
+            drawTriangles 0 6
+
+            let tauNMSwapF=tauNMReadF
+            tauNMReadF=tauNMWriteF
+            tauNMWriteF=tauNMSwapF
+            let tauNMSwapS=tauNMReadS
+            tauNMReadS=tauNMWriteS
+            tauNMWriteS=tauNMSwapS
+            let tauNMSwapM=tauNMReadM
+            tauNMReadM=tauNMWriteM
+            tauNMWriteM=tauNMSwapM
+            tauNMInner+=1
+         }
+
+         use tauAdjCost
+         uniforms tauAdjCost {
+            tauMax = {tauMaxVeces}i
+            tauMin = {tauMinVeces}i
+            nBins = {nBins}i
+            l2F = {afpOptL2F}f
+            l2S = {afpOptL2S}f
+            adjointTauScale = {tauEStar * dtSample}f
+            useAdjointAFP = {!!useAdjointAFP?1:0}i
+         }
+         rebind tauAdjCost {
+            tauMom1 -> TexUnit14
+            tauMom2 -> TexUnit15
+            tauNMXiFRead -> TexUnit4
+            tauNMXiSRead -> TexUnit5
+            tauNMMetaRead -> TexUnit6
+         }
+         tauNMReadF.bind("TexUnit4")
+         tauNMReadS.bind("TexUnit5")
+         tauNMReadM.bind("TexUnit6")
+         framebuffer tauNMCostFBO [tauNMCost]
+         viewport [0,0,tauMaxVeces,tauMaxVeces*9]
+         drawTriangles 0 6
+
+         use tauNMFinalize
+         uniforms tauNMFinalize {
+            tauMax = {tauMaxVeces}i
+            tauMin = {tauMinVeces}i
+         }
+         rebind tauNMFinalize {
+            tauNMXiFRead -> TexUnit4
+            tauNMXiSRead -> TexUnit5
+            tauNMCost -> TexUnit11
+            tauXiFOpt -> TexUnit18
+            tauXiSOpt -> TexUnit19
+            tauXiMetaOpt -> TexUnit20
+         }
+         tauNMReadF.bind("TexUnit4")
+         tauNMReadS.bind("TexUnit5")
+         tauNMCost.bind("TexUnit11")
+         framebuffer tauAFPOptFBO [tauXiFFinal, tauXiSFinal, tauXiMetaFinal]
+         viewport [0,0,tauMaxVeces,tauMaxVeces]
+         drawTriangles 0 6
+
+         gl.finish()
+         let tauAFPOptFlags={Array.from(tauAFPOptFBO.readColorAttachment(2,0,0,tauMaxVeces,tauMaxVeces,TexExamples.RGBAFloat16,4))}
+         tauAFPOptDone={tauAFPOptFlags.every((v,idx,arr)=>((idx%4)!==0) || (arr[idx+1] < 0.5 || arr[idx+3] > 0.5))}
+         tauAFPOptPass+={tauAFPOptChunk}
+      }
+      tauXiFFinal.bind("TexUnit25")
+      tauXiSFinal.bind("TexUnit26")
+      tauXiMetaFinal.bind("TexUnit27")
 
       //? phase 04_stats_mask - tauStats - file://./glsl/tau/04_stats_mask/1_tauModelStats.frag
       // Entrada: tauXiMetaFinal.
@@ -371,6 +513,7 @@ tick {
       framebuffer tauKLFBO [tauKLTex]
       viewport [0,0,tauMaxVeces,tauMaxVeces]
       drawTriangles 0 6
+      tauKLTex.bind("TexUnit4")
 
 
       //? phase 05_filters - tauScore - file://./glsl/tau/05_filters/3_tauModelScore.frag
@@ -393,12 +536,13 @@ tick {
          tauXiMetaFinal -> TexUnit27
          tauModelMask -> TexUnit22
          tauFPProxy -> TexUnit23
-         tauModelKL -> TexUnit28
+         tauModelKL -> TexUnit4
          tauStats -> TexUnit21
       }
       framebuffer tauScoreFBO [tauScoreTex]
       viewport [0,0,tauMaxVeces,tauMaxVeces]
       drawTriangles 0 6
+      tauScoreTex.bind("TexUnit5")
 
 
       //? phase 06_select - tauBest - file://./glsl/tau/06_select/1_tauBestModel.frag
@@ -419,11 +563,12 @@ tick {
          tauXiMetaFinal -> TexUnit27
          tauModelMask -> TexUnit22
          tauFPProxy -> TexUnit23
-         tauModelScore -> TexUnit29
+         tauModelScore -> TexUnit5
       }
       framebuffer tauBestFBO [tauBestTex]
       viewport [0,0,1,1]
       drawTriangles 0 6
+      tauBestTex.bind("TexUnit17")
 
 
       //? phase 07_fields - tauSindy (init) - file://./glsl/tau/07_fields/1_tauSindyFields.frag
@@ -457,6 +602,7 @@ tick {
       framebuffer tauSindyInitFBO [tauSindyInitTex]
       viewport [0,0,nBins,1]
       drawTriangles 0 6
+      tauSindyInitTex.bind("TexUnit7")
 
 
       //? phase 07_fields - tauSindy (tau=1 ref) - file://./glsl/tau/07_fields/1_tauSindyFields.frag
@@ -474,6 +620,7 @@ tick {
       framebuffer tauSindyTau1RefFBO [tauSindyTau1RefTex]
       viewport [0,0,nBins,1]
       drawTriangles 0 6
+      tauSindyTau1RefTex.bind("TexUnit8")
 
 
       //? phase 07_fields - tauSindy (final) - file://./glsl/tau/07_fields/1_tauSindyFields.frag
@@ -495,6 +642,7 @@ tick {
       framebuffer tauSindyFBO [tauSindyTex]
       viewport [0,0,nBins,1]
       drawTriangles 0 6
+      tauSindyTex.bind("TexUnit6")
 
 
       //? phase 07_fields - tauFPStat - file://./glsl/tau/07_fields/2_tauFPStationary.frag
@@ -533,6 +681,7 @@ tick {
       framebuffer tauFPStatFBO [tauFPStatTex]
       viewport [0,0,nBins,1]
       drawTriangles 0 6
+      tauFPStatTex.bind("TexUnit24")
 
 
       //? phase 09_debug - reads / logs
@@ -622,8 +771,64 @@ drawTauPanel (20) {
    if(bestSubseq>=bestTau){
       bestSubseq={Math.max(0,bestTau-1)}
    }
+
+   // Mantiene en sincronía las curvas/pdfs seleccionadas al moverse con z/x/c/v,
+   // sin volver a lanzar todo el pipeline de tau.
+   use tauSindy
+   tauSindy.VAO.bind()
+   viewport tauSindy {[0,0,nBins,1]}
+   uniforms tauSindy {
+      tauMax = {tauMaxVeces}i
+      nBins = {nBins}i
+      selectedTau = {bestTau}i
+      selectedSubseq = {bestSubseq}i
+      useSelected = 1i
+   }
+   rebind tauSindy {
+      tauMom1 -> TexUnit14
+      tauXiF -> TexUnit25
+      tauXiS -> TexUnit26
+      tauBest -> TexUnit17
+   }
+   framebuffer tauSindyPreviewFBO [tauSindyTex]
+   drawTriangles 0 6
+   tauSindyTex.bind("TexUnit6")
+
+   use tauFPStat
+   tauFPStat.VAO.bind()
+   viewport tauFPStat {[0,0,nBins,1]}
+   uniforms tauFPStat {
+      tauMax = {tauMaxVeces}i
+      tauMin = {tauMinVeces}i
+      nBins = {nBins}i
+      selectedTau = {bestTau}i
+      selectedSubseq = {bestSubseq}i
+      useSelected = 1i
+   }
+   rebind tauFPStat {
+      tauMom1 -> TexUnit14
+      tauXiFOpt -> TexUnit18
+      tauXiSOpt -> TexUnit19
+      tauXiMetaOpt -> TexUnit20
+      tauXiFFinal -> TexUnit25
+      tauXiSFinal -> TexUnit26
+      tauXiMetaFinal -> TexUnit27
+      tauBest -> TexUnit17
+   }
+   framebuffer tauFPStatPreviewFBO [tauFPStatTex]
+   drawTriangles 0 6
+   tauFPStatTex.bind("TexUnit24")
+
    gl.bindFramebuffer(gl.FRAMEBUFFER, null)
    gl.disable(gl.DEPTH_TEST)
+   tauXiMetaFinal.bind("TexUnit27")
+   tauBestTex.bind("TexUnit17")
+   tauSindyTex.bind("TexUnit6")
+   tauSindyInitTex.bind("TexUnit7")
+   tauSindyTau1RefTex.bind("TexUnit8")
+   tauFPStatTex.bind("TexUnit24")
+   tauKLTex.bind("TexUnit4")
+   tauScoreTex.bind("TexUnit5")
    use drawTau
    drawTau.VAO.bind()
    viewport drawTau {[0,0,canvas.width,canvas.height]}
@@ -638,13 +843,13 @@ drawTauPanel (20) {
    }
    rebind drawTau {
       tauBest -> TexUnit17
-      tauSindy -> TexUnit30
-      tauSindyInit -> TexUnit31
-      tauSindyTau1Ref -> TexUnit9
+      tauSindy -> TexUnit6
+      tauSindyInit -> TexUnit7
+      tauSindyTau1Ref -> TexUnit8
       tauModelMask -> TexUnit22
       tauFPProxy -> TexUnit23
-      tauModelKL -> TexUnit28
-      tauModelScore -> TexUnit29
+      tauModelKL -> TexUnit4
+      tauModelScore -> TexUnit5
       tauFPStationary -> TexUnit24
       tauStats -> TexUnit21
    }
@@ -676,7 +881,6 @@ OnKeyPress "q" {
 
 OnKeyPress "e" {
    autoPickBest={!autoPickBest}
-   recomputeTau=true
 }
 
 OnKeyPress "n" {
@@ -754,7 +958,6 @@ OnKeyPress "x" {
       bestSubseq={bestTau-1}
    }
    bestSubseq={Math.max(0,~~bestSubseq)}
-   __requestTauRecompute()
 }
 
 OnKeyPress "z" {
@@ -776,7 +979,6 @@ OnKeyPress "z" {
       bestSubseq={bestTau-1}
    }
    bestSubseq={Math.max(0,~~bestSubseq)}
-   __requestTauRecompute()
 }
 
 OnKeyPress "v" {
@@ -789,7 +991,6 @@ OnKeyPress "v" {
       autoPickBest=false
       bestSubseq={(bestSubseq+1)%bestTau}
       bestSubseq={Math.max(0,~~bestSubseq)}
-      __requestTauRecompute()
    }
 }
 
@@ -803,7 +1004,6 @@ OnKeyPress "c" {
       autoPickBest=false
       bestSubseq={(bestSubseq-1+bestTau)%bestTau}
       bestSubseq={Math.max(0,~~bestSubseq)}
-      __requestTauRecompute()
    }else{
       log "C2 c: tau actual no tiene subsecuencias" {bestTau}
    }
@@ -812,4 +1012,3 @@ OnKeyPress "c" {
 start
 
 <Pos>
-

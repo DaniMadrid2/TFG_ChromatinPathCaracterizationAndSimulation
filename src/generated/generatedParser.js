@@ -421,11 +421,6 @@ async function __c1Main() {
             return;
         showSimulatedChrom = (!showSimulatedChrom);
     });
-    KeyManager.OnPress("t", async (e) => {
-        if (e?.repeat)
-            return;
-        showSimulatedChrom = (!showSimulatedChrom);
-    });
     KeyManager.OnPress("g", async (e) => {
         if (e?.repeat)
             return;

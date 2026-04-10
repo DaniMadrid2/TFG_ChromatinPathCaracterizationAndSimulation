@@ -34,7 +34,7 @@ void tauUnpack(vec4 p0, vec4 p1, out float coeffs[TAU_MAX_TOTAL_TERMS]){
     coeffs[4]=p1.x; coeffs[5]=p1.y; coeffs[6]=p1.z; coeffs[7]=p1.w;
 }
 float tauEvalF(float coeffs[TAU_MAX_TOTAL_TERMS], float x){ float acc=0.0; for(int i=0;i<TAU_MAX_TOTAL_TERMS;i++){ if(i>=TAU_F_TERMS) break; acc += coeffs[i]*tauFBasis(i,x);} return acc; }
-float tauEvalS(float coeffs[TAU_MAX_TOTAL_TERMS], float x){ float acc=0.0; for(int i=0;i<TAU_MAX_TOTAL_TERMS;i++){ if(i>=TAU_S_TERMS) break; acc += coeffs[TAU_F_TERMS+i]*tauSBasis(i,x);} return 2.0*acc; }
+float tauEvalS(float coeffs[TAU_MAX_TOTAL_TERMS], float x){ float acc=0.0; for(int i=0;i<TAU_MAX_TOTAL_TERMS;i++){ if(i>=TAU_S_TERMS) break; acc += coeffs[TAU_F_TERMS+i]*tauSBasis(i,x);} return max(abs(2.0*acc), 1e-6); }
 
 void main(){
     ivec2 pos = ivec2(gl_FragCoord.xy - vec2(0.5));

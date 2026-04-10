@@ -46,7 +46,7 @@ float tauEvalS(float coeffs[TAU_MAX_TOTAL_TERMS], float x){
         if(i >= TAU_S_TERMS) break;
         acc += coeffs[TAU_F_TERMS + i] * tauSBasis(i, x);
     }
-    return 2.0 * acc;
+    return max(abs(2.0 * acc), 1e-6);
 }
 
 float tauSObsErr(float aKM, float aErr){
@@ -212,7 +212,6 @@ void main(){
     }
 
     float cost = 0.0;
-    float minSFit = 1e30;
     for (int b=0; b<256; b++){
         if (b >= nBins) break;
         vec4 st = texelFetch(tauMom2, ivec2(b, modelIdx), 0);
@@ -226,7 +225,6 @@ void main(){
         float fFit = tauEvalF(coeffs, x);
         float yS = sqrt(max(2.0 * aKM, 0.0));
         float sFit = tauEvalS(coeffs, x);
-        minSFit = min(minSFit, sFit);
 
         float ySErr = tauSObsErr(aKM, aErr);
         float wF = 1.0 / max(fErr * fErr, 1e-6);
@@ -235,7 +233,7 @@ void main(){
     }
     cost /= max(nUsed, 1.0);
 
-    float valid = minSFit > 0.0 ? 1.0 : 0.0;
+    float valid = (abs(cost) < 1e30 && nUsed >= float(max(TAU_F_TERMS, TAU_S_TERMS))) ? 1.0 : 0.0;
     tauXiF = vec4(coeffs[0], coeffs[1], coeffs[2], coeffs[3]);
     tauXiS = vec4(coeffs[4], coeffs[5], coeffs[6], coeffs[7]);
     tauXiMeta = vec4(cost, valid, nUsed, 0.0);
