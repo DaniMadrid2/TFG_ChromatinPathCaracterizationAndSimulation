@@ -13,6 +13,8 @@ let {
   nelderIters=12, //nº máximo de iteraciones totales de Nelder-Mead (en bloques)
   nelderChunkIters=5, //nº de iteraciones internas de Nelder-Mead antes de volver a CPU a comprobar flags
   nelderStopEps=1e-4, // Recomendado para nuestra escala: 1e-5..1e-4
+  tauAdjTauBatch=1, tauExpTerms=2,
+  tauKLReg=0.05,
   useAdjointAFP=true // true: coste con AdjFP truncado; false: coste directo antiguo
   keepTopPercent=20, useFPFilter=true
   fpLogSpanMax=42, modelKLSpanMax=42
@@ -117,6 +119,36 @@ program tauNMStep "tau/03_afp/5_tauNMStep" {
 
 // file://./glsl/tau/03_afp/6_tauNMFinalize.frag
 program tauNMFinalize "tau/03_afp/6_tauNMFinalize" {
+}
+
+
+// file://./glsl/tau/03_afp/7_tauAdjointFields.frag
+program tauAdjFields "tau/03_afp/7_tauAdjointFields" {
+   tex2D tauAdjFields|tauAdjFieldsTex[nBins,tauAdjTauBatch*tauMaxVeces*9] TauFloatTex TexUnit28
+}
+
+
+// file://./glsl/tau/03_afp/8_tauAdjointDiffOps.frag
+program tauAdjDiffOps "tau/03_afp/8_tauAdjointDiffOps" {
+   tex2D tauAdjDiffOps|tauAdjDiffOpsTex[nBins*nBins,tauAdjTauBatch*tauMaxVeces*9] TauFloatTex TexUnit29
+}
+
+
+// file://./glsl/tau/03_afp/9_tauAdjointOperator.frag
+program tauAdjOperator "tau/03_afp/9_tauAdjointOperator" {
+   tex2D tauAdjOperator|tauAdjOperatorTex[nBins*nBins,tauAdjTauBatch*tauMaxVeces*9] TauFloatTex TexUnit30
+}
+
+
+// file://./glsl/tau/03_afp/10_tauAdjointExp.frag
+program tauAdjExp "tau/03_afp/10_tauAdjointExp" {
+   tex2D tauAdjExp|tauAdjExpTex[nBins,tauAdjTauBatch*tauMaxVeces*9] TauFloatTex TexUnit31
+}
+
+
+// file://./glsl/tau/03_afp/11_tauSteadyFP.frag
+program tauSteadyFP "tau/03_afp/11_tauSteadyFP" {
+   tex2D tauSteadyFP|tauSteadyFPTex[nBins,tauAdjTauBatch*tauMaxVeces*9] TauFloatTex TexUnit29
 }
 
 
@@ -319,29 +351,137 @@ tick {
          let tauAFPOptChunk={Math.min(tauAFPOptCheckEvery, tauAFPOptMaxPasses-tauAFPOptPass)}
          let tauNMInner=0
          while(tauNMInner<tauAFPOptChunk){
-            use tauAdjCost
-            uniforms tauAdjCost {
-               tauMax = {tauMaxVeces}i
-               tauMin = {tauMinVeces}i
-               nBins = {nBins}i
-               l2F = {afpOptL2F}f
-               l2S = {afpOptL2S}f
-               adjointTauScale = {tauEStar * dtSample}f
-               useAdjointAFP = {!!useAdjointAFP?1:0}i
+            let tauAdjX0=0
+            while(tauAdjX0<tauMaxVeces){
+               let tauAdjCount={Math.min(Math.max(1,~~tauAdjTauBatch), tauMaxVeces-tauAdjX0)}
+
+               use tauAdjFields
+               uniforms tauAdjFields {
+                  tauMax = {tauMaxVeces}i
+                  tauMin = {tauMinVeces}i
+                  nBins = {nBins}i
+                  tauBatchOffset = {tauAdjX0}i
+                  tauBatchCount = {tauAdjCount}i
+               }
+               rebind tauAdjFields {
+                  tauMom1 -> TexUnit14
+                  tauNMXiFRead -> TexUnit4
+                  tauNMXiSRead -> TexUnit5
+                  tauNMMetaRead -> TexUnit6
+               }
+               tauNMReadF.bind("TexUnit4")
+               tauNMReadS.bind("TexUnit5")
+               tauNMReadM.bind("TexUnit6")
+               framebuffer tauAdjFieldsFBO [tauAdjFieldsTex]
+               viewport [0,0,nBins,tauAdjCount*tauMaxVeces*9]
+               drawTriangles 0 6
+
+               use tauAdjDiffOps
+               uniforms tauAdjDiffOps {
+                  tauMax = {tauMaxVeces}i
+                  tauMin = {tauMinVeces}i
+                  nBins = {nBins}i
+                  tauBatchOffset = {tauAdjX0}i
+                  tauBatchCount = {tauAdjCount}i
+               }
+               rebind tauAdjDiffOps {
+                  tauMom1 -> TexUnit14
+               }
+               framebuffer tauAdjDiffOpsFBO [tauAdjDiffOpsTex]
+               viewport [0,0,nBins*nBins,tauAdjCount*tauMaxVeces*9]
+               drawTriangles 0 6
+
+               use tauAdjOperator
+               uniforms tauAdjOperator {
+                  tauMax = {tauMaxVeces}i
+                  tauMin = {tauMinVeces}i
+                  nBins = {nBins}i
+                  tauBatchOffset = {tauAdjX0}i
+                  tauBatchCount = {tauAdjCount}i
+               }
+               rebind tauAdjOperator {
+                  tauAdjFields -> TexUnit28
+                  tauAdjDiffOps -> TexUnit29
+               }
+               tauAdjFieldsTex.bind("TexUnit28")
+               tauAdjDiffOpsTex.bind("TexUnit29")
+               framebuffer tauAdjOperatorFBO [tauAdjOperatorTex]
+               viewport [0,0,nBins*nBins,tauAdjCount*tauMaxVeces*9]
+               drawTriangles 0 6
+
+               use tauAdjExp
+               uniforms tauAdjExp {
+                  tauMax = {tauMaxVeces}i
+                  tauMin = {tauMinVeces}i
+                  nBins = {nBins}i
+                  tauBatchOffset = {tauAdjX0}i
+                  tauBatchCount = {tauAdjCount}i
+                  adjointTauScale = {tauEStar * dtSample}f
+                  tauExpTerms = {Math.max(1, Math.min(2, ~~tauExpTerms))}i
+               }
+               rebind tauAdjExp {
+                  tauAdjFields -> TexUnit28
+                  tauAdjOperator -> TexUnit30
+               }
+               tauAdjFieldsTex.bind("TexUnit28")
+               tauAdjOperatorTex.bind("TexUnit30")
+               framebuffer tauAdjExpFBO [tauAdjExpTex]
+               viewport [0,0,nBins,tauAdjCount*tauMaxVeces*9]
+               drawTriangles 0 6
+
+               use tauSteadyFP
+               uniforms tauSteadyFP {
+                  tauMax = {tauMaxVeces}i
+                  tauMin = {tauMinVeces}i
+                  nBins = {nBins}i
+                  tauBatchOffset = {tauAdjX0}i
+                  tauBatchCount = {tauAdjCount}i
+                  fpLogSpanMax = {fpLogSpanMax}f
+               }
+               rebind tauSteadyFP {
+                  tauMom1 -> TexUnit14
+                  tauAdjFields -> TexUnit28
+               }
+               tauAdjFieldsTex.bind("TexUnit28")
+               framebuffer tauSteadyFPFBO [tauSteadyFPTex]
+               viewport [0,0,nBins,tauAdjCount*tauMaxVeces*9]
+               drawTriangles 0 6
+
+               use tauAdjCost
+               uniforms tauAdjCost {
+                  tauMax = {tauMaxVeces}i
+                  tauMin = {tauMinVeces}i
+                  nBins = {nBins}i
+                  tauBatchOffset = {tauAdjX0}i
+                  tauBatchCount = {tauAdjCount}i
+                  l2F = {afpOptL2F}f
+                  l2S = {afpOptL2S}f
+                  adjointTauScale = {tauEStar * dtSample}f
+                  useAdjointAFP = {!!useAdjointAFP?1:0}i
+                  klReg = {tauKLReg}f
+               }
+               rebind tauAdjCost {
+                  tauMom1 -> TexUnit14
+                  tauMom2 -> TexUnit15
+                  tauNMXiFRead -> TexUnit4
+                  tauNMXiSRead -> TexUnit5
+                  tauNMMetaRead -> TexUnit6
+                  tauAdjFields -> TexUnit28
+                  tauSteadyFP -> TexUnit29
+                  tauAdjExp -> TexUnit31
+               }
+               tauNMReadF.bind("TexUnit4")
+               tauNMReadS.bind("TexUnit5")
+               tauNMReadM.bind("TexUnit6")
+               tauAdjFieldsTex.bind("TexUnit28")
+               tauSteadyFPTex.bind("TexUnit29")
+               tauAdjExpTex.bind("TexUnit31")
+               framebuffer tauNMCostFBO [tauNMCost]
+               viewport [tauAdjX0,0,tauAdjCount,tauMaxVeces*9]
+               drawTriangles 0 6
+
+               tauAdjX0+={tauAdjCount}
             }
-            rebind tauAdjCost {
-               tauMom1 -> TexUnit14
-               tauMom2 -> TexUnit15
-               tauNMXiFRead -> TexUnit4
-               tauNMXiSRead -> TexUnit5
-               tauNMMetaRead -> TexUnit6
-            }
-            tauNMReadF.bind("TexUnit4")
-            tauNMReadS.bind("TexUnit5")
-            tauNMReadM.bind("TexUnit6")
-            framebuffer tauNMCostFBO [tauNMCost]
-            viewport [0,0,tauMaxVeces,tauMaxVeces*9]
-            drawTriangles 0 6
 
             use tauNMStep
             uniforms tauNMStep {
@@ -377,29 +517,137 @@ tick {
             tauNMInner+=1
          }
 
-         use tauAdjCost
-         uniforms tauAdjCost {
-            tauMax = {tauMaxVeces}i
-            tauMin = {tauMinVeces}i
-            nBins = {nBins}i
-            l2F = {afpOptL2F}f
-            l2S = {afpOptL2S}f
-            adjointTauScale = {tauEStar * dtSample}f
-            useAdjointAFP = {!!useAdjointAFP?1:0}i
+         let tauAdjX0=0
+         while(tauAdjX0<tauMaxVeces){
+            let tauAdjCount={Math.min(Math.max(1,~~tauAdjTauBatch), tauMaxVeces-tauAdjX0)}
+
+            use tauAdjFields
+            uniforms tauAdjFields {
+               tauMax = {tauMaxVeces}i
+               tauMin = {tauMinVeces}i
+               nBins = {nBins}i
+               tauBatchOffset = {tauAdjX0}i
+               tauBatchCount = {tauAdjCount}i
+            }
+            rebind tauAdjFields {
+               tauMom1 -> TexUnit14
+               tauNMXiFRead -> TexUnit4
+               tauNMXiSRead -> TexUnit5
+               tauNMMetaRead -> TexUnit6
+            }
+            tauNMReadF.bind("TexUnit4")
+            tauNMReadS.bind("TexUnit5")
+            tauNMReadM.bind("TexUnit6")
+            framebuffer tauAdjFieldsFBO [tauAdjFieldsTex]
+            viewport [0,0,nBins,tauAdjCount*tauMaxVeces*9]
+            drawTriangles 0 6
+
+            use tauAdjDiffOps
+            uniforms tauAdjDiffOps {
+               tauMax = {tauMaxVeces}i
+               tauMin = {tauMinVeces}i
+               nBins = {nBins}i
+               tauBatchOffset = {tauAdjX0}i
+               tauBatchCount = {tauAdjCount}i
+            }
+            rebind tauAdjDiffOps {
+               tauMom1 -> TexUnit14
+            }
+            framebuffer tauAdjDiffOpsFBO [tauAdjDiffOpsTex]
+            viewport [0,0,nBins*nBins,tauAdjCount*tauMaxVeces*9]
+            drawTriangles 0 6
+
+            use tauAdjOperator
+            uniforms tauAdjOperator {
+               tauMax = {tauMaxVeces}i
+               tauMin = {tauMinVeces}i
+               nBins = {nBins}i
+               tauBatchOffset = {tauAdjX0}i
+               tauBatchCount = {tauAdjCount}i
+            }
+            rebind tauAdjOperator {
+               tauAdjFields -> TexUnit28
+               tauAdjDiffOps -> TexUnit29
+            }
+            tauAdjFieldsTex.bind("TexUnit28")
+            tauAdjDiffOpsTex.bind("TexUnit29")
+            framebuffer tauAdjOperatorFBO [tauAdjOperatorTex]
+            viewport [0,0,nBins*nBins,tauAdjCount*tauMaxVeces*9]
+            drawTriangles 0 6
+
+            use tauAdjExp
+            uniforms tauAdjExp {
+               tauMax = {tauMaxVeces}i
+               tauMin = {tauMinVeces}i
+               nBins = {nBins}i
+               tauBatchOffset = {tauAdjX0}i
+               tauBatchCount = {tauAdjCount}i
+               adjointTauScale = {tauEStar * dtSample}f
+               tauExpTerms = {Math.max(1, Math.min(2, ~~tauExpTerms))}i
+            }
+            rebind tauAdjExp {
+               tauAdjFields -> TexUnit28
+               tauAdjOperator -> TexUnit30
+            }
+            tauAdjFieldsTex.bind("TexUnit28")
+            tauAdjOperatorTex.bind("TexUnit30")
+            framebuffer tauAdjExpFBO [tauAdjExpTex]
+            viewport [0,0,nBins,tauAdjCount*tauMaxVeces*9]
+            drawTriangles 0 6
+
+            use tauSteadyFP
+            uniforms tauSteadyFP {
+               tauMax = {tauMaxVeces}i
+               tauMin = {tauMinVeces}i
+               nBins = {nBins}i
+               tauBatchOffset = {tauAdjX0}i
+               tauBatchCount = {tauAdjCount}i
+               fpLogSpanMax = {fpLogSpanMax}f
+            }
+            rebind tauSteadyFP {
+               tauMom1 -> TexUnit14
+               tauAdjFields -> TexUnit28
+            }
+            tauAdjFieldsTex.bind("TexUnit28")
+            framebuffer tauSteadyFPFBO [tauSteadyFPTex]
+            viewport [0,0,nBins,tauAdjCount*tauMaxVeces*9]
+            drawTriangles 0 6
+
+            use tauAdjCost
+            uniforms tauAdjCost {
+               tauMax = {tauMaxVeces}i
+               tauMin = {tauMinVeces}i
+               nBins = {nBins}i
+               tauBatchOffset = {tauAdjX0}i
+               tauBatchCount = {tauAdjCount}i
+               l2F = {afpOptL2F}f
+               l2S = {afpOptL2S}f
+               adjointTauScale = {tauEStar * dtSample}f
+               useAdjointAFP = {!!useAdjointAFP?1:0}i
+               klReg = {tauKLReg}f
+            }
+            rebind tauAdjCost {
+               tauMom1 -> TexUnit14
+               tauMom2 -> TexUnit15
+               tauNMXiFRead -> TexUnit4
+               tauNMXiSRead -> TexUnit5
+               tauNMMetaRead -> TexUnit6
+               tauAdjFields -> TexUnit28
+               tauSteadyFP -> TexUnit29
+               tauAdjExp -> TexUnit31
+            }
+            tauNMReadF.bind("TexUnit4")
+            tauNMReadS.bind("TexUnit5")
+            tauNMReadM.bind("TexUnit6")
+            tauAdjFieldsTex.bind("TexUnit28")
+            tauSteadyFPTex.bind("TexUnit29")
+            tauAdjExpTex.bind("TexUnit31")
+            framebuffer tauNMCostFBO [tauNMCost]
+            viewport [tauAdjX0,0,tauAdjCount,tauMaxVeces*9]
+            drawTriangles 0 6
+
+            tauAdjX0+={tauAdjCount}
          }
-         rebind tauAdjCost {
-            tauMom1 -> TexUnit14
-            tauMom2 -> TexUnit15
-            tauNMXiFRead -> TexUnit4
-            tauNMXiSRead -> TexUnit5
-            tauNMMetaRead -> TexUnit6
-         }
-         tauNMReadF.bind("TexUnit4")
-         tauNMReadS.bind("TexUnit5")
-         tauNMReadM.bind("TexUnit6")
-         framebuffer tauNMCostFBO [tauNMCost]
-         viewport [0,0,tauMaxVeces,tauMaxVeces*9]
-         drawTriangles 0 6
 
          use tauNMFinalize
          uniforms tauNMFinalize {
