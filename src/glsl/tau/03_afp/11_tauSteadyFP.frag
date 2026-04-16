@@ -16,12 +16,32 @@ layout(location = 0) out vec4 tauSteadyFPOut; // [pStat, pHist, valid, logSpan]
 const int TAU_MAX_TOTAL_TERMS = 8;
 const int NM_STORE_VERTS = TAU_MAX_TOTAL_TERMS + 1;
 
+bool tauFinite(float v){
+    return (v == v) && (abs(v) < 1e30);
+}
+
 float fieldA(int packedRow, int b){
     return max(texelFetch(tauAdjFields, ivec2(b, packedRow), 0).z, 1e-8);
 }
 
 float fieldF(int packedRow, int b){
     return texelFetch(tauAdjFields, ivec2(b, packedRow), 0).y;
+}
+
+float faceRatio(int packedRow, int k){
+    int k1 = min(k + 1, max(nBins - 1, 0));
+    float aFace = max(0.5 * (fieldA(packedRow, k) + fieldA(packedRow, k1)), 1e-8);
+    float fFace = 0.5 * (fieldF(packedRow, k) + fieldF(packedRow, k1));
+    return fFace / aFace;
+}
+
+float logQAt(int packedRow, int b, float dx){
+    float integ = 0.0;
+    for(int k = 0; k < 256; k++){
+        if(k >= nBins - 1 || k >= b) break;
+        integ += dx * faceRatio(packedRow, k);
+    }
+    return clamp(integ - log(fieldA(packedRow, b)), -fpLogSpanMax, fpLogSpanMax);
 }
 
 void main(){
@@ -54,40 +74,29 @@ void main(){
     float maxAbs = texelFetch(tauMom1, ivec2(0, modelIdx), 0).w;
     float dx = max(maxAbs, 1e-9) / float(max(nBins, 1));
 
-    float integ = 0.0;
-    for(int k = 0; k < 256; k++){
-        if(k >= nBins - 1 || k >= b) break;
-        float rk = fieldF(packedRow, k) / fieldA(packedRow, k);
-        float rk1 = fieldF(packedRow, k + 1) / fieldA(packedRow, k + 1);
-        integ += 0.5 * dx * (rk + rk1);
-    }
-
     float minLogQ = 1e20;
     float maxLogQ = -1e20;
-    float norm = 0.0;
     float totalCnt = 0.0;
     for(int k = 0; k < 256; k++){
         if(k >= nBins) break;
-        float integK = 0.0;
-        for(int q = 0; q < 256; q++){
-            if(q >= nBins - 1 || q >= k) break;
-            float rq = fieldF(packedRow, q) / fieldA(packedRow, q);
-            float rq1 = fieldF(packedRow, q + 1) / fieldA(packedRow, q + 1);
-            integK += 0.5 * dx * (rq + rq1);
-        }
-        float logQk = clamp(integK - log(fieldA(packedRow, k)), -fpLogSpanMax, fpLogSpanMax);
-        float qk = exp(logQk);
-        norm += qk * dx;
+        float logQk = logQAt(packedRow, k, dx);
         minLogQ = min(minLogQ, logQk);
         maxLogQ = max(maxLogQ, logQk);
         totalCnt += max(texelFetch(tauMom1, ivec2(k, modelIdx), 0).x, 0.0);
     }
 
-    float logQ = clamp(integ - log(fieldA(packedRow, b)), -fpLogSpanMax, fpLogSpanMax);
-    float pStat = exp(logQ) / max(norm, 1e-8);
+    float norm = 0.0;
+    for(int k = 0; k < 256; k++){
+        if(k >= nBins) break;
+        float logQk = logQAt(packedRow, k, dx);
+        norm += exp(logQk - maxLogQ) * dx;
+    }
+
+    float logQ = logQAt(packedRow, b, dx);
+    float pStat = exp(logQ - maxLogQ) / max(norm, 1e-8);
     float cnt = max(texelFetch(tauMom1, ivec2(b, modelIdx), 0).x, 0.0);
     float pHist = cnt / max(totalCnt * dx, 1e-8);
     float span = maxLogQ - minLogQ;
-    float valid = (isfinite(pStat) && isfinite(pHist) && norm > 0.0 && span <= fpLogSpanMax) ? 1.0 : 0.0;
+    float valid = (tauFinite(pStat) && tauFinite(pHist) && norm > 0.0 && span <= fpLogSpanMax) ? 1.0 : 0.0;
     tauSteadyFPOut = vec4(pStat, pHist, valid, span);
 }

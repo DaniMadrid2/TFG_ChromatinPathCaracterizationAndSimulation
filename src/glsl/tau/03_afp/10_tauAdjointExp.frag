@@ -2,8 +2,11 @@
 precision highp float;
 precision mediump int;
 
-uniform sampler2D tauAdjFields;
-uniform sampler2D tauAdjOperator;
+uniform sampler2D tauKrylov0;
+uniform sampler2D tauKrylov1;
+uniform sampler2D tauKrylov2;
+uniform sampler2D tauKrylov3;
+uniform sampler2D tauArnoldiCoeff;
 uniform int tauMax;
 uniform int tauMin;
 uniform int nBins;
@@ -17,35 +20,60 @@ layout(location = 0) out vec4 tauAdjExpOut; // [E1, Ex, Ex2, valid]
 const int TAU_MAX_TOTAL_TERMS = 8;
 const int NM_STORE_VERTS = TAU_MAX_TOTAL_TERMS + 1;
 
-float fetchL(int packedRow, int i, int j){
-    return texelFetch(tauAdjOperator, ivec2(j + nBins * i, packedRow), 0).x;
+vec3 coeffAt(int packedRow, int idx){
+    return texelFetch(tauArnoldiCoeff, ivec2(idx, packedRow), 0).xyz;
 }
 
-float fetchX(int packedRow, int j){
-    return texelFetch(tauAdjFields, ivec2(j, packedRow), 0).x;
+float validAt(int packedRow){
+    return texelFetch(tauArnoldiCoeff, ivec2(0, packedRow), 0).w;
 }
 
-float applyLToBasis(int packedRow, int i, int basisKind){
-    float sum = 0.0;
-    for(int j = 0; j < 256; j++){
-        if(j >= nBins) break;
-        float gj = 1.0;
-        float xj = fetchX(packedRow, j);
-        if(basisKind == 1) gj = xj;
-        else if(basisKind == 2) gj = xj * xj;
-        sum += fetchL(packedRow, i, j) * gj;
+vec3 reconstructQ1(vec3 k0, vec3 k1, vec3 beta, vec3 h00, vec3 h10){
+    vec3 q0 = k0 / beta;
+    vec3 w1 = k1 / beta;
+    return (w1 - h00 * q0) / h10;
+}
+
+vec3 reconstructQ2(vec3 k0, vec3 k1, vec3 k2, vec3 beta, vec3 h00, vec3 h10, vec3 h01, vec3 h11, vec3 h21){
+    vec3 q0 = k0 / beta;
+    vec3 w1 = k1 / beta;
+    vec3 q1 = reconstructQ1(k0, k1, beta, h00, h10);
+    vec3 Lq1 = (k2 / beta - h00 * w1) / h10;
+    return (Lq1 - h01 * q0 - h11 * q1) / h21;
+}
+
+float arnoldiActionScalar(
+    float beta,
+    float h00, float h10,
+    float h01, float h11, float h21,
+    float h02, float h12, float h22,
+    float q0, float q1, float q2,
+    float tauLag,
+    int expTerms
+){
+    mat3 H = mat3(
+        h00, h10, 0.0,
+        h01, h11, h21,
+        h02, h12, h22
+    );
+    vec3 e1 = vec3(1.0, 0.0, 0.0);
+    vec3 y = beta * e1;
+    if(expTerms >= 1){
+        y += beta * tauLag * (H * e1);
     }
-    return sum;
-}
-
-float applyL2ToBasis(int packedRow, int i, int basisKind){
-    float sum = 0.0;
-    for(int k = 0; k < 256; k++){
-        if(k >= nBins) break;
-        float Lgk = applyLToBasis(packedRow, k, basisKind);
-        sum += fetchL(packedRow, i, k) * Lgk;
+    if(expTerms >= 2){
+        vec3 H2e1 = H * (H * e1);
+        y += beta * (0.5 * tauLag * tauLag) * H2e1;
     }
-    return sum;
+    if(expTerms >= 3){
+        vec3 H3e1 = H * (H * (H * e1));
+        y += beta * (tauLag * tauLag * tauLag / 6.0) * H3e1;
+    }
+    if(expTerms >= 4){
+        vec3 H4e1 = H * (H * (H * (H * e1)));
+        y += beta * (tauLag * tauLag * tauLag * tauLag / 24.0) * H4e1;
+    }
+    return q0 * y.x + q1 * y.y + q2 * y.z;
 }
 
 void main(){
@@ -68,30 +96,34 @@ void main(){
         return;
     }
 
-    float valid = texelFetch(tauAdjFields, ivec2(i, packedRow), 0).w;
+    float valid = validAt(packedRow);
     if(valid < 0.5){
         tauAdjExpOut = vec4(0.0);
         return;
     }
 
+    vec3 k0 = texelFetch(tauKrylov0, ivec2(i, packedRow), 0).xyz;
+    vec3 k1 = texelFetch(tauKrylov1, ivec2(i, packedRow), 0).xyz;
+    vec3 k2 = texelFetch(tauKrylov2, ivec2(i, packedRow), 0).xyz;
+
+    vec3 beta = max(coeffAt(packedRow, 0), vec3(1e-12));
+    vec3 h00 = coeffAt(packedRow, 1);
+    vec3 h10 = max(coeffAt(packedRow, 2), vec3(1e-12));
+    vec3 h01 = coeffAt(packedRow, 3);
+    vec3 h11 = coeffAt(packedRow, 4);
+    vec3 h21 = max(coeffAt(packedRow, 5), vec3(1e-12));
+    vec3 h02 = coeffAt(packedRow, 6);
+    vec3 h12 = coeffAt(packedRow, 7);
+    vec3 h22 = coeffAt(packedRow, 8);
+
+    vec3 q0 = k0 / beta;
+    vec3 q1 = reconstructQ1(k0, k1, beta, h00, h10);
+    vec3 q2 = reconstructQ2(k0, k1, k2, beta, h00, h10, h01, h11, h21);
     float tauLag = max(float(max(tau, 1)) * adjointTauScale, 1e-6);
-    float xi = fetchX(packedRow, i);
 
-    float E1 = 1.0;
-    float Ex = xi;
-    float Ex2 = xi * xi;
-
-    if(tauExpTerms >= 1){
-        E1 += tauLag * applyLToBasis(packedRow, i, 0);
-        Ex += tauLag * applyLToBasis(packedRow, i, 1);
-        Ex2 += tauLag * applyLToBasis(packedRow, i, 2);
-    }
-    if(tauExpTerms >= 2){
-        float c2 = 0.5 * tauLag * tauLag;
-        E1 += c2 * applyL2ToBasis(packedRow, i, 0);
-        Ex += c2 * applyL2ToBasis(packedRow, i, 1);
-        Ex2 += c2 * applyL2ToBasis(packedRow, i, 2);
-    }
+    float E1 = arnoldiActionScalar(beta.x, h00.x, h10.x, h01.x, h11.x, h21.x, h02.x, h12.x, h22.x, q0.x, q1.x, q2.x, tauLag, tauExpTerms);
+    float Ex = arnoldiActionScalar(beta.y, h00.y, h10.y, h01.y, h11.y, h21.y, h02.y, h12.y, h22.y, q0.y, q1.y, q2.y, tauLag, tauExpTerms);
+    float Ex2 = arnoldiActionScalar(beta.z, h00.z, h10.z, h01.z, h11.z, h21.z, h02.z, h12.z, h22.z, q0.z, q1.z, q2.z, tauLag, tauExpTerms);
 
     tauAdjExpOut = vec4(E1, Ex, Ex2, valid);
 }
