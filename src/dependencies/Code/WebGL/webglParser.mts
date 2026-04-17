@@ -599,15 +599,16 @@ export class DetailedParser {
             const previousIndent = previousIndentMatch ? previousIndentMatch[1].length : 0;
             const currentIndent = currentIndentMatch ? currentIndentMatch[1].length : 0;
 
-            // Heurística: ¿La línea actual parece ser un comando completo por sí misma?
-            // Si empieza por minúscula y contiene espacios (como 'draw meshProgram'), lo consideramos un comando.
-            // const looksLikeOwnCommand = /^[a-z_]\w*\s/.test(currentLine.trim());
-
+            // Heurística: si la línea actual parece un comando DSL completo, no debe
+            // pegarse a la anterior aunque venga más indentada.
+            const currentTrim = currentLine.trim();
+            const looksLikeOwnCommand = /^(?:let|use|lduse|uniforms|rebind|framebuffer|viewport|drawTriangles|draw|log|if|else|while|resource|program|depthTest|start|startAsync)\b/.test(currentTrim);
 
             // console.log("a chainear",currentLine,previousIndent,currentIndent)
             // Requerimiento: Si la línea actual tiene ESTRICTAMENTE más sangría Y NO es un comando propio
             if (currentIndent > previousIndent && currentLine.trim().length > 0
-                && !(previousLine.trim().endsWith("{")||previousLine.trim().endsWith("}"))) {
+                && !(previousLine.trim().endsWith("{")||previousLine.trim().endsWith("}"))
+                && !looksLikeOwnCommand) {
                 // Unimos la línea actual a la anterior con un espacio
                 previousLine += " " + currentLine;
                 
@@ -668,6 +669,9 @@ export class DetailedParser {
 
         const isAsync = m[1] === "async";
         const name = m[2];
+        if (["use", "lduse", "uniforms", "rebind", "framebuffer", "viewport", "drawTriangles"].includes(name)) {
+            return null;
+        }
         let tail = (m[3] || "").trim();
         let priority: number | undefined;
 
