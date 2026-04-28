@@ -8,7 +8,7 @@ import { HSLtoRGB } from "../Utils/utils.js";
  */
 export class WebGLMan{
     public static stWebGLMan=new WebGLMan();
-    public programs=[];
+    public programs=[] as WebProgram[];
     constructor(public gl:WebGL2RenderingContext=WebGLMan?.gl, public dirPath?:string){
         if(!this.dirPath){
             this.dirPath="/glsl";
@@ -33,14 +33,14 @@ export class WebGLMan{
         return this.stWebGLMan.programs;
     }
     static get dirPath(){
-        return this.stWebGLMan.dirPath;
+        return this.stWebGLMan.dirPath!;
     }
     
     static set gl(gl:WebGL2RenderingContext){
         this.stWebGLMan.gl=gl;
     }
     static set programs(programs:WebProgram[]){
-        this.stWebGLMan.programs=programs;
+        this.stWebGLMan.programs=programs!;
     }
     static set dirPath(dirPath:string){
         this.stWebGLMan.dirPath=dirPath;
@@ -588,7 +588,7 @@ export class WebProgram{
         (tex as any).format = format;
         
         (tex as any).setLengthUniforms=()=>{
-            this.uInt(name+"Length").set((tex as any).w*(tex as any).h);
+            this.uInt(name+"Length",true).set((tex as any).w*(tex as any).h);
             return tex as any;
         }
 
@@ -611,7 +611,7 @@ export class WebProgram{
     }){
         return this.createTexture2DArray(
             params.name,
-            params.size ?? [this.standardTEXW, this.standardTEXH, undefined],
+            params.size! ?? [this.standardTEXW, this.standardTEXH, undefined],
             params.format ?? TexExamples.RGBAFloat,
             params.data ?? null,
             params.FILTER_WRAP ?? ["NEAREST","NEAREST","CLAMP","CLAMP"],
@@ -621,10 +621,11 @@ export class WebProgram{
     }
 
 
-    uMat4(name:string):UMAT4{
+    uMat4(name:string, hide:boolean=false):UMAT4{
         const uniform = this.gl.getUniformLocation(this.program, name);
         if(!uniform){
-            console.error("uniform",name,"was undefined"); 
+            if(!hide)
+                console.error("uniform",name,"was undefined"); 
             let undef={set:()=>undef} as any;
             return undef;
         }
@@ -641,10 +642,11 @@ export class WebProgram{
         this.uniforms[name]=uniform as any;
         return uniform as any;
     }
-    uMat3(name:string):UMAT3{
+    uMat3(name:string, hide:boolean=false):UMAT3{
         const uniform = this.gl.getUniformLocation(this.program, name);
         if(!uniform){
-            console.error("uniform",name,"was undefined"); 
+            if(!hide)
+                console.error("uniform",name,"was undefined"); 
             let undef={set:()=>undef} as any;
             return undef;
         }
@@ -661,10 +663,11 @@ export class WebProgram{
         this.uniforms[name]=uniform as any;
         return uniform as any;
     }
-    uMat2(name:string):UMAT2{
+    uMat2(name:string, hide:boolean=false):UMAT2{
         const uniform = this.gl.getUniformLocation(this.program, name);
         if(!uniform){
-            console.error("uniform",name,"was undefined"); 
+            if(!hide)
+                console.error("uniform",name,"was undefined"); 
             let undef={set:()=>undef} as any;
             return undef;
         }
@@ -681,10 +684,11 @@ export class WebProgram{
         this.uniforms[name]=uniform as any;
         return uniform as any;
     }
-    uVec(name:string, dimension=3, isFloat=true, isUnsignedInt=false):UVEC{
+    uVec(name:string, dimension=3, isFloat=true, isUnsignedInt=false, hide:boolean=false):UVEC{
         const uniform = this.gl.getUniformLocation(this.program, name);
         if(!uniform){
-            console.error("uniform",name,"was undefined"); 
+            if(!hide)
+                console.error("uniform",name,"was undefined"); 
             let undef={set:()=>undef} as any;
             return undef;
         }
@@ -715,10 +719,11 @@ export class WebProgram{
         this.uniforms[name]=uniform as any;
         return uniform as any;
     }
-    uNum(name:string, isFloat=true, isUnsignedInt=false):UNUM{
+    uNum(name:string, isFloat=true, isUnsignedInt=false, hide:boolean=false):UNUM{
         const uniform = this.gl.getUniformLocation(this.program, name);
         if(!uniform){
-            console.error("uniform",name,"was undefined"); 
+            if(!hide)
+                console.error("uniform",name,"was undefined"); 
             let undef={set:()=>undef} as any;
             return undef;
         }
@@ -730,11 +735,11 @@ export class WebProgram{
         this.uniforms[name]=uniform as any;
         return uniform as any;
     }
-    uFloat(name:string):UNUM{
-        return this.uNum(name, true, false);
+    uFloat(name:string,hide:boolean=false):UNUM{
+        return this.uNum(name, true, false, hide);
     }
-    uInt(name:string):UNUM{
-        return this.uNum(name, false, false);
+    uInt(name:string,hide:boolean=false):UNUM{
+        return this.uNum(name, false, false, hide);
     }
     cFrameBuffer(){
         return new FrameBuffer(this.gl, this);

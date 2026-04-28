@@ -10,7 +10,7 @@ uniform int nBins;
 uniform int tauBatchOffset;
 uniform int tauBatchCount;
 
-layout(location = 0) out vec4 tauAdjOperatorOut; // [L_ij, f_i, a_i, valid]
+layout(location = 0) out vec4 tauAdjOperator; // [L_ij, f_i, a_i, valid]
 
 const int TAU_MAX_TOTAL_TERMS = 8;
 const int NM_STORE_VERTS = TAU_MAX_TOTAL_TERMS + 1;
@@ -29,11 +29,11 @@ void main(){
     int tMin = max(tauMin, 1);
 
     if(i < 0 || i >= nBins || j < 0 || j >= nBins || tauLocal < 0 || tauLocal >= tauBatchCount || vert < 0 || vert >= NM_STORE_VERTS){
-        tauAdjOperatorOut = vec4(0.0);
+        tauAdjOperator = vec4(0.0);
         return;
     }
     if(tau <= 0 || tau > tauMax || tau < tMin || subseq < 0 || subseq >= tau){
-        tauAdjOperatorOut = vec4(0.0);
+        tauAdjOperator = vec4(0.0);
         return;
     }
 
@@ -43,5 +43,5 @@ void main(){
     float a = field.z;
     float valid = field.w;
     float Lij = f * ops.x + a * ops.y;
-    tauAdjOperatorOut = vec4(Lij, f, a, valid);
+    tauAdjOperator = vec4(Lij, f, a, valid);
 }

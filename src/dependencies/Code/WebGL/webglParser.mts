@@ -93,6 +93,11 @@ export class DetailedParser {
     ]);
     static shaderFilters: Array<{ stage: string, filePattern: any, searchPattern: any, replacement: any }> = [];
     static transpileShaderFilters: Array<{ stage: string, filePatternExpr: string, searchPatternExpr: string, replacementExpr: string }> = [];
+    static transpileTexAliasToUniform = new Map<string, string>();
+    static transpileTexDeclaredNames = new Set<string>();
+    static transpileTemplateBlocks = new Map<string, { kind: "uniforms" | "rebind" | "framebuffer", lines: string[] }>();
+    static transpileFunctionBlocks = new Map<string, { params: string[], lines: string[] }>();
+    static transpileLastUsedProgramExpr = "lastUsedProgram";
 
     static extractRootIdentifiersFromExpr(expr: string): string[] {
         const out: string[] = [];
@@ -602,7 +607,7 @@ export class DetailedParser {
             // Heurística: si la línea actual parece un comando DSL completo, no debe
             // pegarse a la anterior aunque venga más indentada.
             const currentTrim = currentLine.trim();
-            const looksLikeOwnCommand = /^(?:let|use|lduse|uniforms|rebind|framebuffer|viewport|drawTriangles|draw|log|if|else|while|resource|program|depthTest|start|startAsync)\b/.test(currentTrim);
+            const looksLikeOwnCommand = /^(?:let|var|use|lduse|uniforms|rebind|framebuffer|viewport|drawTriangles|draw|log|if|else|while|resource|program|depthTest|start|startAsync)\b/.test(currentTrim);
 
             // console.log("a chainear",currentLine,previousIndent,currentIndent)
             // Requerimiento: Si la línea actual tiene ESTRICTAMENTE más sangría Y NO es un comando propio
@@ -776,6 +781,47 @@ export class DetailedParser {
             else if (ch === "}") depthCurly--;
             else if (ch === "-" && next === ">" && depthRound === 0 && depthSquare === 0 && depthCurly === 0) {
                 return [input.slice(0, i).trim(), input.slice(i + 2).trim()];
+            }
+        }
+        return null;
+    }
+
+    static stripInlineDslTags(line: string): string {
+        if (!line) return line;
+        let out = line;
+        out = out.replace(/^\s*-\s*(?:opti-)?[A-Za-z0-9_][A-Za-z0-9_-]*\s*-\s*[\s\S]*?-\s*(?=[A-Za-z_]|if\b|while\b|for\b|use\b|draw\b|program\b|uniforms\b|rebind\b|framebuffer\b)/i, "");
+        out = out.replace(/\s+-\s*(?:opti-)?[A-Za-z0-9_][A-Za-z0-9_-]*\s*-\s*[\s\S]*?-\s*(?=\{)/ig, " ");
+        return out.trimEnd();
+    }
+
+    static splitTopLevelAssignLE(input: string): [string, string] | null {
+        let depthRound = 0;
+        let depthSquare = 0;
+        let depthCurly = 0;
+        let inSingle = false;
+        let inDouble = false;
+        for (let i = 0; i < input.length - 1; i++) {
+            const ch = input[i];
+            const next = input[i + 1];
+            if (ch === "'" && !inDouble) {
+                inSingle = !inSingle;
+                continue;
+            }
+            if (ch === '"' && !inSingle) {
+                inDouble = !inDouble;
+                continue;
+            }
+            if (inSingle || inDouble) continue;
+            if (ch === "(") depthRound++;
+            else if (ch === ")") depthRound--;
+            else if (ch === "[") depthSquare++;
+            else if (ch === "]") depthSquare--;
+            else if (ch === "{") depthCurly++;
+            else if (ch === "}") depthCurly--;
+            if (depthRound === 0 && depthSquare === 0 && depthCurly === 0 && ch === "<" && next === "=") {
+                const left = input.slice(0, i).trim();
+                const right = input.slice(i + 2).trim();
+                if (left && right) return [left, right];
             }
         }
         return null;
@@ -1239,7 +1285,7 @@ export class DetailedParser {
         ];
     }
 
-    static transpileGroupedLetBlock(sourceToken: string | undefined, lines: string[], declaredVars: Set<string>): string[] {
+    static transpileGroupedLetBlock(sourceToken: string | undefined, lines: string[], declaredVars: Set<string>, declKeyword: "let" | "var" = "let"): string[] {
         const entries = DetailedParser.collectCommaSeparatedEntries(lines);
         const parsedEntries = entries.map(entry => {
             const m = entry.match(/^([A-Za-z_]\w*)(?:\s*=\s*([\s\S]+))?$/);
@@ -1258,8 +1304,8 @@ export class DetailedParser {
                 }
                 declaredVars.add(entry.name);
                 out.push(entry.defaultExpr === undefined
-                    ? `var ${entry.name};`
-                    : `var ${entry.name} = ${DetailedParser.transpileExpr(entry.defaultExpr)};`);
+                    ? `${declKeyword} ${entry.name};`
+                    : `${declKeyword} ${entry.name} = ${DetailedParser.transpileExpr(entry.defaultExpr)};`);
             }
             return out;
         }
@@ -1281,7 +1327,7 @@ export class DetailedParser {
             if (declaredVars.has(entry.name)) out.push(`${entry.name} = ${fullExpr};`);
             else {
                 declaredVars.add(entry.name);
-                out.push(`var ${entry.name} = ${fullExpr};`);
+                out.push(`${declKeyword} ${entry.name} = ${fullExpr};`);
             }
         }
         return out;
@@ -1350,21 +1396,81 @@ export class DetailedParser {
     }
 
     static transpileTex2DResourceLine(programRef: string, line: string, declaredVars: Set<string>): string[] | null {
-        const m = line.match(/^tex2D\s+([A-Za-z_]\w*(?:\|[A-Za-z_]\w*)*)\s*\[([\s\S]+)\]\s+([\s\S]+)$/);
-        if (!m) return null;
+        const initSplit = DetailedParser.splitTopLevelAssignLE(line);
+        const lineNoInit = initSplit ? initSplit[0] : line;
+        const initExpr = initSplit ? DetailedParser.transpileExpr(initSplit[1]) : "null";
 
-        const names = m[1].split("|").map(x => x.trim()).filter(Boolean);
+        let namesPart = "";
+        let sizeBody = "";
+        let resourceToken = "";
+        let maybeFilterToken: string | undefined;
+        let texUnitToken: string | undefined;
+
+        const modern = lineNoInit.match(/^tex2D\s+(.+?)\s+RES\s*\[([\s\S]+?)\]\s+TYPE\s+([^\s]+)(?:\s+FILTER\s+(\[[\s\S]+\]))?\s*->\s*([^\s]+)\s*$/);
+        if (modern) {
+            namesPart = modern[1].trim();
+            sizeBody = modern[2].trim();
+            resourceToken = modern[3].trim();
+            maybeFilterToken = modern[4]?.trim();
+            texUnitToken = modern[5]?.trim();
+        } else {
+            const modernNoType = lineNoInit.match(/^tex2D\s+(.+?)\s+RES\s*\[([\s\S]+?)\]\s+([\s\S]+)$/);
+            if (modernNoType) {
+                namesPart = modernNoType[1].trim();
+                sizeBody = modernNoType[2].trim();
+                const tailTokens = DetailedParser.splitByWhitespaceTopLevel(modernNoType[3]).map(x => x.trim()).filter(Boolean);
+                if (!tailTokens.length) return null;
+                let k = 0;
+                if (tailTokens[k]?.toUpperCase() === "TYPE") k++;
+                resourceToken = tailTokens[k] || "";
+                k++;
+                if (!resourceToken) return null;
+                if (tailTokens[k]?.toUpperCase() === "FILTER") {
+                    maybeFilterToken = tailTokens[k + 1];
+                    texUnitToken = tailTokens[k + 2];
+                } else if (tailTokens[k]?.startsWith("[")) {
+                    maybeFilterToken = tailTokens[k];
+                    texUnitToken = tailTokens[k + 1];
+                } else {
+                    texUnitToken = tailTokens[k];
+                }
+            } else {
+                const legacy = lineNoInit.match(/^tex2D\s+([A-Za-z_]\w*(?:[\|~][A-Za-z_]\w*)*)\s*\[([\s\S]+)\]\s+([\s\S]+)$/);
+                if (!legacy) return null;
+                namesPart = legacy[1].trim();
+                sizeBody = legacy[2].trim();
+                const tokens = DetailedParser.splitByWhitespaceTopLevel(legacy[3]);
+                if (!tokens.length) return null;
+                resourceToken = tokens[0];
+                maybeFilterToken = tokens[1]?.trim().startsWith("[") ? tokens[1] : undefined;
+                texUnitToken = maybeFilterToken ? tokens[2] : tokens[1];
+            }
+        }
+
+        const names = namesPart.split(/[|~]/).map(x => x.trim()).filter(Boolean);
         if (!names.length) return null;
         const uniformName = names[0];
         const firstAlias = names[1] || names[0];
         const extraAliases = names.slice(2);
-        const sizeExpr = `[${DetailedParser.splitTopLevelByChar(m[2], ",").map(x => DetailedParser.transpileExpr(x)).join(", ")}]`;
-        const tokens = DetailedParser.splitByWhitespaceTopLevel(m[3]);
-        if (!tokens.length) return null;
 
-        const resourceToken = tokens[0];
-        const maybeFilterToken = tokens[1]?.trim().startsWith("[") ? tokens[1] : undefined;
-        const texUnitToken = maybeFilterToken ? tokens[2] : tokens[1];
+        const allAliases = [uniformName, firstAlias, ...extraAliases];
+        for (const alias of allAliases) {
+            if (DetailedParser.transpileTexAliasToUniform.has(alias)) {
+                throw new Error(`tex2D duplicada: '${alias}' ya fue definida.`);
+            }
+        }
+        for (const alias of allAliases) {
+            DetailedParser.transpileTexAliasToUniform.set(alias, uniformName);
+            DetailedParser.transpileTexDeclaredNames.add(alias);
+        }
+        DetailedParser.transpileTexDeclaredNames.add(uniformName);
+
+        let sizeParts = DetailedParser.splitTopLevelByChar(sizeBody, ",").map(x => x.trim()).filter(Boolean);
+        if (sizeParts.length <= 1) {
+            sizeParts = sizeBody.split(/\s+x\s+/i).map(x => x.trim()).filter(Boolean);
+        }
+        if (sizeParts.length < 2) return null;
+        const sizeExpr = `[${sizeParts.map(x => DetailedParser.transpileExpr(x)).join(", ")}]`;
 
         const texUnitExpr = texUnitToken ? DetailedParser.normalizeTexUnitToken(texUnitToken) : "undefined";
         let formatExpr = DetailedParser.transpileTextureFormatToken(resourceToken);
@@ -1373,7 +1479,8 @@ export class DetailedParser {
         let wrapSExpr = `"CLAMP"`;
         let wrapTExpr = `"CLAMP"`;
 
-        if (/^[A-Za-z_]\w*$/.test(resourceToken)) {
+        const tokenLooksLikeBuiltinFormat = /^TexExamples\./.test(resourceToken) || formatExpr !== "(TexExamples as any).RGBAFloat";
+        if (/^[A-Za-z_]\w*$/.test(resourceToken) && !tokenLooksLikeBuiltinFormat) {
             formatExpr = `(${resourceToken}?.format ?? (TexExamples as any).RGBAFloat)`;
             filterMinExpr = `(${resourceToken}?.filter_min ?? ${resourceToken}?.filter ?? ${resourceToken}?.minFilter ?? "NEAREST")`;
             filterMagExpr = `(${resourceToken}?.filter_mag ?? ${resourceToken}?.filter ?? ${resourceToken}?.magFilter ?? "NEAREST")`;
@@ -1393,7 +1500,7 @@ export class DetailedParser {
         const out: string[] = [];
         const decl = declaredVars.has(firstAlias) ? firstAlias : `var ${firstAlias}`;
         declaredVars.add(firstAlias);
-        out.push(`${decl} = ${programRef}.createTexture2D(${JSON.stringify(uniformName)}, ${sizeExpr}, ${formatExpr}, null, [${filterMinExpr}, ${filterMagExpr}, ${wrapSExpr}, ${wrapTExpr}], ${texUnitExpr});`);
+        out.push(`${decl} = ${programRef}.createTexture2D(${JSON.stringify(uniformName)}, ${sizeExpr}, ${formatExpr}, ${initExpr}, [${filterMinExpr}, ${filterMagExpr}, ${wrapSExpr}, ${wrapTExpr}], ${texUnitExpr});`);
         for (const alias of extraAliases) {
             if (!declaredVars.has(alias)) {
                 declaredVars.add(alias);
@@ -1404,9 +1511,9 @@ export class DetailedParser {
     }
 
     static transpileProgramBlock(header: string, lines: string[], declaredVars: Set<string>): string[] {
-        const m = header.match(/^([A-Za-z_]\w*(?:\s*\|=\s*[A-Za-z_]\w*)*)\s+([\s\S]+)$/);
+        const m = header.match(/^([A-Za-z_]\w*(?:\s*(?:\|=|\|)\s*[A-Za-z_]\w*)*)\s+([\s\S]+)$/);
         if (!m) return [`// TODO(program): ${header}`];
-        const aliases = m[1].split(/\|=/).map(x => x.trim()).filter(Boolean);
+        const aliases = m[1].split(/(?:\|=|\|)/).map(x => x.trim()).filter(Boolean);
         const firstAlias = aliases[0];
         const pathToken = m[2].trim();
         const pathExpr = /^["']/.test(pathToken) ? pathToken : JSON.stringify(pathToken);
@@ -1427,6 +1534,7 @@ export class DetailedParser {
         out.push(`await ${firstAlias}.loadProgram(${firstAlias}.vertPath, ${firstAlias}.fragPath, ${vertFilter}, ${fragFilter});`);
         out.push(`await ${firstAlias}.use?.();`);
         out.push(`lastUsedProgram = ${firstAlias};`);
+        DetailedParser.transpileLastUsedProgramExpr = firstAlias;
         out.push(`${firstAlias}.createVAO().bind();`);
 
         for (const rawLine of lines) {
@@ -1444,12 +1552,35 @@ export class DetailedParser {
 
     static transpileRebindBlock(targetExprRaw: string, lines: string[]): string[] {
         const targetExpr = DetailedParser.transpileExpr(targetExprRaw.trim());
-        const entries = DetailedParser.collectCommaSeparatedEntries(lines);
         const out: string[] = [];
-        for (const entry of entries) {
-            const m = entry.match(/^([A-Za-z_]\w*)\s*->\s*([\s\S]+)$/);
+        const clauses: string[] = [];
+        for (const rawLine of lines) {
+            const line = rawLine.trim();
+            if (!line) continue;
+            const parts = DetailedParser.splitTopLevelByChar(line, ";")
+                .map(x => x.trim())
+                .filter(Boolean);
+            clauses.push(...parts);
+        }
+        for (const clause of clauses) {
+            const m = clause.match(/^([\s\S]+?)\s*->\s*([\s\S]+)$/);
             if (!m) continue;
-            out.push(`${targetExpr}.bindTexName2TexUnit(${JSON.stringify(m[1])}, ${DetailedParser.normalizeTexUnitToken(m[2].trim())});`);
+            const leftItems = DetailedParser.splitTopLevelByChar(m[1], ",")
+                .map(x => x.trim())
+                .filter(Boolean);
+            const rightItems = DetailedParser.splitTopLevelByChar(m[2], ",")
+                .map(x => x.trim())
+                .filter(Boolean);
+            if (leftItems.length === 0 || rightItems.length === 0) continue;
+            if (leftItems.length !== rightItems.length) {
+                out.push(`// TODO(rebind-mismatch): ${clause}`);
+                continue;
+            }
+            for (let i = 0; i < leftItems.length; i++) {
+                const refName = leftItems[i];
+                const uniformName = DetailedParser.transpileTexAliasToUniform.get(refName) || refName;
+                out.push(`${targetExpr}.bindTexName2TexUnit(${JSON.stringify(uniformName)}, ${DetailedParser.normalizeTexUnitToken(rightItems[i])});`);
+            }
         }
         return out;
     }
@@ -1485,6 +1616,129 @@ export class DetailedParser {
         if (!m) return null;
         const items = DetailedParser.splitTopLevelByChar(m[2], ",").map(x => x.trim()).filter(Boolean);
         return DetailedParser.transpileFramebufferBlock(m[1], items, declaredVars);
+    }
+
+    static transpileDrawCallBlock(headerRaw: string, lines: string[], declaredVars: Set<string>): string[] {
+        const header = headerRaw.trim();
+        const m = header.match(/^(draw[A-Za-z0-9_]*)\s*([\s\S]*?)\s*(?:->\s*\[([\s\S]*?)\])?(?:\s+size\s+(\[[\s\S]*\]))?\s*$/);
+        if (!m) return [`// TODO(draw-block): ${header}`];
+        const drawFn = m[1];
+        const argsRaw = (m[2] || "").trim();
+        const outTexRaw = (m[3] || "").trim();
+        const sizeRaw = (m[4] || "").trim();
+        const drawArgs = argsRaw ? DetailedParser.splitByWhitespaceTopLevel(argsRaw).map(x => DetailedParser.transpileExpr(x)) : ["0", "6"];
+        if (drawFn === "drawTriangles" && drawArgs.length < 2) {
+            drawArgs.push("0");
+            drawArgs.push("6");
+        }
+
+        const runtimeLines: string[] = [];
+        let framebufferAliases: string[] = [];
+        for (const rawLine of lines) {
+            const trimmed = rawLine.trim();
+            if (!trimmed) {
+                runtimeLines.push(rawLine);
+                continue;
+            }
+            const fbMeta = trimmed.match(/^framebuffer\s*:\s*(.+)$/);
+            if (fbMeta) {
+                framebufferAliases = fbMeta[1]
+                    .split(/\|=/)
+                    .map(x => x.trim())
+                    .filter(Boolean);
+                continue;
+            }
+            runtimeLines.push(rawLine);
+        }
+
+        const out: string[] = [];
+        out.push(`lastUsedProgram?.use?.();`);
+        if (sizeRaw) {
+            const sizeExpr = DetailedParser.transpileExpr(sizeRaw);
+            out.push(`(()=>{ const __sz:any = ${sizeExpr}; lastUsedProgram?.setViewport(0,0,__sz[0],__sz[1]); })();`);
+        }
+        if (outTexRaw) {
+            const texRefs = DetailedParser.splitTopLevelByChar(outTexRaw, ",").map(x => x.trim()).filter(Boolean);
+            const bindings = texRefs.map((ref, i) => {
+                const u = DetailedParser.transpileTexAliasToUniform.get(ref) || ref;
+                if (!DetailedParser.transpileTexDeclaredNames.has(ref) && !DetailedParser.transpileTexDeclaredNames.has(u)) {
+                    throw new Error(`draw-block salida no declarada: '${ref}'`);
+                }
+                return { texExpr: DetailedParser.transpileExpr(ref), attachmentExpr: JSON.stringify(`ColAtch${i}`) };
+            });
+            const defaultBase = DetailedParser.transpileLastUsedProgramExpr || "lastUsedProgram";
+            const defaultFbo = /^[A-Za-z_]\w*$/.test(defaultBase) ? `${defaultBase}FBO` : `__drawFBO_${Math.random().toString(36).slice(2, 8)}`;
+            const aliases = framebufferAliases.length ? framebufferAliases : [defaultFbo];
+            const primaryFbo = aliases[0];
+            if (!declaredVars.has(primaryFbo)) declaredVars.add(primaryFbo);
+            out.push(`${declaredVars.has(primaryFbo) ? "var " + primaryFbo : primaryFbo} = (typeof ${primaryFbo} !== "undefined" && ${primaryFbo}) ? ${primaryFbo} : lastUsedProgram.cFrameBuffer().bind([${bindings.map(b => b.attachmentExpr).join(", ")}]);`);
+            bindings.forEach(b => out.push(`${primaryFbo}.bindColorBuffer(${b.texExpr}, ${b.attachmentExpr});`));
+            for (const alias of aliases.slice(1)) {
+                if (!/^[A-Za-z_]\w*$/.test(alias)) continue;
+                if (!declaredVars.has(alias)) {
+                    declaredVars.add(alias);
+                    out.push(`var ${alias} = ${primaryFbo};`);
+                } else {
+                    out.push(`${alias} = ${primaryFbo};`);
+                }
+            }
+        }
+
+        let i = 0;
+        while (i < runtimeLines.length) {
+            const ln = runtimeLines[i].trim();
+            if (!ln) {
+                i++;
+                continue;
+            }
+            if (ln === "uniforms {" || /^uniforms\s*\{$/.test(ln)) {
+                i++;
+                while (i < runtimeLines.length && runtimeLines[i].trim() !== "}") {
+                    const uniLn = runtimeLines[i].trim();
+                    const tpl = DetailedParser.transpileTemplateBlocks.get(uniLn.split(/\s+/)[0]);
+                    if (tpl?.kind === "uniforms") {
+                        out.push(...tpl.lines.flatMap(x => DetailedParser.transpileUniformLine("lastUsedProgram", x)));
+                    } else {
+                        out.push(...DetailedParser.transpileUniformLine("lastUsedProgram", uniLn));
+                    }
+                    i++;
+                }
+                i++;
+                continue;
+            }
+            if (ln === "rebind {" || /^rebind\s*\{$/.test(ln)) {
+                const rb: string[] = [];
+                i++;
+                while (i < runtimeLines.length && runtimeLines[i].trim() !== "}") {
+                    rb.push(runtimeLines[i]);
+                    i++;
+                }
+                out.push(...DetailedParser.transpileRebindBlock("lastUsedProgram", rb));
+                i++;
+                continue;
+            }
+            const tpl = DetailedParser.transpileTemplateBlocks.get(ln.split(/\s+/)[0]);
+            if (tpl) {
+                if (tpl.kind === "uniforms") {
+                    out.push(...tpl.lines.flatMap(x => DetailedParser.transpileUniformLine("lastUsedProgram", x)));
+                } else if (tpl.kind === "rebind") {
+                    out.push(...DetailedParser.transpileRebindBlock("lastUsedProgram", tpl.lines));
+                } else if (tpl.kind === "framebuffer") {
+                    out.push(...DetailedParser.transpileFramebufferBlock(`__fbo_${Math.random().toString(36).slice(2, 8)}`, tpl.lines, declaredVars));
+                }
+                i++;
+                continue;
+            }
+            out.push(...DetailedParser.transpileSimpleStatement(ln, declaredVars));
+            i++;
+        }
+
+        if (drawFn === "drawTriangles") {
+            out.push(`lastUsedProgram?.drawArrays("TRIANGLES", ${drawArgs[0] ?? "0"}, ${drawArgs[1] ?? "6"});`);
+        } else {
+            out.push(`(lastUsedProgram as any)?.${drawFn}?.(${drawArgs.join(", ")});`);
+        }
+        return out;
     }
 
     static transpileUnbindFBOBlock(lines: string[]): string[] {
@@ -1708,6 +1962,13 @@ export class DetailedParser {
     }
 
     static transpileUniformLine(programRef: string, line: string): string[] {
+        const shortMatch = line.match(/^\{([a-zA-Z_]\w*)\}([iuf])\s*$/);
+        if (shortMatch) {
+            const [, shortName, shortSuffix] = shortMatch;
+            const expr = DetailedParser.transpileExpr(`{${shortName}}`);
+            return [`${programRef}.uNum("${shortName}", ${shortSuffix === "f"}, ${shortSuffix === "u"}).set(${expr});`];
+        }
+
         const m = line.match(/^(\w+)\s*=\s*(.+?)([iuf])?\s*$/);
         if (!m) return [`// TODO(uniform): ${line}`];
 
@@ -2040,16 +2301,29 @@ export class DetailedParser {
         const createIdeal = DetailedParser.transpileCreateIdealMesh(line, declaredVars);
         if (createIdeal) return createIdeal;
 
-        const letMatch = line.match(/^let\s+([a-zA-Z_]\w*)(?:\s*=\s*([\s\S]+))?$/);
+        const singleLineIfMatch = line.match(/^if\s*\(([\s\S]+)\)\s+(.+)$/);
+        if (singleLineIfMatch && !singleLineIfMatch[2].trim().startsWith("{")) {
+            const [, condRaw, stmtRaw] = singleLineIfMatch;
+            const inner = DetailedParser.transpileSimpleStatement(stmtRaw.trim(), declaredVars);
+            if (!inner.length) return [];
+            if (inner.length === 1) return [`if(${DetailedParser.transpileExpr(condRaw)}) ${inner[0]}`];
+            return [
+                `if(${DetailedParser.transpileExpr(condRaw)}){`,
+                ...inner.map(x => `    ${x}`),
+                `}`
+            ];
+        }
+
+        const letMatch = line.match(/^(?:[A-Za-z_]\w*-\s*)?(let|var)\s+(?:derived\s+)?([a-zA-Z_]\w*)(?:\s*=\s*([\s\S]+))?$/);
         if (letMatch) {
-            const [, name, valueRaw] = letMatch;
+            const [, declKw, name, valueRaw] = letMatch;
             if (declaredVars.has(name)) {
                 if (valueRaw === undefined) return [`${name} = undefined;`];
                 return [`${name} = ${DetailedParser.transpileExpr(valueRaw)};`];
             }
             declaredVars.add(name);
-            if (valueRaw === undefined) return [`var ${name};`];
-            return [`var ${name} = ${DetailedParser.transpileExpr(valueRaw)};`];
+            if (valueRaw === undefined) return [`${declKw} ${name};`];
+            return [`${declKw} ${name} = ${DetailedParser.transpileExpr(valueRaw)};`];
         }
 
         const framebufferInline = DetailedParser.transpileFramebufferInline(line, declaredVars);
@@ -2060,6 +2334,7 @@ export class DetailedParser {
             const kind = useMatch[1];
             const obj = DetailedParser.transpileExpr(useMatch[2]);
             if (kind === "lduse") {
+                DetailedParser.transpileLastUsedProgramExpr = obj;
                 const vertFilter = DetailedParser.transpileShaderFilterFactory("vert", `${obj}.vertPath`);
                 const fragFilter = DetailedParser.transpileShaderFilterFactory("frag", `${obj}.fragPath`);
                 return [
@@ -2068,6 +2343,7 @@ export class DetailedParser {
                     `lastUsedProgram = ${obj};`
                 ];
             }
+            DetailedParser.transpileLastUsedProgramExpr = obj;
             return [
                 `await ${obj}.use?.();`,
                 `lastUsedProgram = ${obj};`
@@ -2100,6 +2376,10 @@ export class DetailedParser {
             ];
         }
 
+        const drawTrianglesSimpleMatch = line.match(/^drawTriangles\s*$/);
+        if (drawTrianglesSimpleMatch) {
+            return [`lastUsedProgram?.drawArrays("TRIANGLES", 0, 6);`];
+        }
         const drawTrianglesMatch = line.match(/^drawTriangles\s+([\s\S]+?)\s+([\s\S]+)$/);
         if (drawTrianglesMatch) {
             return [`lastUsedProgram?.drawArrays("TRIANGLES", ${DetailedParser.transpileExpr(drawTrianglesMatch[1])}, ${DetailedParser.transpileExpr(drawTrianglesMatch[2])});`];
@@ -2206,12 +2486,16 @@ export class DetailedParser {
 
         const body: string[] = [];
         const declaredVars = new Set<string>();
+        DetailedParser.transpileTexAliasToUniform = new Map<string, string>();
+        DetailedParser.transpileTexDeclaredNames = new Set<string>();
+        DetailedParser.transpileTemplateBlocks = new Map();
+        DetailedParser.transpileFunctionBlocks = new Map();
         let indent = 0;
         const ind = () => "    ".repeat(indent);
         let scaffoldInserted = false;
 
         type TBlock = {
-            kind: "special" | "named" | "uniforms" | "key" | "keyRelease" | "groupedLet" | "resource" | "programBlock" | "rebind" | "framebufferBlock" | "unbindFBOBlock" | "while",
+            kind: "special" | "named" | "uniforms" | "key" | "keyRelease" | "groupedLet" | "resource" | "programBlock" | "rebind" | "framebufferBlock" | "unbindFBOBlock" | "while" | "templateBlock" | "functionBlock" | "drawCallBlock",
             name: string,
             ifDepth: number,
             loopCount: number,
@@ -2221,7 +2505,11 @@ export class DetailedParser {
             globalOrder?: number,
             uniformPrograms?: string[],
             sourceToken?: string,
+            groupedDecl?: "let" | "var",
             buffer?: string[],
+            templateKind?: "uniforms" | "rebind" | "framebuffer",
+            functionParams?: string[],
+            nestedDepth?: number,
         };
         const blockStack: TBlock[] = [];
         const usedMarkers = new Set<string>();
@@ -2244,7 +2532,7 @@ export class DetailedParser {
 
         for (let i = 0; i < lines.length; i++) {
             const raw = lines[i];
-            const line = raw.trim();
+            const line = DetailedParser.stripInlineDslTags(raw.trim());
             if (!line) continue;
 
             const marker = line.match(/^<(?:\/)?([A-Za-z_][\w-]*)(?:\/)?>$/);
@@ -2267,6 +2555,23 @@ export class DetailedParser {
                     blockStack.pop();
                     continue;
                 }
+                const tplCall = line.match(/^([A-Za-z_]\w*)(?:\s+(.+))?$/);
+                if (tplCall) {
+                    const tpl = DetailedParser.transpileTemplateBlocks.get(tplCall[1]);
+                    if (tpl?.kind === "uniforms") {
+                        const programsForTpl = tplCall[2]
+                            ? tplCall[2].split(",").map(s => DetailedParser.transpileExpr(s.trim())).filter(Boolean)
+                            : ((currentBlock.uniformPrograms && currentBlock.uniformPrograms.length) ? currentBlock.uniformPrograms : ["lastUsedProgram"]);
+                        for (const p of programsForTpl) {
+                            body.push(`${ind()}${p}.use?.();`);
+                            for (const uniLine of tpl.lines) {
+                                const uniLines = DetailedParser.transpileUniformLine(p, uniLine);
+                                uniLines.forEach(l => body.push(`${ind()}${l}`));
+                            }
+                        }
+                        continue;
+                    }
+                }
                 const programs = (currentBlock.uniformPrograms && currentBlock.uniformPrograms.length)
                     ? currentBlock.uniformPrograms
                     : ["lastUsedProgram"];
@@ -2278,13 +2583,26 @@ export class DetailedParser {
                 continue;
             }
 
-            if (currentBlock && ["groupedLet", "resource", "programBlock", "rebind", "framebufferBlock", "unbindFBOBlock"].includes(currentBlock.kind)) {
+            if (currentBlock && ["groupedLet", "resource", "programBlock", "rebind", "framebufferBlock", "unbindFBOBlock", "templateBlock", "functionBlock", "drawCallBlock"].includes(currentBlock.kind)) {
+                if (currentBlock.kind === "drawCallBlock") {
+                    if (line === "}") {
+                        if ((currentBlock.nestedDepth || 0) > 0) {
+                            currentBlock.nestedDepth = (currentBlock.nestedDepth || 0) - 1;
+                            (currentBlock.buffer ||= []).push(line);
+                            continue;
+                        }
+                    } else {
+                        if (/\{\s*$/.test(line)) currentBlock.nestedDepth = (currentBlock.nestedDepth || 0) + 1;
+                        (currentBlock.buffer ||= []).push(line);
+                        continue;
+                    }
+                }
                 if (line === "}") {
                     const closing = blockStack.pop()!;
                     const buffered = closing.buffer || [];
                     let emitted: string[] = [];
                     if (closing.kind === "groupedLet") {
-                        emitted = DetailedParser.transpileGroupedLetBlock(closing.sourceToken, buffered, declaredVars);
+                        emitted = DetailedParser.transpileGroupedLetBlock(closing.sourceToken, buffered, declaredVars, closing.groupedDecl || "let");
                     } else if (closing.kind === "resource") {
                         emitted = DetailedParser.transpileResourceBlock(closing.name, buffered, declaredVars);
                     } else if (closing.kind === "programBlock") {
@@ -2295,6 +2613,18 @@ export class DetailedParser {
                         emitted = DetailedParser.transpileFramebufferBlock(closing.name, buffered, declaredVars);
                     } else if (closing.kind === "unbindFBOBlock") {
                         emitted = DetailedParser.transpileUnbindFBOBlock(buffered);
+                    } else if (closing.kind === "templateBlock") {
+                        DetailedParser.transpileTemplateBlocks.set(closing.name, {
+                            kind: closing.templateKind || "uniforms",
+                            lines: buffered.slice(),
+                        });
+                    } else if (closing.kind === "functionBlock") {
+                        DetailedParser.transpileFunctionBlocks.set(closing.name, {
+                            params: (closing.functionParams || []).slice(),
+                            lines: buffered.slice(),
+                        });
+                    } else if (closing.kind === "drawCallBlock") {
+                        emitted = DetailedParser.transpileDrawCallBlock(closing.name, buffered, declaredVars);
                     }
                     emitted.forEach(l => body.push(`${ind()}${l}`));
                     continue;
@@ -2303,14 +2633,64 @@ export class DetailedParser {
                 continue;
             }
 
-            const groupedLetStart = line.match(/^let(?:\s+([^={][^{}]*?))?\s*\{$/);
+            const groupedLetStart = line.match(/^(let|var)(?:\s+([^={][^{}]*?))?\s*\{$/);
             if (groupedLetStart) {
                 blockStack.push({
                     kind: "groupedLet",
-                    name: "let",
+                    name: groupedLetStart[1],
                     ifDepth: 0,
                     loopCount: 0,
-                    sourceToken: groupedLetStart[1]?.trim(),
+                    sourceToken: groupedLetStart[2]?.trim(),
+                    groupedDecl: groupedLetStart[1] as any,
+                    buffer: [],
+                });
+                continue;
+            }
+
+            const templateStart = line.match(/^([A-Za-z_]\w*)\s*=\s*(uniforms|rebind|framebuffer)\s*\{$/);
+            if (templateStart) {
+                blockStack.push({
+                    kind: "templateBlock",
+                    name: templateStart[1],
+                    templateKind: templateStart[2] as any,
+                    ifDepth: 0,
+                    loopCount: 0,
+                    buffer: [],
+                });
+                continue;
+            }
+
+            const functionStart = line.match(/^([A-Za-z_]\w*)\s*\(([^{}]*)\)\s*\{$/);
+            if (functionStart && !/^(if|for|while|switch)$/.test(functionStart[1])) {
+                const paramsRaw = functionStart[2].trim();
+                const paramTokens = paramsRaw
+                    ? DetailedParser.splitTopLevelByChar(paramsRaw, ",").map(x => x.trim()).filter(Boolean)
+                    : [];
+                const params = paramTokens.map(x => x.split(":")[0].trim());
+                const looksLikeParamizedFunction =
+                    params.length > 0 &&
+                    paramTokens.every(tok => /^[A-Za-z_]\w*(?:\s*:\s*.+)?$/.test(tok));
+                if (looksLikeParamizedFunction) {
+                    blockStack.push({
+                        kind: "functionBlock",
+                        name: functionStart[1],
+                        functionParams: params,
+                        ifDepth: 0,
+                        loopCount: 0,
+                        buffer: [],
+                    });
+                    continue;
+                }
+            }
+
+            const drawCallStart = line.match(/^(drawTriangles(?:[\s\S]*?))\{$/);
+            if (drawCallStart) {
+                blockStack.push({
+                    kind: "drawCallBlock",
+                    name: drawCallStart[1].trim(),
+                    ifDepth: 0,
+                    loopCount: 0,
+                    nestedDepth: 0,
                     buffer: [],
                 });
                 continue;
@@ -2405,7 +2785,7 @@ export class DetailedParser {
                     name: "while",
                     ifDepth: 0,
                     loopCount: 0,
-                } as any);
+                });
                 indent++;
                 continue;
             }
@@ -2423,6 +2803,56 @@ export class DetailedParser {
                     uniformPrograms: programs
                 });
                 continue;
+            }
+
+            const templateCall = line.match(/^([A-Za-z_]\w*)(?:\s+(.+))?$/);
+            if (templateCall) {
+                const tpl = DetailedParser.transpileTemplateBlocks.get(templateCall[1]);
+                if (tpl) {
+                    if (tpl.kind === "uniforms") {
+                        const programs = templateCall[2]
+                            ? templateCall[2].split(",").map(s => DetailedParser.transpileExpr(s.trim())).filter(Boolean)
+                            : ["lastUsedProgram"];
+                        for (const p of programs) {
+                            body.push(`${ind()}${p}.use?.();`);
+                            for (const uniLine of tpl.lines) {
+                                const uniLines = DetailedParser.transpileUniformLine(p, uniLine);
+                                uniLines.forEach(l => body.push(`${ind()}${l}`));
+                            }
+                        }
+                    } else if (tpl.kind === "rebind") {
+                        const target = templateCall[2] ? DetailedParser.transpileExpr(templateCall[2].trim()) : "lastUsedProgram";
+                        const rbLines = DetailedParser.transpileRebindBlock(target, tpl.lines);
+                        rbLines.forEach(l => body.push(`${ind()}${l}`));
+                    } else if (tpl.kind === "framebuffer") {
+                        const fboName = templateCall[2]?.trim() || `__tplFBO_${Math.random().toString(36).slice(2, 8)}`;
+                        const fbLines = DetailedParser.transpileFramebufferBlock(fboName, tpl.lines, declaredVars);
+                        fbLines.forEach(l => body.push(`${ind()}${l}`));
+                    }
+                    continue;
+                }
+            }
+
+            const functionCall = line.match(/^([A-Za-z_]\w*)\s*\(([\s\S]*)\)\s*$/);
+            if (functionCall) {
+                const def = DetailedParser.transpileFunctionBlocks.get(functionCall[1]);
+                if (def) {
+                    const args = functionCall[2].trim()
+                        ? DetailedParser.splitTopLevelByChar(functionCall[2], ",").map(x => x.trim())
+                        : [];
+                    const argMap = new Map<string, string>();
+                    def.params.forEach((p, idx) => argMap.set(p, args[idx] ?? "undefined"));
+                    for (const rawFnLine of def.lines) {
+                        let expanded = rawFnLine;
+                        for (const [p, a] of argMap.entries()) {
+                            const re = new RegExp(`\\b${p.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\$&")}\\b`, "g");
+                            expanded = expanded.replace(re, a);
+                        }
+                        const emitted = DetailedParser.transpileSimpleStatement(expanded.trim(), declaredVars);
+                        emitted.forEach(l => body.push(`${ind()}${l}`));
+                    }
+                    continue;
+                }
             }
 
             const blockHeader = DetailedParser.parseBlockHeader(line);
@@ -3745,7 +4175,4 @@ export class DetailedParser {
 
 
 }
-
-
-
 

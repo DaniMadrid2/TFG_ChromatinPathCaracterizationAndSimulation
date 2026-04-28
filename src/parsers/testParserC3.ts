@@ -236,6 +236,12 @@ function transpileTypeScript(code: string) {
     }).outputText.replace(/^export \{\};\s*/m, "");
 }
 
+function sanitizeBrokenTail(code: string) {
+    return code
+        .replace(/\n\(\);\s*\n\/\/\<\/Pos\>/g, "\n//</Pos>")
+        .replace(/\n\(\);\s*$/g, "\n");
+}
+
 async function patchGeneratedFiles(outPath: string, baseDir: string) {
     let outCode = await fs.readFile(outPath, "utf8");
     outCode = ensureCommonImports(outCode);
@@ -244,7 +250,8 @@ async function patchGeneratedFiles(outPath: string, baseDir: string) {
     outCode = injectGeneratedBlocks(outCode, await buildPreSnippet(baseDir, fsSnippet), `})();`);
     outCode = normalizeCanvasTargets(outCode);
     await fs.writeFile(outPath, outCode, "utf8");
-    await fs.writeFile(outPath.replace(/\.ts$/i, ".js"), transpileTypeScript(outCode), "utf8");
+    const jsCode = sanitizeBrokenTail(transpileTypeScript(outCode));
+    await fs.writeFile(outPath.replace(/\.ts$/i, ".js"), jsCode, "utf8");
 }
 
 main().catch((err) => {

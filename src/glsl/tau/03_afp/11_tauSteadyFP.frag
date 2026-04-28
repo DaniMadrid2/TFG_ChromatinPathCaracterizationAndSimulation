@@ -12,7 +12,7 @@ uniform int tauBatchCount;
 uniform float fpLogSpanMax;
 uniform int steadyFPGaugeMode;
 
-layout(location = 0) out vec4 tauSteadyFPOut; // [pStat, pHist, valid, logSpan]
+layout(location = 0) out vec4 tauSteadyFP; // [pStat, pHist, valid, logSpan]
 
 const int TAU_MAX_TOTAL_TERMS = 8;
 const int NM_STORE_VERTS = TAU_MAX_TOTAL_TERMS + 1;
@@ -160,17 +160,17 @@ void main(){
     int tMin = max(tauMin, 1);
 
     if(b < 0 || b >= nBins || tauLocal < 0 || tauLocal >= tauBatchCount || vert < 0 || vert >= NM_STORE_VERTS){
-        tauSteadyFPOut = vec4(0.0);
+        tauSteadyFP = vec4(0.0);
         return;
     }
     if(tau <= 0 || tau > tauMax || tau < tMin || subseq < 0 || subseq >= tau){
-        tauSteadyFPOut = vec4(0.0);
+        tauSteadyFP = vec4(0.0);
         return;
     }
 
     vec4 field = texelFetch(tauAdjFields, ivec2(b, packedRow), 0);
     if(field.w < 0.5){
-        tauSteadyFPOut = vec4(0.0);
+        tauSteadyFP = vec4(0.0);
         return;
     }
 
@@ -199,7 +199,7 @@ void main(){
     buildTridiagonal(packedRow, dx, anchor, lower, diag, upper, rhs);
     bool ok = solveTridiagonal(sol, lower, diag, upper, rhs);
     if(!ok){
-        tauSteadyFPOut = vec4(0.0);
+        tauSteadyFP = vec4(0.0);
         return;
     }
 
@@ -243,5 +243,5 @@ void main(){
     float negTol = 1e-3;
     float valid = (tauFinite(pStat) && tauFinite(pHist) && mass > 0.0 && span <= fpLogSpanMax &&
                   maxFlux <= fluxTol && negativeMass <= negTol) ? 1.0 : 0.0;
-    tauSteadyFPOut = vec4(pStat, pHist, valid, span);
+    tauSteadyFP = vec4(pStat, pHist, valid, span);
 }

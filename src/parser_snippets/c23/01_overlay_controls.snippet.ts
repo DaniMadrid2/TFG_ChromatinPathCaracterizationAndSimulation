@@ -77,6 +77,16 @@ Objetivos:
     let datosX1:any=null;
     let datosY1:any=null;
     let NMuestras1=0;
+    let chromatinIndex=Math.max(1, Number((window as any).chromatinIndex ?? 1) || 1);
+    (window as any).chromatinIndex=chromatinIndex;
+    const __safeCfg=(getter:()=>any, fallback:any)=>{
+        try{
+            const v=getter();
+            return (typeof v!=="undefined" && v!==null)?v:fallback;
+        }catch{
+            return fallback;
+        }
+    };
 
     //? - Carga y proyeccion de la serie activa
 
@@ -107,8 +117,8 @@ Objetivos:
         const n=serie?.length||0;
         const axis0=new Float32Array(n);
         const axis1=new Float32Array(n);
-        const basisMode=(typeof tauBasisMode!=="undefined" && tauBasisMode)?String(tauBasisMode):"xy";
-        const secondaryMode=(typeof tauPcaSecondaryMode!=="undefined" && tauPcaSecondaryMode)?String(tauPcaSecondaryMode):"perp90";
+        const basisMode=String(__safeCfg(()=>tauBasisMode,"xy"));
+        const secondaryMode=String(__safeCfg(()=>tauPcaSecondaryMode,"perp90"));
         if(n<=0) return {axis0,axis1};
         if(basisMode!=="pca"){
             for(let i=0;i<n;i++){
@@ -203,9 +213,9 @@ Objetivos:
         datosX1=$[nx,ny]$;
         datosY1=ny;
         (window as any).__tauProjectionMeta={
-            mode:(typeof tauBasisMode!=="undefined"?tauBasisMode:"xy"),
-            secondary:(typeof tauPcaSecondaryMode!=="undefined"?tauPcaSecondaryMode:"perp90"),
-            simCoordsMode:((typeof tauBasisMode!=="undefined"?tauBasisMode:"xy")==="pca"?"pca-relative":"xy-absolute"),
+            mode:__safeCfg(()=>tauBasisMode,"xy"),
+            secondary:__safeCfg(()=>tauPcaSecondaryMode,"perp90"),
+            simCoordsMode:(__safeCfg(()=>tauBasisMode,"xy")==="pca"?"pca-relative":"xy-absolute"),
             ...proj
         };
         const tauSeries=$[nx,ny]$;
@@ -291,12 +301,22 @@ Objetivos:
     // Mueve el panel al candidato ranked N segun score, KL, coste o MSD.
     const __gotoRankedCandidate=(rank:number)=>{
         const candidates=__getRankedCandidates();
-        if(candidates.length<=0) return false;
-        const idx=Math.max(0,Math.min(candidates.length-1,(rank|0)-1));
-        const cand=candidates[idx];
+        if(candidates.length>0){
+            const idx=Math.max(0,Math.min(candidates.length-1,(rank|0)-1));
+            const cand=candidates[idx];
+            autoPickBest=false;
+            bestTau=cand.tau;
+            bestSubseq=cand.subseq;
+            return __requestTauRecompute(true);
+        }
+        const bestTex=((typeof tauBestTex!=="undefined" && tauBestTex)?tauBestTex:null);
+        const bestPix=bestTex?__readTexPixel(bestTex,0,0):null;
+        const tauFallback=Math.max(1,((bestPix && Number.isFinite(bestPix[0]))?Math.round(bestPix[0]):((typeof bestTau!=="undefined"?bestTau:1)|0)));
+        const subseqFallback=Math.max(0,Math.min(tauFallback-1,((bestPix && Number.isFinite(bestPix[1]))?Math.round(bestPix[1]):((typeof bestSubseq!=="undefined"?bestSubseq:0)|0))));
         autoPickBest=false;
-        bestTau=cand.tau;
-        bestSubseq=cand.subseq;
+        bestTau=tauFallback;
+        bestSubseq=subseqFallback;
+        console.log("C$[2,3]$ rank fallback -> bestTex", {rank,tau:bestTau,subseq:bestSubseq,mode:__getRankMode()});
         return __requestTauRecompute(true);
     };
 

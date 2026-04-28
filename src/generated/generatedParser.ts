@@ -124,7 +124,7 @@ async function __c1Main(){
     
     
     
-                                const __fsTargetC1=canvas as any;
+                                                                                const __fsTargetC1=canvas as any;
     const __baseCanvasW=canvas.width;
     const __baseCanvasH=canvas.height;
     const __baseCanvasStyle={
@@ -179,6 +179,18 @@ async function __c1Main(){
     });
     document.addEventListener("fullscreenchange", __applyCanvasFullscreenC1);
     window.addEventListener("resize", __applyCanvasFullscreenC1);
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -306,20 +318,20 @@ datos_reales=result.data.Expression1;
 function getDataArrays(data:[number,number][][]):[Float32Array,Float32Array] {
   
     //data => [number,number][2352][52]
-    nCromatins=data.length;
-    NMuestras=data[0].length;
+    const nCromatinsLocal=data.length;
+    const NMuestrasLocal=data[0].length;
     // drawDataCount=gl.getParameter(gl.MAX_TEXTURE_SIZE);
-    drawDataCount=NMuestras*nCromatins;
-    console.log(drawDataCount);
-    let datX=new Float32Array(drawDataCount);
-    let datY=new Float32Array(drawDataCount);
-    loadData:for (let i = 0; i < nCromatins; i++) {
-        for (let j = 0; j < NMuestras; j++) {
+    const drawDataCountLocal=NMuestrasLocal*nCromatinsLocal;
+    console.log(drawDataCountLocal);
+    let datX=new Float32Array(drawDataCountLocal);
+    let datY=new Float32Array(drawDataCountLocal);
+    loadData:for (let i = 0; i < nCromatinsLocal; i++) {
+        for (let j = 0; j < NMuestrasLocal; j++) {
             // if(i==0&&j<100) console.log(data[i][j])
-            if(i*NMuestras+j>drawDataCount) break loadData;
-            datX[i*NMuestras+j]=data[i][j][0];
+            if(i*NMuestrasLocal+j>drawDataCountLocal) break loadData;
+            datX[i*NMuestrasLocal+j]=data[i][j][0];
             // datosX[i*NMuestras+j]=(i*NMuestras+j)/100+100;
-            datY[i*NMuestras+j]=data[i][j][1];
+            datY[i*NMuestrasLocal+j]=data[i][j][1];
         }
     }
     return [datX, datY];
@@ -404,8 +416,12 @@ camera.keys.right="right";
 camera.keys.up="up";
 camera.keys.down="down";
 camera.keys.rotMouse=true;
+let data = (datos_reales);
+let nCromatins = 0;
+let NMuestras = 0;
+let drawDataCount = 0;
 var datosX, datosY;
-[datosX, datosY] = getDataArrays((datos_reales));
+[datosX, datosY] = getDataArrays((data));
 var drawData = webglMan.program(-1, "data/1_drawData");
 lastUsedProgram = drawData;
 var d = drawData;
@@ -431,34 +447,34 @@ var datosYtex = lastUsedProgram?.texture2DArray?.({
 var dY = datosYtex;
 dX.setLengthUniforms();
 dY.setLengthUniforms();
-var is3D = true;
-var showPCA = true;
-var showStartPointer = true;
-var showSimulatedChrom = false;
-var showOtherChromatins = true;
-var simMeanSubseq = false;
-var pcaStride = 1;
-var percentageShown = 1;
-var ShownSpeed = 1;
-var saved3DCamX = 0;
-var saved3DCamY = 1;
-var saved3DCamZ = 0;
-var saved2DOffsetX = 0;
-var saved2DOffsetY = 0;
-var saved2DZoom = 1;
-var selectedChromatin = 0;
-var c2StartTexUnit = "TexUnit30";
-var useExternalStartTex = false;
-var useExternalSimTex = false;
-var simSamples = 2;
-var simTexX = null;
-var simTexY = null;
-var simStartTex = null;
-var simLastStamp = -1;
-var data = (datos_reales);
-var nCromatins = (data.length);
-var NMuestras = (data[0].length);
-var drawDataCount = (NMuestras*nCromatins);
+let is3D = true;
+let showPCA = true;
+let showStartPointer = true;
+let showSimulatedChrom = false;
+let showOtherChromatins = true;
+let simMeanSubseq = false;
+let pcaStride = 1;
+let percentageShown = 1;
+let ShownSpeed = 1;
+let saved3DCamX = 0;
+let saved3DCamY = 1;
+let saved3DCamZ = 0;
+let saved2DOffsetX = 0;
+let saved2DOffsetY = 0;
+let saved2DZoom = 1;
+let selectedChromatin = 0;
+let c2StartTexUnit = "TexUnit30";
+let useExternalStartTex = false;
+let useExternalSimTex = false;
+let simSamples = 2;
+let simTexX = null;
+let simTexY = null;
+let simStartTex = null;
+let simLastStamp = -1;
+let simLastChromatin = -1;
+nCromatins = (data.length);
+NMuestras = (data[0].length);
+drawDataCount = (NMuestras*nCromatins);
 var calcPCAProgram = webglMan.program(-1, "pca/1_calcPCA");
 lastUsedProgram = calcPCAProgram;
 var calcPCA = calcPCAProgram;
@@ -466,8 +482,8 @@ await calcPCA.loadProgram(calcPCA.vertPath, calcPCA.fragPath, (source => source)
 await calcPCA.use?.();
 lastUsedProgram = calcPCA;
 calcPCA.createVAO().bind();
-var pcaTex = calcPCA.createTexture2D("datosPCA", [nCromatins,1], TexExamples.RGBAFloat, null, ["NEAREST","NEAREST","CLAMP","CLAMP"], "TexUnit2");
-var centerTex = calcPCA.createTexture2D("datosCenter", [nCromatins,1], TexExamples.RGBAFloat, null, ["NEAREST","NEAREST","CLAMP","CLAMP"], "TexUnit3");
+let pcaTex = calcPCA.createTexture2D("datosPCA", [nCromatins,1], TexExamples.RGBAFloat, null, ["NEAREST","NEAREST","CLAMP","CLAMP"], "TexUnit2");
+let centerTex = calcPCA.createTexture2D("datosCenter", [nCromatins,1], TexExamples.RGBAFloat, null, ["NEAREST","NEAREST","CLAMP","CLAMP"], "TexUnit3");
 var drawPCAProgram = webglMan.program(-1, "pca/2_drawPCA");
 lastUsedProgram = drawPCAProgram;
 var drawPCA = drawPCAProgram;
@@ -598,7 +614,7 @@ var __globalBlockFn_0 = async (dt)=>{ // tick
     calcPCA.uNum("datosYLength", false, false).set((MAX_TEXTURE_SIZE));
     calcPCA.bindTexName2TexUnit("datosX", "TexUnit0");
     calcPCA.bindTexName2TexUnit("datosY", "TexUnit1");
-    var pcaFBO = calcPCA.cFrameBuffer().bind(["ColAtch0","ColAtch1"]);
+    let pcaFBO = calcPCA.cFrameBuffer().bind(["ColAtch0","ColAtch1"]);
     pcaFBO.bindColorBuffer(pcaTex, "ColAtch0");
     pcaFBO.bindColorBuffer(centerTex, "ColAtch1");
     pcaFBO.drawBuffers(["ColAtch0","ColAtch1"]);
@@ -609,80 +625,80 @@ var __globalBlockFn_0 = async (dt)=>{ // tick
     lastUsedProgram = d;
     drawStart.uniforms.useMeanColor.set((!!simMeanSubseq?1:0));
     selectedChromatin = (Math.max(0,Math.min(nCromatins-1,~~((window as any).chromatinIndex||1)-1)));
-    var simStampX = (~~((window as any).simStampX||0));
-    var simStampY = (~~((window as any).simStampY||0));
-    var simStamp = (simStampX*1000003 + simStampY);
-    if(simStamp!=simLastStamp){
-    var sx = ((window as any).simDataX);
-    var sy = ((window as any).simDataY);
+    let simStampX = (~~((window as any).simStampX||0));
+    let simStampY = (~~((window as any).simStampY||0));
+    let simStamp = (simStampX*1000003 + simStampY);
+    if(simStamp!=simLastStamp || selectedChromatin!=simLastChromatin){
+    let sx = ((window as any).simDataX);
+    let sy = ((window as any).simDataY);
     if(sx && sy){
-    var simPair = ((()=>{
-        const simArrXLocal = sx instanceof Float32Array ? sx : new Float32Array(sx);
-        const simArrYLocal = sy instanceof Float32Array ? sy : new Float32Array(sy);
-        const projMeta = ((window as any).__tauProjectionMeta || null);
-        if(projMeta && projMeta.mode === "pca"){
-            const recN = Math.max(2, Math.min(simArrXLocal.length, simArrYLocal.length));
-            const backX = new Float32Array(recN);
-            const backY = new Float32Array(recN);
-            const cx = Number.isFinite(projMeta.centerX) ? projMeta.centerX : 0;
-            const cy = Number.isFinite(projMeta.centerY) ? projMeta.centerY : 0;
-            const vx = Number.isFinite(projMeta.vx) ? projMeta.vx : 1;
-            const vy = Number.isFinite(projMeta.vy) ? projMeta.vy : 0;
-            const wx = Number.isFinite(projMeta.wx) ? projMeta.wx : 0;
-            const wy = Number.isFinite(projMeta.wy) ? projMeta.wy : 1;
-            for(let i=0;i<recN;i++){
-                const a0 = Number.isFinite(simArrXLocal[i]) ? simArrXLocal[i] : 0;
-                const a1 = Number.isFinite(simArrYLocal[i]) ? simArrYLocal[i] : 0;
-                backX[i] = cx + a0 * vx + a1 * wx;
-                backY[i] = cy + a0 * vy + a1 * wy;
-            }
-            return { x: backX, y: backY };
-        }
-        return { x: simArrXLocal, y: simArrYLocal };
-    })());
-    var simArrX = (simPair.x);
-    var simArrY = (simPair.y);
-    var simN = (Math.max(2,Math.min(simArrX.length,simArrY.length)));
-            var chromBase = (selectedChromatin*NMuestras);
-            var targetStartX = (Number.isFinite(datosX[chromBase])?datosX[chromBase]:0);
-            var targetStartY = (Number.isFinite(datosY[chromBase])?datosY[chromBase]:0);
-            var shiftX = (targetStartX-(Number.isFinite(simArrX[0])?simArrX[0]:0));
-            var shiftY = (targetStartY-(Number.isFinite(simArrY[0])?simArrY[0]:0));
-            if(shiftX||shiftY){
-            var shiftedX = (Float32Array.from(simArrX,(v)=>v+shiftX));
-            var shiftedY = (Float32Array.from(simArrY,(v)=>v+shiftY));
-            simArrX = (shiftedX);
-            simArrY = (shiftedY);
-            }
-            simSamples = (simN);
-            simTexX=(d as any).texture2DArray({
+    let simArrX = (sx instanceof Float32Array ? sx : new Float32Array(sx));
+    let simArrY = (sy instanceof Float32Array ? sy : new Float32Array(sy));
+    let projMeta = ((window as any).__tauProjectionMeta||null);
+    if(projMeta && projMeta.mode==="pca" && projMeta.simCoordsMode==="pca-relative"){
+    let recN = (Math.max(2,Math.min(simArrX.length,simArrY.length)));
+    let backX = new Float32Array(recN);
+    let backY = new Float32Array(recN);
+    let cx = (Number.isFinite(projMeta.centerX)?projMeta.centerX:0);
+    let cy = (Number.isFinite(projMeta.centerY)?projMeta.centerY:0);
+    let vx = (Number.isFinite(projMeta.vx)?projMeta.vx:1);
+    let vy = (Number.isFinite(projMeta.vy)?projMeta.vy:0);
+    let wx = (Number.isFinite(projMeta.wx)?projMeta.wx:0);
+    let wy = (Number.isFinite(projMeta.wy)?projMeta.wy:1);
+    let i = 0;
+    while(i<recN){
+        let a0 = (Number.isFinite(simArrX[i])?simArrX[i]:0);
+        let a1 = (Number.isFinite(simArrY[i])?simArrY[i]:0);
+        backX[i]=cx + a0*vx + a1*wx;
+        backY[i]=cy + a0*vy + a1*wy;
+        i += 1;
+    }
+    simArrX = (backX);
+    simArrY = (backY);
+    }
+    let simN = (Math.max(2,Math.min(simArrX.length,simArrY.length)));
+    let chromBase = (selectedChromatin*NMuestras);
+    let targetStartX = (Number.isFinite(datosX[chromBase])?datosX[chromBase]:0);
+    let targetStartY = (Number.isFinite(datosY[chromBase])?datosY[chromBase]:0);
+    let shiftX = (targetStartX-(Number.isFinite(simArrX[0])?simArrX[0]:0));
+    let shiftY = (targetStartY-(Number.isFinite(simArrY[0])?simArrY[0]:0));
+    if(shiftX||shiftY){
+    let shiftedX = (Float32Array.from(simArrX,(v)=>v+shiftX));
+    let shiftedY = (Float32Array.from(simArrY,(v)=>v+shiftY));
+    simArrX = (shiftedX);
+    simArrY = (shiftedY);
+    }
+    simSamples = (simN);
+    simTexX=(d as any).texture2DArray({
                 format: TexExamples.RFloat,
                 data: simArrX,
                 name: "simX",
                 texUnit: "TexUnit30",
                 size: [simN,1,1]
             });
-            simTexY=(d as any).texture2DArray({
+    simTexY=(d as any).texture2DArray({
                 format: TexExamples.RFloat,
                 data: simArrY,
                 name: "simY",
                 texUnit: "TexUnit31",
                 size: [simN,1,1]
             });
-            if(simTexX?.setLengthUniforms) simTexX.setLengthUniforms();
-            if(simTexY?.setLengthUniforms) simTexY.setLengthUniforms();
-            var s0x = (simArrX[0]||0);
-            var s0y = (simArrY[0]||0);
-            simStartTex = (drawStart.createTexture2D("simStartPos",[1,1],TexExamples.RGBAFloat,new Float32Array([s0x,s0y,0,1]),["NEAREST","NEAREST","CLAMP","CLAMP"],"TexUnit29"));
-            useExternalSimTex = true;
-            useExternalStartTex = true;
-            simLastStamp = (simStamp);
-            }else if(!sx || !sy){
-            useExternalSimTex = false;
-            useExternalStartTex = false;
-            simLastStamp = (simStamp);
-        }
-            }
+    if(simTexX?.setLengthUniforms) simTexX.setLengthUniforms();
+    if(simTexY?.setLengthUniforms) simTexY.setLengthUniforms();
+    let s0x = (simArrX[0]||0);
+    let s0y = (simArrY[0]||0);
+    simStartTex = (drawStart.createTexture2D("simStartPos",[1,1],TexExamples.RGBAFloat,new Float32Array([s0x,s0y,0,1]),["NEAREST","NEAREST","CLAMP","CLAMP"],"TexUnit29"));
+    useExternalSimTex = true;
+    useExternalStartTex = true;
+    simLastStamp = (simStamp);
+    simLastChromatin = (selectedChromatin);
+    }else if(!sx || !sy){
+    useExternalSimTex = false;
+    useExternalStartTex = false;
+    simLastStamp = (simStamp);
+    simLastChromatin = (selectedChromatin);
+    }
+    }
     if(is3D){
     camera.tick((dt),(keypress),(mousepos),(mouseclick));
     saved3DCamX = (camera.position.x);
@@ -695,8 +711,8 @@ var __globalBlockFn_0 = async (dt)=>{ // tick
     drawStart.uniforms.offset.set([0,0,0]);
     drawStart.uniforms.scale.set(1);
     } else {
-    var camzoom = (camera.position.y);
-    var mvdepth = (keypress.Depth());
+    let camzoom = (camera.position.y);
+    let mvdepth = (keypress.Depth());
     if(mvdepth<0){
     camzoom = (camzoom*1.05);
     if(camzoom==0){
@@ -725,117 +741,121 @@ var __globalBlockFn_0 = async (dt)=>{ // tick
     percentageShown = 1;
     }
     }
-        };
-        __globalBlocks.push({ priority: 0, order: 0, fn: __globalBlockFn_0 });
-    addFunc(async (dt)=>{ // drawPCASetup
+};
+__globalBlocks.push({ priority: 10, order: 0, fn: __globalBlockFn_0 });
+var __globalBlockFn_1 = async (dt)=>{ // drawPCASetup
+    if(showPCA){
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    await drawPCA.use?.();
+    lastUsedProgram = drawPCA;
+    drawPCA.VAO.bind();
+    drawPCA.use?.();
+    drawPCA.setViewport(...([0,0,canvas.width,canvas.height]));
+    drawPCA.bindTexName2TexUnit("datosX", "TexUnit0");
+    drawPCA.bindTexName2TexUnit("datosY", "TexUnit1");
+    drawPCA.bindTexName2TexUnit("datosPCA", "TexUnit2");
+    drawPCA.bindTexName2TexUnit("datosCenter", "TexUnit3");
+    if(is3D){
+    camera.calculateMatrices().setUniforms(drawPCA.uMat4("u_viewMatrix"), drawPCA.uMat4("u_projectionMatrix"), undefined);
+    drawPCA.uniforms.offset.set([0,0,0]);
+    drawPCA.uniforms.scale.set(1);
+    } else {
+    drawPCA.uniforms.offset.set([camera.position.x, camera.position.z, camera.position.y]);
+    drawPCA.uniforms.scale.set((camera.position.y));
+    }
+    drawPCA.uniforms.is3D.set((!!is3D?1:0));
+    }
+    // </block drawPCASetup>
+};
+__globalBlocks.push({ priority: 19, order: 1, fn: __globalBlockFn_1 });
+var __globalBlockFn_2 = async (dt)=>{ // drawPCAAxes
+    // <block drawPCAAxes>
+    for (let n_cromatin = 0; n_cromatin <= (nCromatins-1); n_cromatin++) {
         if(showPCA){
-        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
         await drawPCA.use?.();
         lastUsedProgram = drawPCA;
-        drawPCA.VAO.bind();
-        drawPCA.use?.();
-        drawPCA.setViewport(...([0,0,canvas.width,canvas.height]));
-        drawPCA.bindTexName2TexUnit("datosX", "TexUnit0");
-        drawPCA.bindTexName2TexUnit("datosY", "TexUnit1");
-        drawPCA.bindTexName2TexUnit("datosPCA", "TexUnit2");
-        drawPCA.bindTexName2TexUnit("datosCenter", "TexUnit3");
-        if(is3D){
-        camera.calculateMatrices().setUniforms(drawPCA.uMat4("u_viewMatrix"), drawPCA.uMat4("u_projectionMatrix"), undefined);
-        drawPCA.uniforms.offset.set([0,0,0]);
-        drawPCA.uniforms.scale.set(1);
-        } else {
-        drawPCA.uniforms.offset.set([camera.position.x, camera.position.z, camera.position.y]);
-        drawPCA.uniforms.scale.set((camera.position.y));
+        if(n_cromatin%pcaStride==0){
+        drawPCA.uniforms.nCromatin.set((n_cromatin));
+        drawPCA.uniforms.isPerp.set(0);
+        drawPCA.drawArrays("TRIANGLE_FAN",0,4);
+        drawPCA.uniforms.isPerp.set(1);
+        drawPCA.drawArrays("TRIANGLE_FAN",0,4);
         }
-        drawPCA.uniforms.is3D.set((!!is3D?1:0));
         }
-        // </block drawPCASetup>
-    });
-    addFunc(async (dt)=>{ // drawPCAAxes
-        // <block drawPCAAxes>
-        for (let n_cromatin = 0; n_cromatin <= (nCromatins-1); n_cromatin++) {
-            if(showPCA){
-            await drawPCA.use?.();
-            lastUsedProgram = drawPCA;
-            if(n_cromatin%pcaStride==0){
-            drawPCA.uniforms.nCromatin.set((n_cromatin));
-            drawPCA.uniforms.isPerp.set(0);
-            drawPCA.drawArrays("TRIANGLE_FAN",0,4);
-            drawPCA.uniforms.isPerp.set(1);
-            drawPCA.drawArrays("TRIANGLE_FAN",0,4);
-            }
-            }
-        }
-        // </block drawPCAAxes>
-    });
-    addFunc(async (dt)=>{ // drawCromatin
-        // <block drawCromatin>
-        for (let n_cromatin = 0; n_cromatin <= (nCromatins-1); n_cromatin++) {
-            gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-            await d.use?.();
-            lastUsedProgram = d;
-            d.use?.();
-            d.setViewport(...([0,0,canvas.width,canvas.height]));
-            d.VAO.bind();
-            n_cromatin = (n_cromatin%nCromatins);
-            var lCromatin = (drawDataCount/nCromatins);
-            var templCromatin = (lCromatin);
-            var templSim = (simSamples);
-            d.uniforms.lCromatin.set((lCromatin));
-            if(percentageShown!=1){
-            templCromatin = (Math.max(2,~~(lCromatin*percentageShown)));
-            templSim = (Math.max(2,~~(simSamples*percentageShown)));
-            }
-            if(showSimulatedChrom){
-            if(n_cromatin==selectedChromatin && useExternalSimTex){
-            d.bindTexName2TexUnit("datosX", "TexUnit30");
-            d.bindTexName2TexUnit("datosY", "TexUnit31");
-            d.uniforms.lCromatin.set((simSamples));
-            d.drawArrays("LINE_STRIP",0,(templSim));
-            d.bindTexName2TexUnit("datosX", "TexUnit0");
-            d.bindTexName2TexUnit("datosY", "TexUnit1");
-            d.uniforms.lCromatin.set((lCromatin));
-            }
-            } else {
-            if(showOtherChromatins || n_cromatin==selectedChromatin){
-            d.drawArrays("LINE_STRIP",(lCromatin*n_cromatin),(templCromatin));
-            }
-            if(n_cromatin==selectedChromatin && useExternalSimTex){
-            d.bindTexName2TexUnit("datosX", "TexUnit30");
-            d.bindTexName2TexUnit("datosY", "TexUnit31");
-            d.uniforms.lCromatin.set((simSamples));
-            d.drawArrays("LINE_STRIP",0,(templSim));
-            d.bindTexName2TexUnit("datosX", "TexUnit0");
-            d.bindTexName2TexUnit("datosY", "TexUnit1");
-            d.uniforms.lCromatin.set((lCromatin));
-            }
-            }
-        }
-        // </block drawCromatin>
-    });
-    addFunc(async (dt)=>{ // drawStartMarker
-        if(showStartPointer && useExternalStartTex){
+    }
+    // </block drawPCAAxes>
+};
+__globalBlocks.push({ priority: 20, order: 2, fn: __globalBlockFn_2 });
+var __globalBlockFn_3 = async (dt)=>{ // drawCromatin
+    // <block drawCromatin>
+    for (let n_cromatin = 0; n_cromatin <= (nCromatins-1); n_cromatin++) {
         gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-        await drawStart.use?.();
-        lastUsedProgram = drawStart;
-        drawStart.use?.();
-        drawStart.setViewport(...([0,0,canvas.width,canvas.height]));
-        drawStart.VAO.bind();
-        drawStart.bindTexName2TexUnit("datosX", "TexUnit0");
-        drawStart.bindTexName2TexUnit("datosY", "TexUnit1");
-        drawStart.bindTexName2TexUnit("startPosTex", "TexUnit29");
-        drawStart.uniforms.selectedChromatin.set((!!useExternalStartTex?0:selectedChromatin));
-        drawStart.uniforms.useStartPosTex.set((!!useExternalStartTex?1:0));
-        if(is3D){
-        camera.calculateMatrices().setUniforms(drawStart.uMat4("u_viewMatrix"), drawStart.uMat4("u_projectionMatrix"), undefined);
+        await d.use?.();
+        lastUsedProgram = d;
+        d.use?.();
+        d.setViewport(...([0,0,canvas.width,canvas.height]));
+        d.VAO.bind();
+        n_cromatin = (n_cromatin%nCromatins);
+        let lCromatin = (drawDataCount/nCromatins);
+        let templCromatin = (lCromatin);
+        let templSim = (simSamples);
+        d.uniforms.lCromatin.set((lCromatin));
+        if(percentageShown!=1){
+        templCromatin = (Math.max(2,~~(lCromatin*percentageShown)));
+        templSim = (Math.max(2,~~(simSamples*percentageShown)));
         }
-        drawStart.drawArrays("POINTS",0,1);
+        if(showSimulatedChrom){
+        if(n_cromatin==selectedChromatin && useExternalSimTex){
+        d.bindTexName2TexUnit("datosX", "TexUnit30");
+        d.bindTexName2TexUnit("datosY", "TexUnit31");
+        d.uniforms.lCromatin.set((simSamples));
+        d.drawArrays("LINE_STRIP",0,(templSim));
+        d.bindTexName2TexUnit("datosX", "TexUnit0");
+        d.bindTexName2TexUnit("datosY", "TexUnit1");
+        d.uniforms.lCromatin.set((lCromatin));
         }
-        // </block drawStartMarker>
-    });
-    if (typeof __mountGlobalBlocks === "function") __mountGlobalBlocks(__globalBlocks, addFunc);
+        } else {
+        if(showOtherChromatins || n_cromatin==selectedChromatin){
+        d.drawArrays("LINE_STRIP",(lCromatin*n_cromatin),(templCromatin));
+        }
+        if(n_cromatin==selectedChromatin && useExternalSimTex){
+        d.bindTexName2TexUnit("datosX", "TexUnit30");
+        d.bindTexName2TexUnit("datosY", "TexUnit31");
+        d.uniforms.lCromatin.set((simSamples));
+        d.drawArrays("LINE_STRIP",0,(templSim));
+        d.bindTexName2TexUnit("datosX", "TexUnit0");
+        d.bindTexName2TexUnit("datosY", "TexUnit1");
+        d.uniforms.lCromatin.set((lCromatin));
+        }
+        }
+    }
+    // </block drawCromatin>
+};
+__globalBlocks.push({ priority: 10, order: 3, fn: __globalBlockFn_3 });
+var __globalBlockFn_4 = async (dt)=>{ // drawStartMarker
+    if(showStartPointer && useExternalStartTex){
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    await drawStart.use?.();
+    lastUsedProgram = drawStart;
+    drawStart.use?.();
+    drawStart.setViewport(...([0,0,canvas.width,canvas.height]));
+    drawStart.VAO.bind();
+    drawStart.bindTexName2TexUnit("datosX", "TexUnit0");
+    drawStart.bindTexName2TexUnit("datosY", "TexUnit1");
+    drawStart.bindTexName2TexUnit("startPosTex", "TexUnit29");
+    drawStart.uniforms.selectedChromatin.set((!!useExternalStartTex?0:selectedChromatin));
+    drawStart.uniforms.useStartPosTex.set((!!useExternalStartTex?1:0));
+    if(is3D){
+    camera.calculateMatrices().setUniforms(drawStart.uMat4("u_viewMatrix"), drawStart.uMat4("u_projectionMatrix"), undefined);
+    }
+    drawStart.drawArrays("POINTS",0,1);
+    }
+    // </block drawStartMarker>
+};
+__globalBlocks.push({ priority: 25, order: 4, fn: __globalBlockFn_4 });
+if (typeof __mountGlobalBlocks === "function") __mountGlobalBlocks(__globalBlocks, addFunc);
 start();
 }
 __c1Main();
-    //<Pos>
-    //</Pos>
+//<Pos>
+//</Pos>

@@ -15,7 +15,12 @@ camera.keys.up="up"
 camera.keys.down="down"
 camera.keys.rotMouse=true
 
-[datosX, datosY] = $getDataArrays$({datos_reales})
+let data={datos_reales}
+let nCromatins=0
+let NMuestras=0
+let drawDataCount=0
+
+[datosX, datosY] = $getDataArrays$({data})
 
 drawData = Program data/1_drawData |= d
 lduse d
@@ -54,11 +59,11 @@ let simTexX=null
 let simTexY=null
 let simStartTex=null
 let simLastStamp=-1
+let simLastChromatin=-1
 
-let data={datos_reales}
-let nCromatins={data.length}
-let NMuestras={data[0].length}
-let drawDataCount={NMuestras*nCromatins}
+nCromatins={data.length}
+NMuestras={data[0].length}
+drawDataCount={NMuestras*nCromatins}
 
 calcPCAProgram = Program pca/1_calcPCA |= calcPCA
 lduse calcPCA
@@ -195,36 +200,34 @@ tick {
    let simStampX={~~((window as any).simStampX||0)}
    let simStampY={~~((window as any).simStampY||0)}
    let simStamp={simStampX*1000003 + simStampY}
-   if(simStamp!=simLastStamp){
+   if(simStamp!=simLastStamp || selectedChromatin!=simLastChromatin){
       let sx={(window as any).simDataX}
       let sy={(window as any).simDataY}
       if(sx && sy){
-         let simPair={(()=>{
-            let simArrXLocal=sx instanceof Float32Array ? sx : new Float32Array(sx)
-            let simArrYLocal=sy instanceof Float32Array ? sy : new Float32Array(sy)
-            let projMeta=(window as any).__tauProjectionMeta||null
-            if(projMeta && projMeta.mode==="pca" && projMeta.simCoordsMode==="pca-relative"){
-               let recN=Math.max(2,Math.min(simArrXLocal.length,simArrYLocal.length))
-               let backX=new Float32Array(recN)
-               let backY=new Float32Array(recN)
-               let cx=Number.isFinite(projMeta.centerX)?projMeta.centerX:0
-               let cy=Number.isFinite(projMeta.centerY)?projMeta.centerY:0
-               let vx=Number.isFinite(projMeta.vx)?projMeta.vx:1
-               let vy=Number.isFinite(projMeta.vy)?projMeta.vy:0
-               let wx=Number.isFinite(projMeta.wx)?projMeta.wx:0
-               let wy=Number.isFinite(projMeta.wy)?projMeta.wy:1
-               for(let i=0;i<recN;i++){
-                  let a0=Number.isFinite(simArrXLocal[i])?simArrXLocal[i]:0
-                  let a1=Number.isFinite(simArrYLocal[i])?simArrYLocal[i]:0
-                  backX[i]=cx + a0*vx + a1*wx
-                  backY[i]=cy + a0*vy + a1*wy
-               }
-               return {x:backX,y:backY}
+         let simArrX={sx instanceof Float32Array ? sx : new Float32Array(sx)}
+         let simArrY={sy instanceof Float32Array ? sy : new Float32Array(sy)}
+         let projMeta={(window as any).__tauProjectionMeta||null}
+         if(projMeta && projMeta.mode==="pca" && projMeta.simCoordsMode==="pca-relative"){
+            let recN={Math.max(2,Math.min(simArrX.length,simArrY.length))}
+            let backX=new Float32Array(recN)
+            let backY=new Float32Array(recN)
+            let cx={Number.isFinite(projMeta.centerX)?projMeta.centerX:0}
+            let cy={Number.isFinite(projMeta.centerY)?projMeta.centerY:0}
+            let vx={Number.isFinite(projMeta.vx)?projMeta.vx:1}
+            let vy={Number.isFinite(projMeta.vy)?projMeta.vy:0}
+            let wx={Number.isFinite(projMeta.wx)?projMeta.wx:0}
+            let wy={Number.isFinite(projMeta.wy)?projMeta.wy:1}
+            let i=0
+            while(i<recN){
+               let a0={Number.isFinite(simArrX[i])?simArrX[i]:0}
+               let a1={Number.isFinite(simArrY[i])?simArrY[i]:0}
+               backX[i]=cx + a0*vx + a1*wx
+               backY[i]=cy + a0*vy + a1*wy
+               i+=1
             }
-            return {x:simArrXLocal,y:simArrYLocal}
-         })()}
-         let simArrX={simPair.x}
-         let simArrY={simPair.y}
+            simArrX={backX}
+            simArrY={backY}
+         }
          let simN={Math.max(2,Math.min(simArrX.length,simArrY.length))}
          let chromBase={selectedChromatin*NMuestras}
          let targetStartX={Number.isFinite(datosX[chromBase])?datosX[chromBase]:0}
@@ -250,10 +253,12 @@ tick {
          useExternalSimTex=true
          useExternalStartTex=true
          simLastStamp={simStamp}
+         simLastChromatin={selectedChromatin}
       }else if(!sx || !sy){
          useExternalSimTex=false
          useExternalStartTex=false
          simLastStamp={simStamp}
+         simLastChromatin={selectedChromatin}
       }
    }
    if(is3D){

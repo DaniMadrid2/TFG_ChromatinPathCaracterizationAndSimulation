@@ -185,6 +185,92 @@ function patchSimTextureArtifacts(code: string) {
     var simN = (Math.max(2,Math.min(simArrX.length,simArrY.length)));`);
 }
 
+function patchGetDataArraysLocals(code: string) {
+    return code
+        .replace(
+`function getDataArrays(data:[number,number][][]):[Float32Array,Float32Array] {
+  
+    //data => [number,number][2352][52]
+    nCromatins=data.length;
+    NMuestras=data[0].length;
+    // drawDataCount=gl.getParameter(gl.MAX_TEXTURE_SIZE);
+    drawDataCount=NMuestras*nCromatins;
+    console.log(drawDataCount);
+    let datX=new Float32Array(drawDataCount);
+    let datY=new Float32Array(drawDataCount);
+    loadData:for (let i = 0; i < nCromatins; i++) {
+        for (let j = 0; j < NMuestras; j++) {
+            // if(i==0&&j<100) console.log(data[i][j])
+            if(i*NMuestras+j>drawDataCount) break loadData;
+            datX[i*NMuestras+j]=data[i][j][0];
+            // datosX[i*NMuestras+j]=(i*NMuestras+j)/100+100;
+            datY[i*NMuestras+j]=data[i][j][1];
+        }
+    }
+    return [datX, datY];
+}`,
+`function getDataArrays(data:[number,number][][]):[Float32Array,Float32Array] {
+  
+    //data => [number,number][2352][52]
+    const nCromatinsLocal=data.length;
+    const NMuestrasLocal=data[0].length;
+    // drawDataCount=gl.getParameter(gl.MAX_TEXTURE_SIZE);
+    const drawDataCountLocal=NMuestrasLocal*nCromatinsLocal;
+    console.log(drawDataCountLocal);
+    let datX=new Float32Array(drawDataCountLocal);
+    let datY=new Float32Array(drawDataCountLocal);
+    loadData:for (let i = 0; i < nCromatinsLocal; i++) {
+        for (let j = 0; j < NMuestrasLocal; j++) {
+            // if(i==0&&j<100) console.log(data[i][j])
+            if(i*NMuestrasLocal+j>drawDataCountLocal) break loadData;
+            datX[i*NMuestrasLocal+j]=data[i][j][0];
+            // datosX[i*NMuestras+j]=(i*NMuestras+j)/100+100;
+            datY[i*NMuestrasLocal+j]=data[i][j][1];
+        }
+    }
+    return [datX, datY];
+}`)
+        .replace(
+`function getDataArrays(data) {
+        //data => [number,number][2352][52]
+        nCromatins = data.length;
+        NMuestras = data[0].length;
+        // drawDataCount=gl.getParameter(gl.MAX_TEXTURE_SIZE);
+        drawDataCount = NMuestras * nCromatins;
+        console.log(drawDataCount);
+        let datX = new Float32Array(drawDataCount);
+        let datY = new Float32Array(drawDataCount);
+        loadData: for (let i = 0; i < nCromatins; i++) {
+            for (let j = 0; j < NMuestras; j++) {
+                // if(i==0&&j<100) console.log(data[i][j])
+                if (i * NMuestras + j > drawDataCount)
+                    break loadData;
+                datX[i * NMuestras + j] = data[i][j][0];
+                // datosX[i*NMuestras+j]=(i*NMuestras+j)/100+100;
+                datY[i * NMuestras + j] = data[i][j][1];
+            }
+        }`,
+`function getDataArrays(data) {
+        //data => [number,number][2352][52]
+        const nCromatinsLocal = data.length;
+        const NMuestrasLocal = data[0].length;
+        // drawDataCount=gl.getParameter(gl.MAX_TEXTURE_SIZE);
+        const drawDataCountLocal = NMuestrasLocal * nCromatinsLocal;
+        console.log(drawDataCountLocal);
+        let datX = new Float32Array(drawDataCountLocal);
+        let datY = new Float32Array(drawDataCountLocal);
+        loadData: for (let i = 0; i < nCromatinsLocal; i++) {
+            for (let j = 0; j < NMuestrasLocal; j++) {
+                // if(i==0&&j<100) console.log(data[i][j])
+                if (i * NMuestrasLocal + j > drawDataCountLocal)
+                    break loadData;
+                datX[i * NMuestrasLocal + j] = data[i][j][0];
+                // datosX[i*NMuestras+j]=(i*NMuestras+j)/100+100;
+                datY[i * NMuestrasLocal + j] = data[i][j][1];
+            }
+        }`);
+}
+
 function fixBrokenTail(code: string) {
     let next = code;
     next = next.replace("// </block let>\r\n    });\r\n    }\r\n    if(is3D){", "    }\r\n    if(is3D){");
@@ -288,6 +374,7 @@ function patchGeneratedJavaScript(code: string, snippet: string) {
 
 async function patchGeneratedFiles(outPath: string, baseDir: string) {
     let outCode = await fs.readFile(outPath, "utf8");
+    outCode = patchGetDataArraysLocals(outCode);
     outCode = ensureCommonImports(outCode);
     outCode = patchLocalWebGLManUsage(outCode);
     const snippet = resolveSnippetPlain(await loadSnippetParts(baseDir, "c1"));

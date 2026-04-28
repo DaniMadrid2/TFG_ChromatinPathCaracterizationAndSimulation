@@ -16,7 +16,7 @@ uniform int tauBatchCount;
 uniform int tauArnoldiReorth;
 uniform float tauArnoldiResidTol;
 
-layout(location = 0) out vec4 tauArnoldiCoeffOut; // x in [0..13] selects coeff vec3 + valid
+layout(location = 0) out vec4 tauArnoldiCoeff; // x in [0..13] selects coeff vec3 + valid
 
 const int TAU_MAX_TOTAL_TERMS = 8;
 const int NM_STORE_VERTS = TAU_MAX_TOTAL_TERMS + 1;
@@ -158,11 +158,11 @@ void main(){
     int tMin = max(tauMin, 1);
 
     if(coeffIdx < 0 || coeffIdx >= 14 || tauLocal < 0 || tauLocal >= tauBatchCount || vert < 0 || vert >= NM_STORE_VERTS){
-        tauArnoldiCoeffOut = vec4(0.0);
+        tauArnoldiCoeff = vec4(0.0);
         return;
     }
     if(tau <= 0 || tau > tauMax || tau < tMin || subseq < 0 || subseq >= tau){
-        tauArnoldiCoeffOut = vec4(0.0);
+        tauArnoldiCoeff = vec4(0.0);
         return;
     }
 
@@ -261,5 +261,5 @@ void main(){
     else if(coeffIdx == 11) coeff = h13;
     else if(coeffIdx == 12) coeff = h23;
     else if(coeffIdx == 13) coeff = h33;
-    tauArnoldiCoeffOut = vec4(coeff, valid);
+    tauArnoldiCoeff = vec4(coeff, valid);
 }

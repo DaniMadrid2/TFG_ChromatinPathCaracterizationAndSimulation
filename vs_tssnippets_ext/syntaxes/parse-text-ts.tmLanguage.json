@@ -7,8 +7,28 @@
       "match": "^\\s*//\\?.*$"
     },
     {
+      "name": "keyword.control.flow.parse-text-ts",
+      "match": "\\b(?:if|else|for|while|switch|case|break|continue|return|throw|try|catch|finally)\\b"
+    },
+    {
+      "name": "storage.type.variable.parse-text-ts",
+      "match": "\\b(?:let|const|var)\\b"
+    },
+    {
+      "name": "storage.modifier.derived.parse-text-ts",
+      "match": "\\bderived\\b"
+    },
+    {
       "name": "keyword.control.anchor.parse-text-ts",
       "match": "<(?:Pre|Pre/|Pos|Mid)>"
+    },
+    {
+      "name": "keyword.control.reserved.parse-text-ts",
+      "match": "\\b(?:with)\\b"
+    },
+    {
+      "name": "keyword.operator.reserved.parse-text-ts",
+      "match": "\\b(?:RES|size|TYPE|FILTER|INIT|tex2D)\\b|~"
     },
     {
       "name": "keyword.operator.assignment.pipe.parse-text-ts",
@@ -19,6 +39,10 @@
       "match": "->"
     },
     {
+      "name": "entity.other.tag.block.parse-text-ts",
+      "match": "(^|\\s)-\\s*(?:opti-)?[A-Za-z0-9_][A-Za-z0-9_-]*\\s*-.*?-\\s*(?=\\{|$)"
+    },
+    {
       "name": "variable.other.dollar-macro.parse-text-ts",
       "match": "\\$[A-Za-z_][A-Za-z0-9_]*\\$"
     },
@@ -27,18 +51,25 @@
       "match": "\\b(?:vec2|vec3|vec4|mat2|mat3|mat4)\\s*(?=\\()"
     },
     {
+      "name": "meta.dimension.parse-text-ts",
+      "match": "\\[[^\\]]+\\s+x\\s+[^\\]]+\\]"
+    },
+    {
       "name": "support.function.parser-helpers.parse-text-ts",
-      "match": "\\b(?:lduse|use|start|stop|drawTriangles|viewport|log|framebuffer|program|resource|rebind|uniforms|glslFilters|tex2D|tick|OnKeyPress|MeshProgram|MeshFillerProgram|Axis3DGroup|Camera3D|Camera2D|Program|createIdealMesh|fillMeshTexture)\\b"
+      "match": "\\b(?:lduse|use|start|stop|drawTriangles|viewport|log|framebuffer|program|resource|texturePreset|rebind|uniforms|glslFilters|tex2D|texture2DArray|tick|draw|OnKeyPress|opti-let|opti-var|defineTag|bindTexName2TexUnit|MeshProgram|MeshFillerProgram|Axis3DGroup|Camera3D|Camera2D|Program|createIdealMesh|fillMeshTexture)\\b"
     },
     {
       "name": "entity.name.type.parser-block.parse-text-ts",
-      "match": "^\\s*[A-Za-z_][A-Za-z0-9_]*\\s*(?:\\([^\\n{}]*\\))?\\s*(?=\\{)"
+      "match": "^\\s*(?!(?:if|for|while|switch|catch|else|try|do|use|start|stop|drawTriangles|viewport|log|framebuffer|program|resource|texturePreset|rebind|uniforms|glslFilters|tex2D|texture2DArray|tick|draw|OnKeyPress|opti-let|opti-var|defineTag|lduse|bindTexName2TexUnit)\\b)[A-Za-z_][A-Za-z0-9_]*\\s*(?:\\([^\\n{}]*\\))?\\s*(?=\\{)"
     },
     {
       "name": "meta.interpolation.braces.parse-text-ts",
       "begin": "\\{",
       "end": "\\}",
       "patterns": [
+        {
+          "include": "source.parse-text-ts"
+        },
         {
           "include": "source.ts"
         }

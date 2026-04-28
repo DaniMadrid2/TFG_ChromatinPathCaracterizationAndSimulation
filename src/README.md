@@ -105,6 +105,16 @@ No son imports de TypeScript. Se usan para ensamblar trozos de DSL:
 import <Mid> from ../parseTextC23.shaderdsl.ts
 ```
 
+### 2.1 Aliases en `program`
+
+Para alias de programa se acepta y se prefiere:
+
+```ts
+program tauMom|progTauMom "tau/01_moments/1_tauMaxVeces" {
+```
+
+También se soporta `|=` por compatibilidad, pero `|` es la forma recomendada para “dos nombres al mismo programa”.
+
 El marcador `<Mid>` indica dónde se inserta el contenido importado.
 
 ### 3. Variables simples
@@ -405,7 +415,7 @@ Conviene dejarlo en `*.shaderdsl.ts` cuando:
 - `glsl/` contiene los shaders reales compilados por los programas del DSL
 
 
-# TODO
+# Modificaciones antiguas, ahora no tienen tanto valor y habrá nuevas
 Estructura compute:
 
 Esto:
@@ -425,7 +435,7 @@ Esto:
 
 Poderse escribir así:
 
-constantAction tauXiActions{
+tauXiActions = {
    uniforms tauXi {
       tauMax = {tauMaxVeces}i
       tauMin = {tauMinVeces}i
@@ -433,7 +443,7 @@ constantAction tauXiActions{
    }
 }
 
-constantAction exampleActions{
+exampleActions = {
    rebind tauAdjCost {
       exampleTexture -> TexUnit10
    }

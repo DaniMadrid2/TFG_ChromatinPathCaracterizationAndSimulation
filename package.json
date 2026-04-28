@@ -1,6 +1,6 @@
 {
   "name": "tfg_chromatinpathcaracterizationandsimulation",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Local static bundle for TFG_ChromatinPathCaracterizationAndSimulation",
   "main": "src/main.js",
   "scripts": {

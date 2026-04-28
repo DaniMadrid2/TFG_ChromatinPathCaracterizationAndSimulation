@@ -10,6 +10,7 @@ echo  c1 = parseText2  -^> generatedParser.ts
 echo  c2 = parseTextC2 -^> generatedParserC2.ts
 echo  c3 = parseTextC3 -^> generatedParserC3.ts
 echo  c23 = bloque comun C2/C3 -^> regenera C2 y C3
+echo  glMan = recompila webglMan.ts -^> webglMan.js
 echo  all = regenera C1, C2 y C3
 echo  q   = salir
 echo ==============================================
@@ -17,7 +18,7 @@ echo.
 
 :loop
 set "opt="
-set /p "opt=Comando (c1/c2/c3/c23/all/q): "
+set /p "opt=Comando (c1/c2/c3/c23/glMan/all/q): "
 
 if /I "!opt!"=="q" goto end
 
@@ -45,6 +46,11 @@ if /I "!opt!"=="c23" (
     goto loop
 )
 
+if /I "!opt!"=="glMan" (
+    call :run_webglman
+    goto loop
+)
+
 if /I "!opt!"=="all" (
     echo.
     echo [runParser] Ejecutando todos los parsers...
@@ -56,7 +62,7 @@ if /I "!opt!"=="all" (
 )
 
 echo Opcion no valida: !opt!
-echo Usa c1, c2, c3, c23, all o q.
+echo Usa c1, c2, c3, c23, glMan, all o q.
 echo.
 goto loop
 
@@ -66,6 +72,15 @@ echo [runParser] Ejecutando %~1...
 call npx tsx --no-cache %~2
 set "rc=!errorlevel!"
 if not "!rc!"=="0" echo [runParser] %~1 termino con errorlevel !rc!
+echo.
+exit /b !rc!
+
+:run_webglman
+echo.
+echo [runParser] Recompilando webglMan.ts...
+call npx tsc src\dependencies\Code\WebGL\webglMan.ts --target ES2020 --module ES2020 --moduleResolution bundler --declaration --skipLibCheck
+set "rc=!errorlevel!"
+if not "!rc!"=="0" echo [runParser] webglMan termino con errorlevel !rc!
 echo.
 exit /b !rc!
 

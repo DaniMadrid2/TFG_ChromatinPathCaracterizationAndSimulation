@@ -17,7 +17,7 @@ uniform int tauBatchCount;
 uniform float adjointTauScale;
 uniform int tauExpTerms;
 
-layout(location = 0) out vec4 tauAdjExpOut; // [E1, Ex, Ex2, valid]
+layout(location = 0) out vec4 tauAdjExp; // [E1, Ex, Ex2, valid]
 
 const int TAU_MAX_TOTAL_TERMS = 8;
 const int NM_STORE_VERTS = TAU_MAX_TOTAL_TERMS + 1;
@@ -156,17 +156,17 @@ void main(){
     int tMin = max(tauMin, 1);
 
     if(i < 0 || i >= nBins || tauLocal < 0 || tauLocal >= tauBatchCount || vert < 0 || vert >= NM_STORE_VERTS){
-        tauAdjExpOut = vec4(0.0);
+        tauAdjExp = vec4(0.0);
         return;
     }
     if(tau <= 0 || tau > tauMax || tau < tMin || subseq < 0 || subseq >= tau){
-        tauAdjExpOut = vec4(0.0);
+        tauAdjExp = vec4(0.0);
         return;
     }
 
     float valid = validAt(packedRow);
     if(valid < 0.5){
-        tauAdjExpOut = vec4(0.0);
+        tauAdjExp = vec4(0.0);
         return;
     }
 
@@ -200,5 +200,5 @@ void main(){
     float Ex = arnoldiActionScalar(beta.y, h00.y, h10.y, h01.y, h11.y, h21.y, h02.y, h12.y, h22.y, h32.y, h03.y, h13.y, h23.y, h33.y, q0.y, q1.y, q2.y, q3.y, tauLag, tauExpTerms);
     float Ex2 = arnoldiActionScalar(beta.z, h00.z, h10.z, h01.z, h11.z, h21.z, h02.z, h12.z, h22.z, h32.z, h03.z, h13.z, h23.z, h33.z, q0.z, q1.z, q2.z, q3.z, tauLag, tauExpTerms);
 
-    tauAdjExpOut = vec4(E1, Ex, Ex2, valid);
+    tauAdjExp = vec4(E1, Ex, Ex2, valid);
 }

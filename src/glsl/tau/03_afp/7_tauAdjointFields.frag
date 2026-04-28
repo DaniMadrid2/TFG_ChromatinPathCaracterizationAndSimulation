@@ -12,7 +12,7 @@ uniform int nBins;
 uniform int tauBatchOffset;
 uniform int tauBatchCount;
 
-layout(location = 0) out vec4 tauAdjFieldsOut; // [x, f(x), a(x), valid]
+layout(location = 0) out vec4 tauAdjFields; // [x, f(x), a(x), valid]
 
 const int TAU_MAX_TOTAL_TERMS = 8;
 const int TAU_F_TERMS = 4; //Var@TAU_F_TERM_COUNT
@@ -57,18 +57,18 @@ void main(){
     int tMin = max(tauMin, 1);
 
     if(b < 0 || b >= nBins || tauLocal < 0 || tauLocal >= tauBatchCount || vert < 0 || vert >= NM_STORE_VERTS){
-        tauAdjFieldsOut = vec4(0.0);
+        tauAdjFields = vec4(0.0);
         return;
     }
     if(tau <= 0 || tau > tauMax || tau < tMin || subseq < 0 || subseq >= tau){
-        tauAdjFieldsOut = vec4(0.0);
+        tauAdjFields = vec4(0.0);
         return;
     }
 
     int simplexRow = vert * tauMax + subseq;
     vec4 metaIn = texelFetch(tauNMMetaRead, ivec2(tau - 1, simplexRow), 0);
     if(metaIn.y < 0.5){
-        tauAdjFieldsOut = vec4(0.0);
+        tauAdjFields = vec4(0.0);
         return;
     }
 
@@ -84,5 +84,5 @@ void main(){
     float f = tauEvalF(coeffs, x);
     float s = max(abs(tauEvalSRaw(coeffs, x)), 1e-6);
     float a = 0.5 * s * s;
-    tauAdjFieldsOut = vec4(x, f, a, 1.0);
+    tauAdjFields = vec4(x, f, a, 1.0);
 }

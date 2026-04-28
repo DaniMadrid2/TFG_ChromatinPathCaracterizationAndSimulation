@@ -38,8 +38,52 @@ vec4 sampleRowLinear(sampler2D tex, float x01){
     return mix(a, b, t);
 }
 
+float normRange(float v, float lo, float hi){
+    return clamp((v - lo) / max(hi - lo, 1e-6), 0.0, 1.0);
+}
+
+vec3 paletteCyanAmber(float t){
+    t = clamp(t, 0.0, 1.0);
+    vec3 a = vec3(0.03, 0.72, 0.95);
+    vec3 b = vec3(0.98, 0.68, 0.12);
+    vec3 c = vec3(0.99, 0.97, 0.78);
+    return (t < 0.5) ? mix(a, b, t * 2.0) : mix(b, c, (t - 0.5) * 2.0);
+}
+
+vec3 paletteTealMagenta(float t){
+    t = clamp(t, 0.0, 1.0);
+    vec3 a = vec3(0.05, 0.84, 0.80);
+    vec3 b = vec3(0.39, 0.32, 0.92);
+    vec3 c = vec3(0.98, 0.33, 0.78);
+    return (t < 0.55) ? mix(a, b, t / 0.55) : mix(b, c, (t - 0.55) / 0.45);
+}
+
+vec3 panelBg(int panelId){
+    if(panelId == 0) return vec3(0.105, 0.110, 0.118);
+    if(panelId == 1) return vec3(0.082, 0.092, 0.106);
+    if(panelId == 2) return vec3(0.112, 0.102, 0.094);
+    return vec3(0.090, 0.094, 0.102);
+}
+
+vec3 invalidCellColor(int panelId){
+    if(panelId == 0) return vec3(0.90, 0.08, 0.12);
+    if(panelId == 1) return vec3(0.95, 0.10, 0.16);
+    if(panelId == 2) return vec3(0.92, 0.14, 0.10);
+    return vec3(0.90, 0.08, 0.12);
+}
+
+bool isFiniteScalar(float v){
+    return (v == v) && (abs(v) < 1.0e29);
+}
+
+float panelLegend(vec2 uv, vec2 lo, vec2 hi){
+    float inX = step(lo.x, uv.x) * step(uv.x, hi.x);
+    float inY = step(lo.y, uv.y) * step(uv.y, hi.y);
+    return inX * inY;
+}
+
 void main(){
-    vec3 col = vec3(0.92, 0.93, 0.95) + vec3(0.04*(vUV.x-0.5), 0.04*(vUV.y-0.5), 0.0);
+    vec3 col = panelBg(0);
     float alpha = 1.0;
     int tMin0 = clamp(tauMin - 1, 0, max(tauMax - 1, 0));
     int tCount = max(tauMax - tMin0, 1);
@@ -47,6 +91,35 @@ void main(){
     int autoTau = max(1, int(floor(bestAuto.x + 0.5)));
     int autoSub = max(0, int(floor(bestAuto.y + 0.5)));
     float hasAuto = bestAuto.w;
+
+    float scoreMin = 1e30, scoreMaxV = -1e30;
+    float klMin = 1e30, klMaxV = -1e30;
+    float costMin = 1e30, costMaxV = -1e30;
+    for(int t=0; t<256; t++){
+        if(t >= tauMax) break;
+        if(t < tMin0) continue;
+        for(int s=0; s<256; s++){
+            if(s > t) break;
+            vec4 xsGrid = texelFetch(tauXiMetaFinal, ivec2(t, s), 0);
+            vec4 scGrid = texelFetch(tauModelScore, ivec2(t, s), 0);
+            vec4 klGrid = texelFetch(tauModelKL, ivec2(t, s), 0);
+            if(xsGrid.y > 0.5){
+                costMin = min(costMin, xsGrid.x);
+                costMaxV = max(costMaxV, xsGrid.x);
+            }
+            if(scGrid.z > 0.5){
+                scoreMin = min(scoreMin, scGrid.y);
+                scoreMaxV = max(scoreMaxV, scGrid.y);
+            }
+            if(klGrid.y > 0.5){
+                klMin = min(klMin, klGrid.x);
+                klMaxV = max(klMaxV, klGrid.x);
+            }
+        }
+    }
+    if(!(scoreMaxV > scoreMin)){ scoreMin = 0.0; scoreMaxV = max(1.0, scoreMaxV); }
+    if(!(klMaxV > klMin)){ klMin = 0.0; klMaxV = max(1.0, klMaxV); }
+    if(!(costMaxV > costMin)){ costMin = 0.0; costMaxV = max(1.0, costMaxV); }
 
     if(showTauCurves > 0){
         // Layout: panel principal arriba (f), dos abajo (s y a), tira PDF inferior.
@@ -77,7 +150,7 @@ void main(){
         float xBR0 = xBL1 + gapX;
         float xBR1 = xR;
 
-        col = vec3(0.0);
+        col = panelBg(3);
         alpha = 0.0;
 
         float inTop = step(xL, vUV.x) * step(vUV.x, xR) * step(yTop0, vUV.y) * step(vUV.y, yTop1);
@@ -212,7 +285,7 @@ void main(){
         float edgePdf = inPdf * (1.0 - step(b, min(min(vUV.x - xL, xR - vUV.x), min(vUV.y - yPdf0, yPdf1 - vUV.y))));
         float edge = max(max(edgeTop, edgeBL), max(edgeBR, edgePdf));
         if(edge > 0.5){
-            col = mix(col, vec3(0.92), 0.8);
+            col = mix(col, vec3(0.32), 0.75);
             alpha = max(alpha, 0.95);
         }
 
@@ -230,29 +303,34 @@ void main(){
         vec4 mk = texelFetch(tauModelMask, ivec2(tx, sy), 0);
         vec4 fp = texelFetch(tauFPProxy, ivec2(tx, sy), 0);
         vec4 sc = texelFetch(tauModelScore, ivec2(tx, sy), 0);
+        bool insideTri = sy <= tx;
         float valid = xs.y;
         float score = sc.y;
 
-        float cN = clamp(1.0/(1.0+1.8*score), 0.0, 1.0);
-        col = mix(vec3(0.25,0.05,0.05), vec3(0.1,0.95,0.3), cN);
-        if(valid < 0.5) col *= vec3(0.45,0.45,0.45);
-
-        if(tx == bestTau-1 && sy == bestSubseq){
-            col = mix(col, vec3(1.0,1.0,0.2), 0.7);
+        col = panelBg(0);
+        if(insideTri){
+            float cN = 1.0 - normRange(score, scoreMin, scoreMaxV);
+            bool badCell = !(valid > 0.5) || !isFiniteScalar(score) || !isFiniteScalar(xs.x);
+            if(!badCell){
+                vec3 greenLo = vec3(0.06, 0.35, 0.16);
+                vec3 greenHi = vec3(0.62, 0.98, 0.38);
+                col = mix(greenLo, greenHi, cN);
+            }else{
+                col = invalidCellColor(0);
+            }
+            if(tx == bestTau-1 && sy == bestSubseq){
+                col = mix(col, vec3(0.92, 1.00, 0.55), 0.22);
+            }
+            if(sc.x > 0.5){
+                col = mix(col, vec3(0.76, 1.00, 0.72), 0.18);
+            }
         }
-        if(mk.x > 0.5){
-            col = mix(col, vec3(0.15, 1.0, 1.0), 0.35);
-        }
-        if(fp.x > 0.5){
-            col = mix(col, vec3(1.0, 0.55, 0.15), 0.35);
-        }else if(fp.z < 0.5 && mk.x > 0.5){
-            col *= vec3(0.65, 0.65, 0.9);
-        }
-        if(sc.x > 0.5){
-            col = mix(col, vec3(1.0,1.0,1.0), 0.28);
-        }
-        if(hasAuto > 0.5 && tx == autoTau-1 && sy == autoSub){
-            col = mix(col, vec3(1.0,0.35,1.0), 0.65);
+        float lg = panelLegend(vUV, vec2(0.055, 0.935), vec2(0.455, 0.958));
+        if(lg > 0.5){
+            float t = clamp((vUV.x - 0.055) / 0.400, 0.0, 1.0);
+            vec3 greenLo = vec3(0.06, 0.35, 0.16);
+            vec3 greenHi = vec3(0.62, 0.98, 0.38);
+            col = mix(greenLo, greenHi, t);
         }
         alpha = 0.95;
     }
@@ -265,9 +343,22 @@ void main(){
         ivec2 p = ivec2(tMin0 + clamp(int(floor(uv.x*float(tCount))),0,tCount-1),
                         clamp(int(floor(uv.y*float(tauMax))),0,tauMax-1));
         vec4 klv = texelFetch(tauModelKL, p, 0);
-        float v = clamp(1.0/(1.0+0.4*klv.x), 0.0, 1.0);
-        col = mix(vec3(0.25,0.05,0.08), vec3(0.15,0.95,0.95), v);
-        if(klv.y < 0.5) col *= vec3(0.45,0.45,0.45);
+        bool insideTri = p.y <= p.x;
+        col = panelBg(1);
+        if(insideTri){
+            float v = 1.0 - normRange(klv.x, klMin, klMaxV);
+            bool badCell = !(klv.y > 0.5) || !isFiniteScalar(klv.x);
+            if(!badCell){
+                col = mix(panelBg(1), paletteTealMagenta(v), 0.92);
+            }else{
+                col = invalidCellColor(1);
+            }
+        }
+        float lg = panelLegend(vUV, vec2(0.055, 0.435), vec2(0.445, 0.455));
+        if(lg > 0.5){
+            float t = clamp((vUV.x - 0.055) / 0.390, 0.0, 1.0);
+            col = paletteTealMagenta(t);
+        }
         alpha = 0.95;
     }
 
@@ -277,19 +368,33 @@ void main(){
         ivec2 p = ivec2(tMin0 + clamp(int(floor(uv.x*float(tCount))),0,tCount-1),
                         clamp(int(floor(uv.y*float(tauMax))),0,tauMax-1));
         vec4 xs = texelFetch(tauXiMetaFinal, p, 0);
-        vec4 st = texelFetch(tauStats, ivec2(0,0), 0);
         float c = xs.x;
         float valid = xs.y;
-        float bestCost = max(st.x, 0.0);
-        float maxCost = max(st.z, bestCost + 1e-6);
-        //Revisor: corregido el mapa de coste para usar el rango real observado y una compresión logarítmica.
-        //La versión anterior colapsaba casi todas las celdas en el mismo amarillo cuando el coste vivía en un intervalo estrecho.
-        float lo = log(1.0 + max(bestCost, 0.0));
-        float hi = log(1.0 + max(maxCost, bestCost + 1e-6));
+        bool insideTri = p.y <= p.x;
+        float lo = log(1.0 + max(costMin, 0.0));
+        float hi = log(1.0 + max(costMaxV, costMin + 1e-6));
         float vv = 1.0 - clamp((log(1.0 + max(c, 0.0)) - lo) / max(hi - lo, 1e-6), 0.0, 1.0);
-        float v = mix(0.15, 1.0, vv);
-        col = mix(vec3(0.2,0.08,0.08), vec3(0.95,0.75,0.2), v);
-        if(valid < 0.5) col *= vec3(0.42,0.42,0.42);
+        col = panelBg(2);
+        if(insideTri){
+            bool badCell = !(valid > 0.5) || !isFiniteScalar(c);
+            if(!badCell){
+                vec3 amberLo = vec3(0.36, 0.24, 0.06);
+                vec3 amberHi = vec3(0.98, 0.86, 0.22);
+                col = mix(amberLo, amberHi, vv);
+            }else{
+                col = invalidCellColor(2);
+            }
+            if(p.x == bestTau-1 && p.y == bestSubseq){
+                col = mix(col, vec3(1.00, 0.97, 0.70), 0.18);
+            }
+        }
+        float lg = panelLegend(vUV, vec2(0.555, 0.435), vec2(0.945, 0.455));
+        if(lg > 0.5){
+            float t = clamp((vUV.x - 0.555) / 0.390, 0.0, 1.0);
+            vec3 amberLo = vec3(0.36, 0.24, 0.06);
+            vec3 amberHi = vec3(0.98, 0.86, 0.22);
+            col = mix(amberLo, amberHi, t);
+        }
         alpha = 0.95;
     }
 
@@ -302,7 +407,7 @@ void main(){
 
         float lF1 = 1.0 - smoothstep(0.0, 0.0018, abs(vUV.y - yF1));
 
-        col = vec3(0.08, 0.08, 0.1);
+        col = panelBg(3);
         col += vec3(0.1, 0.85, 1.0) * lF1;
         alpha = 0.95;
     }
@@ -327,8 +432,8 @@ void main(){
     //     alpha = 0.96;
     // }
 
-    if((vUV.y>=0.459 && vUV.y<=0.461) || (vUV.y>=0.519 && vUV.y<=0.521)){ col = vec3(0.9); alpha = 0.8; }
-    if(vUV.x>=0.49 && vUV.x<=0.51 && vUV.y<0.46){ col = vec3(0.9); alpha = 0.8; }
+    if((vUV.y>=0.459 && vUV.y<=0.461) || (vUV.y>=0.519 && vUV.y<=0.521)){ col = vec3(0.22); alpha = 0.55; }
+    if(vUV.x>=0.49 && vUV.x<=0.51 && vUV.y<0.46){ col = vec3(0.22); alpha = 0.55; }
 
     fragColor = vec4(col, alpha);
 }

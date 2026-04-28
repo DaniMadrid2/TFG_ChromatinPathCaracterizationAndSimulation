@@ -9,7 +9,7 @@ uniform int nBins;
 uniform int tauBatchOffset;
 uniform int tauBatchCount;
 
-layout(location = 0) out vec4 tauKrylovOut; // [1, x, x^2, valid]
+layout(location = 0) out vec4 tauKrylov0; // [1, x, x^2, valid]
 
 const int TAU_MAX_TOTAL_TERMS = 8;
 const int NM_STORE_VERTS = TAU_MAX_TOTAL_TERMS + 1;
@@ -26,15 +26,15 @@ void main(){
     int tMin = max(tauMin, 1);
 
     if(i < 0 || i >= nBins || tauLocal < 0 || tauLocal >= tauBatchCount || vert < 0 || vert >= NM_STORE_VERTS){
-        tauKrylovOut = vec4(0.0);
+        tauKrylov0 = vec4(0.0);
         return;
     }
     if(tau <= 0 || tau > tauMax || tau < tMin || subseq < 0 || subseq >= tau){
-        tauKrylovOut = vec4(0.0);
+        tauKrylov0 = vec4(0.0);
         return;
     }
 
     vec4 field = texelFetch(tauAdjFields, ivec2(i, packedRow), 0);
     float x = field.x;
-    tauKrylovOut = vec4(1.0, x, x * x, field.w);
+    tauKrylov0 = vec4(1.0, x, x * x, field.w);
 }

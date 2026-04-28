@@ -21,7 +21,7 @@ uniform float adjointTauScale;
 uniform int useAdjointAFP;
 uniform float klReg;
 
-layout(location = 0) out vec4 tauNMCostOut;
+layout(location = 0) out vec4 tauNMCost;
 
 const int TAU_MAX_TOTAL_TERMS = 8;
 const int TAU_F_TERMS = 4; //Var@TAU_F_TERM_COUNT
@@ -48,10 +48,10 @@ void main(){
     int vert = pos.y / tauMax;
     int subseq = pos.y - vert * tauMax;
     int tMin = max(tauMin, 1);
-    if(tau <= 0 || tau > tauMax || tau < tMin || tauLocal < 0 || tauLocal >= tauBatchCount || subseq < 0 || subseq >= tau || vert < 0 || vert >= NM_STORE_VERTS){ tauNMCostOut = vec4(1e9,0.0,0.0,1.0); return; }
+    if(tau <= 0 || tau > tauMax || tau < tMin || tauLocal < 0 || tauLocal >= tauBatchCount || subseq < 0 || subseq >= tau || vert < 0 || vert >= NM_STORE_VERTS){ tauNMCost = vec4(1e9,0.0,0.0,1.0); return; }
 
     vec4 metaIn = texelFetch(tauNMMetaRead, ivec2(tau - 1, pos.y), 0);
-    if(metaIn.y < 0.5 || metaIn.z < float(max(TAU_F_TERMS, TAU_S_TERMS))){ tauNMCostOut = vec4(1e9,0.0,metaIn.z,metaIn.w); return; }
+    if(metaIn.y < 0.5 || metaIn.z < float(max(TAU_F_TERMS, TAU_S_TERMS))){ tauNMCost = vec4(1e9,0.0,metaIn.z,metaIn.w); return; }
 
     int modelIdx=(tau-1)*tauMax+subseq;
     int packedRow = tauLocal * tauMax * NM_STORE_VERTS + vert * tauMax + subseq;
@@ -107,5 +107,5 @@ void main(){
     }
     cost = cost / max(nUsed,1.0) + tauL2(coeffs) + 25.0 * negPenalty / max(float(nBins),1.0);
     float valid=(abs(cost)<1e30 && nUsed >= float(max(TAU_F_TERMS, TAU_S_TERMS))) ? 1.0 : 0.0;
-    tauNMCostOut = vec4(cost, valid, nUsed, metaIn.w);
+    tauNMCost = vec4(cost, valid, nUsed, metaIn.w);
 }
