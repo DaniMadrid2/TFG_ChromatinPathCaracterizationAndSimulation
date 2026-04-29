@@ -14,7 +14,7 @@ Extensión local de VS Code para dos modos de lenguaje:
 - comandos para forzar el modo de lenguaje:
   - `Set Language Mode: TS Snippet`
   - `Set Language Mode: Shader DSL`
-- definición y referencias básicas para `TS Snippet`
+- definición y referencias básicas para ambos lenguajes
 
 ## Probar en desarrollo
 
@@ -31,10 +31,10 @@ Desde la carpeta `vs_tssnippets_ext`:
 npm run package
 ```
 
-Eso generará un archivo `.vsix`, normalmente:
+Eso genera un `.vsix` con el nombre real del paquete y su versión, por ejemplo:
 
 ```text
-vs-tssnippets-ext-0.0.1.vsix
+dnti-snippets-and-shader-dsl-ext-1.1.3.vsix
 ```
 
 Luego puedes instalarlo con una de estas dos formas:
@@ -42,7 +42,7 @@ Luego puedes instalarlo con una de estas dos formas:
 ### Opción 1. Desde terminal
 
 ```powershell
-code --install-extension .\vs-tssnippets-ext-0.0.1.vsix
+code --install-extension .\dnti-snippets-and-shader-dsl-ext-1.1.3.vsix
 ```
 
 ### Opción 2. Desde VS Code
@@ -58,3 +58,15 @@ code --install-extension .\vs-tssnippets-ext-0.0.1.vsix
 npm run package
 npm run install-vsix
 ```
+
+## Nota sobre el soporte de lenguaje
+
+Esta extensión registra dos identificadores de lenguaje:
+
+- `ts-snippet`
+- `parse-text-ts`
+
+Ambos comparten parte del sistema de decoraciones, hover y navegación simbólica, pero cada uno activa su propio patrón visual:
+
+- `ts-snippet` resalta los placeholders `$[...]$` y los bloques `//$n - Begin/End`
+- `parse-text-ts` resalta la sintaxis del DSL y detecta elementos como `program`, `resource`, `rebind`, `uniforms`, `tex2D`, `texture2DArray` y bloques con `defineTag`

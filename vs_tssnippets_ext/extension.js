@@ -77,6 +77,38 @@ const optiDecoration = vscode.window.createTextEditorDecorationType({
     fontWeight: "700",
 });
 
+const resourceNameDecoration = vscode.window.createTextEditorDecorationType({
+    color: "#ffd166",
+    fontWeight: "700",
+});
+
+const textureFormatDecoration = vscode.window.createTextEditorDecorationType({
+    color: "#ffd166",
+    fontWeight: "700",
+});
+
+const textureTextLikeDecoration = vscode.window.createTextEditorDecorationType({
+    color: "#ce9178",
+});
+
+const invalidShaderBindingDecoration = vscode.window.createTextEditorDecorationType({
+    color: "#ff6b6b",
+    fontWeight: "700",
+    textDecoration: "underline wavy #ff6b6b",
+});
+
+const dimensionXDecoration = vscode.window.createTextEditorDecorationType({
+    color: "#c586c0",
+    fontWeight: "700",
+});
+
+const emptySquareDecoration = vscode.window.createTextEditorDecorationType({
+    before: {
+        contentText: "□ ",
+        color: "#7b7f86",
+    },
+});
+
 const texUnitStateDecorations = {
     unused: vscode.window.createTextEditorDecorationType({ color: "#7b7f86", fontWeight: "600" }),
     single: vscode.window.createTextEditorDecorationType({ fontWeight: "600" }),
@@ -92,6 +124,8 @@ const textureBindingDecorations = TEX_UNIT_COLORS.map((color) =>
 
 let runtimeContext = null;
 const dynamicDecorationCache = new Map();
+const SEARCH_EXCLUDE_GLOB = "**/{node_modules,dist,build,out,.git,.next,.turbo,coverage,tmp,.tmp_build}/**";
+const searchUriCache = new Map();
 
 function activate(context) {
     runtimeContext = context;
@@ -113,6 +147,12 @@ function activate(context) {
         derivedKeywordDecoration,
         derivedVariableDecoration,
         optiDecoration,
+        resourceNameDecoration,
+        textureFormatDecoration,
+        textureTextLikeDecoration,
+        invalidShaderBindingDecoration,
+        dimensionXDecoration,
+        emptySquareDecoration,
         texUnitStateDecorations.unused,
         texUnitStateDecorations.single,
         texUnitStateDecorations.double,
@@ -153,11 +193,40 @@ function activate(context) {
                 return provideSnippetReferences(document, position);
             },
         }),
+        vscode.languages.registerRenameProvider(SNIPPET_SELECTOR, {
+            provideRenameEdits(document, position, newName) {
+                return provideSnippetRenameEdits(document, position, newName);
+            },
+            prepareRename(document, position) {
+                return prepareSnippetRename(document, position);
+            },
+        }),
+        vscode.languages.registerRenameProvider(SHADERDSL_SELECTOR, {
+            provideRenameEdits(document, position, newName) {
+                return provideSnippetRenameEdits(document, position, newName);
+            },
+            prepareRename(document, position) {
+                return prepareSnippetRename(document, position);
+            },
+        }),
         vscode.languages.registerHoverProvider(SHADERDSL_SELECTOR, {
             provideHover(document, position) {
                 return provideShaderDslTagHover(document, position);
             },
         }),
+        vscode.languages.registerCompletionItemProvider(
+            SHADERDSL_SELECTOR,
+            {
+                async provideCompletionItems(document, position) {
+                    return provideShaderDslCompletions(document, position);
+                },
+            },
+            ".",
+            "\"",
+            " ",
+            "{",
+            "\n",
+        ),
         vscode.window.onDidChangeActiveTextEditor((editor) => refreshEditorDecorations(editor)),
         vscode.window.onDidChangeVisibleTextEditors(refreshAllEditors),
         vscode.workspace.onDidChangeTextDocument((event) => {
@@ -168,12 +237,40 @@ function activate(context) {
                 refreshEditorDecorations(editor);
             }
         }),
+        vscode.workspace.onDidCreateFiles(invalidateSearchCache),
+        vscode.workspace.onDidDeleteFiles(invalidateSearchCache),
+        vscode.workspace.onDidRenameFiles(invalidateSearchCache),
     );
 
     refreshAllEditors();
 }
 
 function deactivate() {}
+
+function isSearchableCodeDocument(document) {
+    const name = document.fileName || "";
+    return /\.(snippet\.ts|shaderdsl\.ts|ts|tsx|js|mjs|cjs)$/i.test(name);
+}
+
+function getWorkspaceCacheKey(document, family) {
+    const folder = vscode.workspace.getWorkspaceFolder(document.uri);
+    return `${folder ? folder.uri.toString() : "workspace"}::${family}`;
+}
+
+async function getCachedWorkspaceUris(document, family, includeGlob) {
+    const key = getWorkspaceCacheKey(document, family);
+    const cached = searchUriCache.get(key);
+    if (cached) {
+        return cached;
+    }
+    const uris = await vscode.workspace.findFiles(includeGlob, SEARCH_EXCLUDE_GLOB);
+    searchUriCache.set(key, uris);
+    return uris;
+}
+
+function invalidateSearchCache() {
+    searchUriCache.clear();
+}
 
 function stripLineComment(line) {
     const commentIndex = line.indexOf("//");
@@ -217,12 +314,23 @@ function mixColorWithAlpha(color, alpha) {
 
 function collectTexUnitTokenSpans(code) {
     const spans = [];
+    const aliasRootByName = new Map();
+    const isTextureArrowContext = (line) => /\brebind\b/.test(line) || /^\s*[A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)*\s*->/.test(line);
     const normalizeUnitToken = (token) => {
         const t = String(token || "").trim().replace(/^"(.*)"$/, "$1");
         const texUnitMatch = t.match(/^TexUnit(\d+)$/i);
         if (texUnitMatch) return Number.parseInt(texUnitMatch[1], 10);
         if (/^\d+$/.test(t)) return Number.parseInt(t, 10);
         return null;
+    };
+    const findAliasRoot = (name) => {
+        let current = name;
+        const seen = new Set();
+        while (aliasRootByName.has(current) && !seen.has(current)) {
+            seen.add(current);
+            current = aliasRootByName.get(current);
+        }
+        return current;
     };
     const pushSpan = (start, token, unitIndex) => {
         if (unitIndex === null || unitIndex < 0 || unitIndex >= TEX_UNIT_COLORS.length) return;
@@ -253,17 +361,24 @@ function collectTexUnitTokenSpans(code) {
         pushSpan(tokenStart, token, unitIndex);
     }
 
-    const arrowRegex = /->([^{}\n]+)/g;
-    while ((match = arrowRegex.exec(code)) !== null) {
-        const rhs = match[1];
-        const rhsStart = match.index + 2;
-        const unitTokenRegex = /\b(?:TexUnit|texUnit)?(\d+)\b/g;
-        let unitMatch;
-        while ((unitMatch = unitTokenRegex.exec(rhs)) !== null) {
-            const token = unitMatch[0];
-            const unitIndex = normalizeUnitToken(token);
-            const tokenStart = rhsStart + unitMatch.index;
-            pushSpan(tokenStart, token, unitIndex);
+    const aliasRegex = /\b(?:let|var|const)?\s*([A-Za-z_]\w*)\s*=\s*([A-Za-z_]\w*)\b/g;
+    while ((match = aliasRegex.exec(code)) !== null) {
+        aliasRootByName.set(match[1], findAliasRoot(match[2]));
+    }
+
+    if (isTextureArrowContext(code)) {
+        const arrowRegex = /->([^{}\n]+)/g;
+        while ((match = arrowRegex.exec(code)) !== null) {
+            const rhs = match[1];
+            const rhsStart = match.index + 2;
+            const unitTokenRegex = /\b(?:TexUnit|texUnit)?(\d+)\b/g;
+            let unitMatch;
+            while ((unitMatch = unitTokenRegex.exec(rhs)) !== null) {
+                const token = unitMatch[0];
+                const unitIndex = normalizeUnitToken(token);
+                const tokenStart = rhsStart + unitMatch.index;
+                pushSpan(tokenStart, token, unitIndex);
+            }
         }
     }
 
@@ -338,6 +453,421 @@ function parseDefineTagBlocks(text) {
     return { defs, aliases };
 }
 
+function parseResourceDefinitions(text) {
+    const defs = new Map();
+    const blockRegex = /^\s*resource\s+([A-Za-z_]\w*)(?:\s*-\s*([^{}]*?)\s*-)?\s*\{([\s\S]*?)^\s*\}/gm;
+    let match;
+    while ((match = blockRegex.exec(text)) !== null) {
+        const name = match[1];
+        const comment = (match[2] || "").trim();
+        const body = match[3] || "";
+        const def = {
+            name,
+            comment,
+            format: "RGBAFloat",
+            filter: "NEAREST",
+            wrap: "CLAMP",
+            start: match.index,
+        };
+        const fieldRegex = /^\s*(format|filter|wrap)\s*:\s*(.*?)\s*$/gm;
+        let field;
+        while ((field = fieldRegex.exec(body)) !== null) {
+            const key = field[1].toLowerCase();
+            const value = parseQuotedOrRawValue(field[2]);
+            if (!value) continue;
+            def[key] = value;
+        }
+        defs.set(name, def);
+    }
+    return defs;
+}
+
+function provideResourceHover(document, position) {
+    const text = document.getText();
+    const resourceDefs = parseResourceDefinitions(text);
+    const range = document.getWordRangeAtPosition(position, /[A-Za-z_$][A-Za-z0-9_$]*/);
+    if (!range) return null;
+    const name = document.getText(range);
+    const def = resourceDefs.get(name);
+    if (!def) return null;
+
+    const md = new vscode.MarkdownString();
+    md.appendMarkdown(`**${name}**`);
+    if (def.comment) {
+        md.appendMarkdown(`\n\n${def.comment}`);
+    }
+    md.appendMarkdown(`\n\nFormat: \`${def.format}\``);
+    md.appendMarkdown(`\nFilter: \`${def.filter}\``);
+    md.appendMarkdown(`\nWrap: \`${def.wrap}\``);
+    return new vscode.Hover(md, range);
+}
+
+function getTexExampleNames() {
+    return new Set([
+        "RFloat", "RGFloat", "RGBFloat", "RGBAFloat",
+        "RFloat16", "RGFloat16", "RGBFloat16", "RGBAFloat16",
+        "R", "RG", "RGB", "RGBA",
+        "RInt", "RGInt", "RGBInt", "RGBAInt",
+        "RInt16", "RGInt16", "RGBInt16", "RGBAInt16",
+        "RInt8", "RGInt8", "RGBInt8", "RGBAInt8",
+        "RUInt", "RGUInt", "RGBUInt", "RGBAUInt",
+        "RUInt16", "RGUInt16", "RGBUInt16", "RGBAUInt16",
+        "RUInt8", "RGUInt8", "RGBUInt8", "RGBAUInt8",
+        "RUBYTE8", "RGUBYTE8", "RGBUBYTE8", "RGBAUBYTE8",
+        "NEAREST", "LINEAR", "CLAMP", "REPEAT", "MIRROR",
+        "RGBA16", "RGBA16F", "R16F", "RG16F", "RGBA32F", "R32F", "RG32F",
+    ]);
+}
+
+async function provideShaderDslCompletions(document, position) {
+    const linePrefix = document.lineAt(position.line).text.slice(0, position.character);
+    const text = document.getText();
+    const texExampleNames = Array.from(getTexExampleNames()).filter((name) => !["NEAREST", "LINEAR", "CLAMP", "REPEAT", "MIRROR"].includes(name));
+    const resourceContext = findEnclosingResourceBlock(text, position);
+    const glslFiltersContext = findEnclosingNamedBlock(text, position, "glslFilters");
+    const rebindBlockProgram = findEnclosingRebindProgram(text, position);
+    const programBlock = findEnclosingProgramDefinition(text, position, document.uri.fsPath);
+    const texUnitTargetMatch = linePrefix.match(/^\s*([A-Za-z_]\w*)\s*->\s*(?:TexUnit|texUnit)?[A-Za-z0-9_]*$/);
+
+    if (rebindBlockProgram && texUnitTargetMatch) {
+        return buildTexUnitCompletionItems(text, texUnitTargetMatch[1]);
+    }
+
+    if (programBlock) {
+        const programTexCompletions = buildProgramTex2DCompletions(document, text, position, programBlock, texExampleNames);
+        if (programTexCompletions.length) {
+            return programTexCompletions;
+        }
+    }
+
+    if (resourceContext || /^\s*resource\s+[A-Za-z_]\w*\s*\{\s*$/.test(linePrefix) || /^\s*(format|filter|wrap)\s*:\s*[A-Za-z_0-9]*$/.test(linePrefix)) {
+        if (/format\s*:\s*[A-Za-z_0-9]*$/.test(linePrefix)) {
+            return texExampleNames.map((name) => new vscode.CompletionItem(name, vscode.CompletionItemKind.Constant));
+        }
+        if (/filter\s*:\s*[A-Za-z_0-9]*$/.test(linePrefix)) {
+            return ["NEAREST", "LINEAR"].map((name) => new vscode.CompletionItem(name, vscode.CompletionItemKind.EnumMember));
+        }
+        if (/wrap\s*:\s*[A-Za-z_0-9]*$/.test(linePrefix)) {
+            return ["CLAMP", "REPEAT", "MIRROR"].map((name) => new vscode.CompletionItem(name, vscode.CompletionItemKind.EnumMember));
+        }
+        return [
+            createSnippetCompletion("format", `format: \${1|${texExampleNames.join(",")}|}`, "resource field"),
+            createSnippetCompletion("filter", "filter: ${1|NEAREST,LINEAR|}", "resource field"),
+            createSnippetCompletion("wrap", "wrap: ${1|CLAMP,REPEAT,MIRROR|}", "resource field"),
+        ];
+    }
+
+    if (glslFiltersContext || /^\s*glslFilters\s*\{?\s*$/.test(linePrefix) || /^\s*(both|vert|frag)?\s*"?[^"]*"?\s*"?[^"]*"?\s*->?\s*$/.test(linePrefix)) {
+        return ["both", "vert", "frag"].map((name) => {
+            const item = new vscode.CompletionItem(name, vscode.CompletionItemKind.Keyword);
+            item.insertText = new vscode.SnippetString(`${name} "\${1:filePattern}" "\${2:searchPattern}" -> {\${3:replacement}}`);
+            item.detail = "glslFilters stage";
+            return item;
+        });
+    }
+
+    const rebindMatch = linePrefix.match(/^\s*rebind\s+([A-Za-z_]\w*)\s*\{?\s*$/);
+    if (rebindMatch) {
+        return await buildRebindTargetCompletions(document, text, rebindMatch[1]);
+    }
+
+    if (rebindBlockProgram && !linePrefix.includes("->")) {
+        return await buildRebindTargetCompletions(document, text, rebindBlockProgram);
+    }
+
+    return [];
+}
+
+function createSnippetCompletion(label, snippet, detail) {
+    const item = new vscode.CompletionItem(label, vscode.CompletionItemKind.Snippet);
+    item.insertText = new vscode.SnippetString(snippet);
+    item.detail = detail;
+    return item;
+}
+
+function buildProgramTex2DCompletions(document, text, position, programBlock, texExampleNames) {
+    const linePrefix = document.lineAt(position.line).text.slice(0, position.character);
+    const ioInfo = readFragmentShaderIO(programBlock);
+    const resourceNames = Array.from(parseResourceDefinitions(text).keys());
+
+    if (/^\s*tex2D\s*$/.test(linePrefix)) {
+        return ioInfo.outputs.map((out) => {
+            const item = new vscode.CompletionItem(out.name, vscode.CompletionItemKind.Variable);
+            item.insertText = new vscode.SnippetString(`${out.name} ~ ${out.name}Tex RES ${out.sizeHint || "[${1:w} x ${2:h}]"} ${out.resourceHint || "${3:TauFloatTex}"} \${4:TexUnit0}`);
+            item.detail = "fragment output";
+            return item;
+        });
+    }
+
+    const tex2DLine = linePrefix.match(/^\s*tex2D\s+([A-Za-z_]\w*)\s*~\s*([A-Za-z_]\w*)?(?:\s+RES)?(?:\s+(\[[^\]]*\]))?(?:\s+([A-Za-z_]\w*))?(?:\s+(?:TexUnit|texUnit)?[A-Za-z0-9_]*)?$/);
+    if (tex2DLine) {
+        const internalName = tex2DLine[1];
+        const output = ioInfo.outputByName.get(internalName);
+        if (!/\sRES\b/.test(linePrefix)) {
+            const item = new vscode.CompletionItem("RES", vscode.CompletionItemKind.Keyword);
+            item.insertText = "RES";
+            item.detail = "texture declaration";
+            return [item];
+        }
+        if (/\sRES\s*$/.test(linePrefix)) {
+            if (output?.sizeHint) {
+                const item = new vscode.CompletionItem(output.sizeHint, vscode.CompletionItemKind.Value);
+                item.insertText = output.sizeHint;
+                item.detail = "size from fragment hint";
+                return [item];
+            }
+        }
+        if (/\[[^\]]*\]\s*$/.test(linePrefix)) {
+            const items = [];
+            let idx = 0;
+            for (const name of resourceNames) {
+                const item = new vscode.CompletionItem(name, vscode.CompletionItemKind.Variable);
+                item.detail = "resource";
+                item.sortText = `0_${String(idx++).padStart(3, "0")}_${name}`;
+                items.push(item);
+            }
+            idx = 0;
+            for (const name of texExampleNames) {
+                const item = new vscode.CompletionItem(name, vscode.CompletionItemKind.Constant);
+                item.detail = "texture format";
+                item.sortText = `1_${String(idx++).padStart(3, "0")}_${name}`;
+                items.push(item);
+            }
+            return items;
+        }
+        const formatOrResourceMatch = linePrefix.match(/\[[^\]]*\]\s+([A-Za-z_]\w*)\s*$/);
+        if (formatOrResourceMatch) {
+            return buildTexUnitCompletionItems(text, internalName);
+        }
+    }
+
+    return [];
+}
+
+function findEnclosingResourceBlock(text, position) {
+    return findEnclosingNamedBlock(text, position, "resource", true);
+}
+
+function findEnclosingNamedBlock(text, position, blockName, allowNameSuffix = false) {
+    const lines = text.split(/\r?\n/);
+    for (let lineNo = position.line; lineNo >= 0; lineNo--) {
+        const line = lines[lineNo];
+        const escaped = escapeRegExp(blockName);
+        const re = allowNameSuffix
+            ? new RegExp(`^\\s*${escaped}\\s+[A-Za-z_]\\w*(?:\\s*-\\s*[^{}]*\\s*-)?\\s*\\{`)
+            : new RegExp(`^\\s*${escaped}\\b[^{]*\\{`);
+        if (re.test(line)) return true;
+        if (/^\s*}\s*$/.test(line) && lineNo !== position.line) break;
+    }
+    return false;
+}
+
+function parseProgramTextureDefinitions(text, sourcePath = "") {
+    const defs = new Map();
+    const blockRegex = /^\s*program\s+([A-Za-z_]\w*)(?:\s*\|\s*[A-Za-z_]\w*)?\s+"([^"]*)"\s*\{([\s\S]*?)^\s*\}/gm;
+    let match;
+    while ((match = blockRegex.exec(text)) !== null) {
+        const programName = match[1];
+        const fragPath = match[2] || "";
+        const body = match[3] || "";
+        const textures = [];
+        const texRegex = /^\s*tex2D\s+([A-Za-z_]\w*)(?:\s*\|\s*([A-Za-z_]\w*)|\s*~\s*([A-Za-z_]\w*))?/gm;
+        let texMatch;
+        while ((texMatch = texRegex.exec(body)) !== null) {
+            if (texMatch[3]) {
+                textures.push({ name: texMatch[3], isTexture: true });
+            } else {
+                textures.push({ name: texMatch[1], isTexture: true });
+                if (texMatch[2]) textures.push({ name: texMatch[2], isTexture: true });
+            }
+        }
+        defs.set(programName, { textures, fragPath, sourcePath });
+    }
+    return defs;
+}
+
+async function buildRebindTargetCompletions(document, text, programName) {
+    const localDefs = parseProgramTextureDefinitions(text, document.uri.fsPath);
+    const programDef = localDefs.get(programName) || { textures: [], fragPath: "", sourcePath: document.uri.fsPath };
+    const uniformNames = readFragmentSamplerUniformNames(programDef);
+    const names = new Map();
+    for (const { name } of programDef.textures) names.set(name, "texture from program");
+    for (const uniformName of uniformNames) {
+        if (!names.has(uniformName)) names.set(uniformName, "sampler uniform from fragment");
+    }
+    return Array.from(names.entries()).map(([name, detail]) => {
+        const item = new vscode.CompletionItem(name, vscode.CompletionItemKind.Variable);
+        item.detail = `${detail} ${programName}`;
+        item.sortText = `0_${name}`;
+        item.insertText = new vscode.SnippetString(`${name} -> \${1:TexUnit0}`);
+        return item;
+    });
+}
+
+function readFragmentSamplerUniformNames(programDef) {
+    if (!programDef?.fragPath) return [];
+    try {
+        const path = require("path");
+        const fs = require("node:fs");
+        const normalized = programDef.fragPath.endsWith(".frag") ? programDef.fragPath : `${programDef.fragPath}.frag`;
+        const baseDir = programDef.sourcePath ? path.dirname(programDef.sourcePath) : (vscode.workspace.workspaceFolders?.[0]?.uri?.fsPath || process.cwd());
+        const resolved = path.resolve(baseDir, "glsl", normalized);
+        const fragText = fs.readFileSync(resolved, "utf8");
+        const names = [];
+        const uniformRegex = /^\s*uniform\s+(?:sampler2D|usampler2D|isampler2D)\s+([A-Za-z_]\w*)\s*;/gm;
+        let match;
+        while ((match = uniformRegex.exec(fragText)) !== null) {
+            names.push(match[1]);
+        }
+        return names;
+    } catch {
+        return [];
+    }
+}
+
+function readFragmentShaderIO(programDef) {
+    const empty = { outputs: [], outputByName: new Map() };
+    if (!programDef?.fragPath) return empty;
+    try {
+        const path = require("path");
+        const fs = require("node:fs");
+        const normalized = programDef.fragPath.endsWith(".frag") ? programDef.fragPath : `${programDef.fragPath}.frag`;
+        const baseDir = programDef.sourcePath ? path.dirname(programDef.sourcePath) : (vscode.workspace.workspaceFolders?.[0]?.uri?.fsPath || process.cwd());
+        const resolved = path.resolve(baseDir, "glsl", normalized);
+        const fragText = fs.readFileSync(resolved, "utf8");
+        const outputs = [];
+        const regexes = [
+            /^\s*layout\s*\([^\)]*\)\s*out\s+([A-Za-z_][A-Za-z0-9_]*)\s+([A-Za-z_]\w*)\s*;\s*(?:\/\/|\/\*!?|\/\/\!|\*\/)?\s*(.*)$/gm,
+            /^\s*out\s+([A-Za-z_][A-Za-z0-9_]*)\s+([A-Za-z_]\w*)\s*;\s*(?:\/\/|\/\*!?|\/\/\!|\*\/)?\s*(.*)$/gm,
+        ];
+        for (const regex of regexes) {
+            let match;
+            while ((match = regex.exec(fragText)) !== null) {
+                const comment = match[3] || "";
+                const sizeMatch = comment.match(/size\s*:\s*(\[[^\]]+\])/i);
+                outputs.push({
+                    type: match[1],
+                    name: match[2],
+                    sizeHint: sizeMatch ? sizeMatch[1] : "",
+                    resourceHint: "",
+                });
+            }
+        }
+        return { outputs, outputByName: new Map(outputs.map((o) => [o.name, o])) };
+    } catch {
+        return empty;
+    }
+}
+
+function buildTexUnitCompletionItems(text, targetName) {
+    const usage = collectTextureUnitUsage(text);
+    const rankedUnits = rankTexUnitsForTarget(usage, targetName);
+    const units = [];
+    for (const i of rankedUnits) {
+        units.push({
+            name: `TexUnit${i}`,
+            count: usage.unitUseCount.get(i) || 0,
+            preferred: rankedUnits[0] === i,
+        });
+    }
+    return units.map((unit) => {
+        const item = new vscode.CompletionItem(unit.name, vscode.CompletionItemKind.EnumMember);
+        item.sortText = `${String(rankedUnits.indexOf(Number.parseInt(unit.name.replace("TexUnit", ""), 10))).padStart(3, "0")}_${unit.name}`;
+        item.detail = unit.preferred ? "preferred for this target" : `used ${unit.count} times`;
+        return item;
+    });
+}
+
+function collectTextureUnitUsage(text) {
+    const lines = text.split(/\r?\n/);
+    const unitUseCount = new Map();
+    const nameToUnit = new Map();
+    const textureDeclaredUnit = new Map();
+    const bindHistoryByName = new Map();
+    const internalNameToUnits = new Map();
+    for (const line of lines) {
+        const code = stripLineComment(line);
+        if (!code.trim()) continue;
+        const texDecl = code.match(/\btex2D\b[\s\S]*?\b([A-Za-z_]\w*)(?:\s*\|\s*([A-Za-z_]\w*)|\s*~\s*([A-Za-z_]\w*))?[\s\S]*?\b(?:TexUnit|texUnit)(\d+)\b/);
+        if (texDecl) {
+            const unit = Number.parseInt(texDecl[4], 10);
+            unitUseCount.set(unit, (unitUseCount.get(unit) || 0) + 1);
+            const names = [texDecl[1], texDecl[2], texDecl[3]].filter(Boolean);
+            for (const name of names) {
+                nameToUnit.set(name, unit);
+                textureDeclaredUnit.set(name, unit);
+            }
+        }
+        const texArrayDecl = code.match(/\b([A-Za-z_]\w*)(?:\s*\|=\s*([A-Za-z_]\w*))?\s*=\s*texture2DArray\s+[A-Za-z_]\w*\s+([A-Za-z_]\w*)\s+"([^"]+)"\s+(?:TexUnit|texUnit)(\d+)\b/);
+        if (texArrayDecl) {
+            const unit = Number.parseInt(texArrayDecl[5], 10);
+            unitUseCount.set(unit, (unitUseCount.get(unit) || 0) + 1);
+            const internalName = texArrayDecl[4];
+            if (!internalNameToUnits.has(internalName)) internalNameToUnits.set(internalName, []);
+            internalNameToUnits.get(internalName).push(unit);
+            for (const name of [texArrayDecl[1], texArrayDecl[2], texArrayDecl[3]].filter(Boolean)) {
+                nameToUnit.set(name, unit);
+                textureDeclaredUnit.set(name, unit);
+            }
+        }
+        const bindRegex = /\b([A-Za-z_]\w*)\s*->\s*(?:TexUnit|texUnit)(\d+)\b/g;
+        let match;
+        while ((match = bindRegex.exec(code)) !== null) {
+            const unit = Number.parseInt(match[2], 10);
+            unitUseCount.set(unit, (unitUseCount.get(unit) || 0) + 1);
+            if (!bindHistoryByName.has(match[1])) bindHistoryByName.set(match[1], []);
+            bindHistoryByName.get(match[1]).unshift(unit);
+        }
+    }
+    return { unitUseCount, nameToUnit, textureDeclaredUnit, bindHistoryByName, internalNameToUnits };
+}
+
+function rankTexUnitsForTarget(usage, targetName) {
+    const ranked = [];
+    const pushUnique = (unit) => {
+        if (unit === undefined || unit === null) return;
+        if (unit < 0 || unit >= 32) return;
+        if (!ranked.includes(unit)) ranked.push(unit);
+    };
+
+    if (usage.textureDeclaredUnit.has(targetName)) {
+        pushUnique(usage.textureDeclaredUnit.get(targetName));
+        for (const unit of usage.bindHistoryByName.get(targetName) || []) {
+            pushUnique(unit);
+        }
+    } else {
+        for (const unit of usage.internalNameToUnits.get(targetName) || []) {
+            pushUnique(unit);
+        }
+    }
+
+    const remaining = [];
+    for (let i = 0; i < 32; i++) {
+        if (!ranked.includes(i)) remaining.push(i);
+    }
+    remaining.sort((a, b) => {
+        const ca = usage.unitUseCount.get(a) || 0;
+        const cb = usage.unitUseCount.get(b) || 0;
+        const ba = ca === 0 ? 0 : ca === 1 ? 1 : ca === 2 ? 2 : 3;
+        const bb = cb === 0 ? 0 : cb === 1 ? 1 : cb === 2 ? 2 : 3;
+        if (ba !== bb) return ba - bb;
+        if (ca !== cb) return ca - cb;
+        return a - b;
+    });
+    return ranked.concat(remaining);
+}
+
+function findEnclosingRebindProgram(text, position) {
+    const lines = text.split(/\r?\n/);
+    for (let lineNo = position.line; lineNo >= 0; lineNo--) {
+        const line = lines[lineNo];
+        const match = line.match(/^\s*rebind\s+([A-Za-z_]\w*)\s*\{/);
+        if (match) return match[1];
+        if (/^\s*}\s*$/.test(line) && lineNo !== position.line) break;
+    }
+    return null;
+}
+
 function resolveTagName(rawName, aliasMap) {
     const lower = String(rawName || "").toLowerCase();
     return aliasMap.get(lower) || lower;
@@ -378,6 +908,9 @@ function provideShaderDslTagHover(document, position) {
     const line = document.lineAt(position.line).text;
     const code = stripLineComment(line);
     if (!code.trim()) return null;
+
+    const resourceHover = provideResourceHover(document, position);
+    if (resourceHover) return resourceHover;
 
     const { defs: tagDefs, aliases: tagAliases } = parseDefineTagBlocks(document.getText());
     const usages = findInlineTagUsages(code);
@@ -445,6 +978,13 @@ function refreshEditorDecorations(editor) {
         multi: [],
     };
     const textureRanges = TEX_UNIT_COLORS.map(() => []);
+    const resourceNameRanges = [];
+    const textureFormatRanges = [];
+    const textureTextLikeRanges = [];
+    const invalidShaderBindingRanges = [];
+    const dimensionXRanges = [];
+    const rebindSquareRangesByUnit = TEX_UNIT_COLORS.map(() => []);
+    const rebindEmptySquareRanges = [];
     const text = editor.document.getText();
     const tagDefinitions = isShaderDsl ? parseDefineTagBlocks(text) : null;
 
@@ -467,6 +1007,17 @@ function refreshEditorDecorations(editor) {
             tagDefinitions,
         );
         collectTexUnitAndTextureDecorations(editor.document, text, texUnitRanges, textureRanges);
+        collectResourceAndDslVisuals(
+            editor.document,
+            text,
+            resourceNameRanges,
+            textureFormatRanges,
+            textureTextLikeRanges,
+            invalidShaderBindingRanges,
+            dimensionXRanges,
+            rebindSquareRangesByUnit,
+            rebindEmptySquareRanges,
+        );
     }
 
     optionDecorations.forEach((decoration, index) => {
@@ -488,6 +1039,21 @@ function refreshEditorDecorations(editor) {
     editor.setDecorations(texUnitStateDecorations.double, texUnitRanges.double);
     editor.setDecorations(texUnitStateDecorations.multi, texUnitRanges.multi);
     textureBindingDecorations.forEach((d, i) => editor.setDecorations(d, textureRanges[i]));
+    editor.setDecorations(resourceNameDecoration, resourceNameRanges);
+    editor.setDecorations(textureFormatDecoration, textureFormatRanges);
+    editor.setDecorations(textureTextLikeDecoration, textureTextLikeRanges);
+    editor.setDecorations(invalidShaderBindingDecoration, invalidShaderBindingRanges);
+    editor.setDecorations(dimensionXDecoration, dimensionXRanges);
+    textureBindingDecorations.forEach((d, i) => {
+        const squareDecoration = getOrCreateDecoration({
+            before: {
+                contentText: "■ ",
+                color: TEX_UNIT_COLORS[i],
+            },
+        });
+        editor.setDecorations(squareDecoration, rebindSquareRangesByUnit[i]);
+    });
+    editor.setDecorations(emptySquareDecoration, rebindEmptySquareRanges);
 }
 
 function collectTagDecorations(document, text, editor, tagRanges, derivedKeywordRanges, derivedVariableRanges, optiRanges, optiLineRanges, optiFadedRanges, optiTextRanges, tagDefinitionsInfo) {
@@ -676,17 +1242,30 @@ function collectTexUnitAndTextureDecorations(document, text, texUnitRanges, text
     const lines = text.split(/\r?\n/);
     const currentTextureByName = new Map();
     const texturesPerUnit = new Map();
+    const aliasRootByName = new Map();
     const programNames = new Set();
     const nonTextureNames = new Set();
+    const isTextureArrowContext = (line) => /\brebind\b/.test(line) || /^\s*[A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)*\s*->/.test(line);
+
+    const findAliasRoot = (name) => {
+        let current = name;
+        const seen = new Set();
+        while (aliasRootByName.has(current) && !seen.has(current)) {
+            seen.add(current);
+            current = aliasRootByName.get(current);
+        }
+        return current;
+    };
 
     const registerAssociation = (name, unitIndex) => {
         if (!name || unitIndex < 0 || unitIndex >= TEX_UNIT_COLORS.length) return;
         currentTextureByName.set(name, unitIndex);
         if (!texturesPerUnit.has(unitIndex)) texturesPerUnit.set(unitIndex, new Set());
-        texturesPerUnit.get(unitIndex).add(name);
+        texturesPerUnit.get(unitIndex).add(findAliasRoot(name));
     };
 
     const registerAliasAssociation = (aliasName, sourceName) => {
+        aliasRootByName.set(aliasName, findAliasRoot(sourceName));
         const mappedUnit = currentTextureByName.get(sourceName);
         if (mappedUnit !== undefined) {
             registerAssociation(aliasName, mappedUnit);
@@ -726,7 +1305,7 @@ function collectTexUnitAndTextureDecorations(document, text, texUnitRanges, text
     };
 
     const parseAliasAssignments = (line) => {
-        const assignmentRegex = /\b([A-Za-z_]\w*)\s*=\s*([A-Za-z_]\w*)\b/g;
+        const assignmentRegex = /\b(?:let|var|const)?\s*([A-Za-z_]\w*)\s*=\s*([A-Za-z_]\w*)\b/g;
         let match;
         while ((match = assignmentRegex.exec(line)) !== null) {
             registerAliasAssociation(match[1], match[2]);
@@ -795,17 +1374,19 @@ function collectTexUnitAndTextureDecorations(document, text, texUnitRanges, text
             pushExplicitRange(tokenStart, token, unitIndex);
         }
 
-        const arrowRegex = /->([^{}\n]+)/g;
-        while ((match = arrowRegex.exec(code)) !== null) {
-            const rhs = match[1];
-            const rhsStart = match.index + 2;
-            const unitTokenRegex = /\b(?:TexUnit|texUnit)?(\d+)\b/g;
-            let unitMatch;
-            while ((unitMatch = unitTokenRegex.exec(rhs)) !== null) {
-                const token = unitMatch[0];
-                const unitIndex = normalizeUnitToken(token);
-                if (unitIndex === null) continue;
-                pushExplicitRange(rhsStart + unitMatch.index, token, unitIndex);
+        if (isTextureArrowContext(code)) {
+            const arrowRegex = /->([^{}\n]+)/g;
+            while ((match = arrowRegex.exec(code)) !== null) {
+                const rhs = match[1];
+                const rhsStart = match.index + 2;
+                const unitTokenRegex = /\b(?:TexUnit|texUnit)?(\d+)\b/g;
+                let unitMatch;
+                while ((unitMatch = unitTokenRegex.exec(rhs)) !== null) {
+                    const token = unitMatch[0];
+                    const unitIndex = normalizeUnitToken(token);
+                    if (unitIndex === null) continue;
+                    pushExplicitRange(rhsStart + unitMatch.index, token, unitIndex);
+                }
             }
         }
 
@@ -892,6 +1473,143 @@ function collectTexUnitAndTextureDecorations(document, text, texUnitRanges, text
             const mappedUnit = currentTextureByName.get(token);
             if (mappedUnit !== undefined) {
                 textureRanges[mappedUnit].push(rangeFromOffsets(document, absStart, absEnd));
+            }
+        }
+    }
+}
+
+function collectResourceAndDslVisuals(
+    document,
+    text,
+    resourceNameRanges,
+    textureFormatRanges,
+    textureTextLikeRanges,
+    invalidShaderBindingRanges,
+    dimensionXRanges,
+    rebindSquareRangesByUnit,
+    rebindEmptySquareRanges,
+) {
+    const lines = text.split(/\r?\n/);
+    const resourceDefs = parseResourceDefinitions(text);
+    const texExampleNames = getTexExampleNames();
+    const programTextureDefs = parseProgramTextureDefinitions(text);
+    const currentTextureByName = new Map();
+    let currentRebindProgram = null;
+    let currentProgram = null;
+
+    const registerTextureName = (name, unitIndex) => {
+        if (!name || unitIndex < 0 || unitIndex >= TEX_UNIT_COLORS.length) return;
+        currentTextureByName.set(name, unitIndex);
+    };
+
+    for (let lineNo = 0; lineNo < lines.length; lineNo++) {
+        const line = lines[lineNo];
+        const code = stripLineComment(line);
+        const lineStart = document.offsetAt(new vscode.Position(lineNo, 0));
+        if (!code.trim()) continue;
+
+        const programHeaderMatch = code.match(/^\s*program\s+([A-Za-z_]\w*)(?:\s*\|\s*[A-Za-z_]\w*)?\s+"([^"]+)"\s*\{/);
+        if (programHeaderMatch) {
+            currentProgram = {
+                name: programHeaderMatch[1],
+                fragPath: programHeaderMatch[2],
+                sourcePath: document.uri.fsPath,
+            };
+        } else if (/^\s*}\s*$/.test(code) && currentProgram && !currentRebindProgram) {
+            currentProgram = null;
+        }
+
+        const resourceMatch = code.match(/^\s*resource\s+([A-Za-z_]\w*)(?:\s*-\s*([^{}]*?)\s*-)?\s*\{/);
+        if (resourceMatch) {
+            const name = resourceMatch[1];
+            const start = line.indexOf(name);
+            resourceNameRanges.push(rangeFromOffsets(document, lineStart + start, lineStart + start + name.length));
+        }
+
+        const texDeclMatch = code.match(/\btex2D\s+([A-Za-z_]\w*)(?:\s*\|\s*([A-Za-z_]\w*)|\s*~\s*([A-Za-z_]\w*))?[\s\S]*?\b([A-Za-z_]\w*|"(?:[^"]*)")\s+(?:TexUnit|texUnit)(\d+)\b/);
+        if (texDeclMatch) {
+            if (texDeclMatch[3]) {
+                const textLikeStart = line.indexOf(texDeclMatch[1]);
+                textureTextLikeRanges.push(rangeFromOffsets(document, lineStart + textLikeStart, lineStart + textLikeStart + texDeclMatch[1].length));
+                const shaderIO = readFragmentShaderIO(currentProgram);
+                if (!shaderIO.outputByName.has(texDeclMatch[1]) && !readFragmentSamplerUniformNames(currentProgram).includes(texDeclMatch[1])) {
+                    invalidShaderBindingRanges.push(rangeFromOffsets(document, lineStart + textLikeStart, lineStart + textLikeStart + texDeclMatch[1].length));
+                }
+            }
+            if (texDeclMatch[3]) {
+                registerTextureName(texDeclMatch[3], Number.parseInt(texDeclMatch[5], 10));
+            } else {
+                registerTextureName(texDeclMatch[1], Number.parseInt(texDeclMatch[5], 10));
+                if (texDeclMatch[2]) registerTextureName(texDeclMatch[2], Number.parseInt(texDeclMatch[5], 10));
+            }
+        }
+
+        const texArrMatch = code.match(/\b([A-Za-z_]\w*)(?:\s*\|=\s*([A-Za-z_]\w*))?\s*=\s*texture2DArray\s+([A-Za-z_]\w*)\s+(".*?")\s+(?:TexUnit|texUnit)?(\d+)\b/);
+        if (texArrMatch) {
+            registerTextureName(texArrMatch[1], Number.parseInt(texArrMatch[5], 10));
+            if (texArrMatch[2]) registerTextureName(texArrMatch[2], Number.parseInt(texArrMatch[5], 10));
+            registerTextureName(texArrMatch[3], Number.parseInt(texArrMatch[5], 10));
+            const quoted = texArrMatch[4];
+            const quotedStart = line.indexOf(quoted);
+            textureTextLikeRanges.push(rangeFromOffsets(document, lineStart + quotedStart, lineStart + quotedStart + quoted.length));
+        }
+
+        const dimRegex = /\[([^\]]+)\]/g;
+        let dimMatch;
+        while ((dimMatch = dimRegex.exec(code)) !== null) {
+            const dimText = dimMatch[1];
+            const localOffset = dimMatch.index + 1;
+            const xRegex = /\sx\s/g;
+            let xMatch;
+            while ((xMatch = xRegex.exec(dimText)) !== null) {
+                const abs = lineStart + localOffset + xMatch.index + 1;
+                dimensionXRanges.push(rangeFromOffsets(document, abs, abs + 1));
+            }
+        }
+
+        const wordRegex = /\b[A-Za-z_]\w*\b/g;
+        let wordMatch;
+        while ((wordMatch = wordRegex.exec(code)) !== null) {
+            const token = wordMatch[0];
+            if (resourceDefs.has(token) || texExampleNames.has(token)) {
+                textureFormatRanges.push(rangeFromOffsets(document, lineStart + wordMatch.index, lineStart + wordMatch.index + token.length));
+            }
+        }
+
+        const rebindHeaderMatch = code.match(/^\s*rebind\s+([A-Za-z_]\w*)\s*\{/);
+        if (rebindHeaderMatch) {
+            currentRebindProgram = rebindHeaderMatch[1];
+        } else if (/^\s*}\s*$/.test(code)) {
+            currentRebindProgram = null;
+        }
+
+        if (/^\s*rebind\b/.test(code) || /^\s*[A-Za-z_]\w*\s*->/.test(code)) {
+            const pairRegex = /([A-Za-z_]\w*)\s*->\s*(?:TexUnit|texUnit)?(\d+)/g;
+            let pair;
+            while ((pair = pairRegex.exec(code)) !== null) {
+                const lhs = pair[1];
+                const lhsStart = lineStart + pair.index;
+                const knownProgramTextures = new Set(((programTextureDefs.get(currentRebindProgram)?.textures) || []).map((entry) => entry.name));
+                const isRealTexture = knownProgramTextures.has(lhs) || currentTextureByName.has(lhs);
+                if (!isRealTexture) {
+                    textureTextLikeRanges.push(rangeFromOffsets(document, lhsStart, lhsStart + lhs.length));
+                    const currentProgramDef = programTextureDefs.get(currentRebindProgram);
+                    const shaderIO = readFragmentShaderIO(currentProgramDef ? { ...currentProgramDef, sourcePath: document.uri.fsPath } : null);
+                    const validNames = new Set([
+                        ...shaderIO.outputs.map((o) => o.name),
+                        ...readFragmentSamplerUniformNames(currentProgramDef ? { ...currentProgramDef, sourcePath: document.uri.fsPath } : null),
+                    ]);
+                    if (!validNames.has(lhs)) {
+                        invalidShaderBindingRanges.push(rangeFromOffsets(document, lhsStart, lhsStart + lhs.length));
+                    }
+                    continue;
+                }
+                const prevUnit = currentTextureByName.get(lhs);
+                if (prevUnit === undefined) {
+                    rebindEmptySquareRanges.push(rangeFromOffsets(document, lhsStart, lhsStart));
+                } else {
+                    rebindSquareRangesByUnit[prevUnit].push(rangeFromOffsets(document, lhsStart, lhsStart));
+                }
             }
         }
     }
@@ -1002,8 +1720,28 @@ async function provideSnippetDefinition(document, position) {
         return null;
     }
 
+    if (symbol.kind === "programPath") {
+        const path = require("path");
+        const resolved = path.resolve(path.dirname(document.uri.fsPath), "glsl", symbol.text.endsWith(".frag") ? symbol.text : `${symbol.text}.frag`);
+        return new vscode.Location(vscode.Uri.file(resolved), new vscode.Position(0, 0));
+    }
+
+    const localDslContextLoc = resolveLocalShaderDslContextDefinition(document, position, symbol);
+    if (localDslContextLoc) {
+        return localDslContextLoc;
+    }
+
+    const rebindSymbolLoc = resolveRebindSymbolDefinition(document, position, symbol);
+    if (rebindSymbolLoc) {
+        return rebindSymbolLoc;
+    }
+
+    if (symbol.kind === "parseTextImportPath" || symbol.kind === "parseTextImportMarker") {
+        return resolveParseTextImportLocation(document, symbol);
+    }
+
     if (symbol.kind === "texunit") {
-        const docs = await getSearchDocuments(document);
+        const docs = await getSearchDocuments(document, { family: "dsl-first" });
         let fallback = null;
         for (const doc of docs) {
             const loc = findTexUnitDefinition(doc, symbol.unitIndex);
@@ -1019,10 +1757,18 @@ async function provideSnippetDefinition(document, position) {
         return fallback;
     }
 
-    const docs = await getSearchDocuments(document);
+    const localDslLoc = findDslDefinition(document, symbol.text);
+    if (localDslLoc) {
+        return localDslLoc;
+    }
+
     const declarationMatchers = buildDeclarationMatchers(symbol.text);
+    const docs = await getSearchDocuments(document, { family: "code" });
 
     for (const doc of docs) {
+        if (doc.uri.toString() === document.uri.toString()) {
+            continue;
+        }
         const dslLoc = findDslDefinition(doc, symbol.text);
         if (dslLoc) return dslLoc;
         for (const matcher of declarationMatchers) {
@@ -1046,7 +1792,7 @@ async function provideSnippetReferences(document, position) {
     }
 
     if (symbol.kind === "texunit") {
-        const docs = await getSearchDocuments(document);
+        const docs = await getSearchDocuments(document, { family: "dsl-first" });
         const references = [];
         for (const doc of docs) {
             references.push(...findTexUnitReferences(doc, symbol.unitIndex));
@@ -1054,7 +1800,12 @@ async function provideSnippetReferences(document, position) {
         return references;
     }
 
-    const docs = await getSearchDocuments(document);
+    const contextualReferences = await findContextualSymbolReferences(document, symbol);
+    if (contextualReferences) {
+        return contextualReferences;
+    }
+
+    const docs = await getSearchDocuments(document, { family: "code" });
     const references = [];
     const finder = new RegExp(`\\b${escapeRegExp(symbol.text)}\\b`, "g");
 
@@ -1071,11 +1822,50 @@ async function provideSnippetReferences(document, position) {
     return references;
 }
 
+function prepareSnippetRename(document, position) {
+    const symbol = getSymbolAtPosition(document, position);
+    if (!symbol || symbol.kind === "texunit" || symbol.kind === "programPath" || symbol.kind === "parseTextImportPath" || symbol.kind === "parseTextImportMarker") {
+        return null;
+    }
+    const range = symbol.range || document.getWordRangeAtPosition(position, /[A-Za-z_$][A-Za-z0-9_$]*/);
+    if (!range) return null;
+    return { range, placeholder: document.getText(range) };
+}
+
+async function provideSnippetRenameEdits(document, position, newName) {
+    const symbol = getSymbolAtPosition(document, position);
+    if (!symbol || !newName || symbol.kind === "texunit" || symbol.kind === "programPath" || symbol.kind === "parseTextImportPath" || symbol.kind === "parseTextImportMarker") {
+        return null;
+    }
+    let references = await provideSnippetReferences(document, position);
+    if (symbol.kind === "shaderIOName") {
+        references = references.filter((ref) => ref.uri.toString() === document.uri.toString() || /\.(snippet\.ts|shaderdsl\.ts)$/i.test(ref.uri.fsPath || ""));
+    }
+    const edit = new vscode.WorkspaceEdit();
+    for (const ref of references) {
+        edit.replace(ref.uri, ref.range, newName);
+    }
+    return edit;
+}
+
 function getSymbolAtPosition(document, position) {
     const line = document.lineAt(position.line).text;
+    const programPathSymbol = findProgramPathSymbolAtPosition(line, position.character);
+    if (programPathSymbol) {
+        return programPathSymbol;
+    }
+    const parseTextImportSymbol = findParseTextImportSymbolAtPosition(line, position.character);
+    if (parseTextImportSymbol) {
+        return parseTextImportSymbol;
+    }
     const unitSymbol = findTexUnitSymbolAtPosition(line, position.character);
     if (unitSymbol) {
         return unitSymbol;
+    }
+
+    const contextualSymbol = findDslContextualSymbolAtPosition(document, position);
+    if (contextualSymbol) {
+        return contextualSymbol;
     }
 
     const range = document.getWordRangeAtPosition(position, /[A-Za-z_$][A-Za-z0-9_$]*/);
@@ -1087,6 +1877,268 @@ function getSymbolAtPosition(document, position) {
         range,
         kind: "text",
     };
+}
+
+function findDslContextualSymbolAtPosition(document, position) {
+    const line = document.lineAt(position.line).text;
+    const code = stripLineComment(line);
+    const lineStart = document.offsetAt(new vscode.Position(position.line, 0));
+    const absoluteOffset = document.offsetAt(position);
+
+    const programMatch = code.match(/^\s*program\s+([A-Za-z_]\w*)(?:\s*\|\s*[A-Za-z_]\w*)?\s+"([^"]*)"\s*\{/);
+    if (programMatch) {
+        const programName = programMatch[1];
+        const programStart = lineStart + code.indexOf(programName);
+        const programEnd = programStart + programName.length;
+        if (absoluteOffset >= programStart && absoluteOffset <= programEnd) {
+            return {
+                text: programName,
+                range: new vscode.Range(document.positionAt(programStart), document.positionAt(programEnd)),
+                kind: "programName",
+            };
+        }
+    }
+
+    const rebindHeaderMatch = code.match(/^\s*rebind\s+([A-Za-z_]\w*)\s*\{/);
+    if (rebindHeaderMatch) {
+        const programName = rebindHeaderMatch[1];
+        const programStart = lineStart + code.indexOf(programName);
+        const programEnd = programStart + programName.length;
+        if (absoluteOffset >= programStart && absoluteOffset <= programEnd) {
+            return {
+                text: programName,
+                range: new vscode.Range(document.positionAt(programStart), document.positionAt(programEnd)),
+                kind: "programName",
+            };
+        }
+    }
+
+    const useOrUniformsMatch = code.match(/^\s*(use|uniforms)\s+([A-Za-z_]\w*)\b/);
+    if (useOrUniformsMatch) {
+        const programName = useOrUniformsMatch[2];
+        const programStart = lineStart + code.indexOf(programName);
+        const programEnd = programStart + programName.length;
+        if (absoluteOffset >= programStart && absoluteOffset <= programEnd) {
+            return {
+                text: programName,
+                range: new vscode.Range(document.positionAt(programStart), document.positionAt(programEnd)),
+                kind: "programName",
+            };
+        }
+    }
+
+    const texDeclMatch = code.match(/^\s*tex2D\s+([A-Za-z_]\w*)\s*(?:\||~)\s*([A-Za-z_]\w*)?/);
+    if (texDeclMatch) {
+        const internalName = texDeclMatch[1];
+        const internalStart = lineStart + code.indexOf(internalName);
+        const internalEnd = internalStart + internalName.length;
+        if (absoluteOffset >= internalStart && absoluteOffset <= internalEnd) {
+            const programDef = findEnclosingProgramDefinition(document.getText(), position, document.uri.fsPath);
+            return {
+                text: internalName,
+                range: new vscode.Range(document.positionAt(internalStart), document.positionAt(internalEnd)),
+                kind: "shaderIOName",
+                programName: programDef?.name || null,
+                programDef,
+            };
+        }
+    }
+
+    const rebindProgramName = findEnclosingRebindProgram(document.getText(), position);
+    if (rebindProgramName && code.includes("->")) {
+        const arrowIndex = code.indexOf("->");
+        const lhs = code.slice(0, arrowIndex);
+        const lhsTokenRegex = /[A-Za-z_]\w*/g;
+        let match;
+        while ((match = lhsTokenRegex.exec(lhs)) !== null) {
+            const tokenStart = lineStart + match.index;
+            const tokenEnd = tokenStart + match[0].length;
+            if (absoluteOffset >= tokenStart && absoluteOffset <= tokenEnd) {
+                return {
+                    text: match[0],
+                    range: new vscode.Range(document.positionAt(tokenStart), document.positionAt(tokenEnd)),
+                    kind: "shaderIOName",
+                    programName: rebindProgramName,
+                    programDef: findProgramDefinitionByNameInDocument(document, rebindProgramName),
+                };
+            }
+        }
+    }
+
+    return null;
+}
+
+async function findContextualSymbolReferences(document, symbol) {
+    if (symbol.kind === "programName") {
+        const docs = await getSearchDocuments(document, { family: "dsl-first" });
+        const references = [];
+        for (const doc of docs) {
+            references.push(...findProgramNameReferences(doc, symbol.text));
+        }
+        return dedupeLocations(references);
+    }
+
+    if (symbol.kind === "shaderIOName") {
+        const references = [];
+        if (symbol.programName) {
+            const docs = await getSearchDocuments(document, { family: "dsl-first" });
+            for (const doc of docs) {
+                references.push(...findProgramScopedShaderIOReferences(doc, symbol.programName, symbol.text));
+            }
+        }
+        const shaderLoc = resolveShaderIOInFragment(symbol.programDef, symbol.text);
+        if (shaderLoc) {
+            references.push(shaderLoc);
+        }
+        return dedupeLocations(references);
+    }
+
+    return null;
+}
+
+function findProgramNameReferences(document, programName) {
+    const references = [];
+    const lines = document.getText().split(/\r?\n/);
+    for (let lineNo = 0; lineNo < lines.length; lineNo++) {
+        const code = stripLineComment(lines[lineNo]);
+        const lineStart = document.offsetAt(new vscode.Position(lineNo, 0));
+        const programMatch = code.match(/^\s*program\s+([A-Za-z_]\w*)(?:\s*\|\s*[A-Za-z_]\w*)?\s+"([^"]*)"\s*\{/);
+        if (programMatch && programMatch[1] === programName) {
+            const start = lineStart + code.indexOf(programName);
+            const end = start + programName.length;
+            references.push(new vscode.Location(document.uri, rangeFromOffsets(document, start, end)));
+        }
+        const rebindMatch = code.match(/^\s*rebind\s+([A-Za-z_]\w*)\s*\{/);
+        if (rebindMatch && rebindMatch[1] === programName) {
+            const start = lineStart + code.indexOf(programName);
+            const end = start + programName.length;
+            references.push(new vscode.Location(document.uri, rangeFromOffsets(document, start, end)));
+        }
+        const useOrUniformsMatch = code.match(/^\s*(use|uniforms)\s+([A-Za-z_]\w*)\b/);
+        if (useOrUniformsMatch && useOrUniformsMatch[2] === programName) {
+            const start = lineStart + code.indexOf(programName);
+            const end = start + programName.length;
+            references.push(new vscode.Location(document.uri, rangeFromOffsets(document, start, end)));
+        }
+    }
+    return references;
+}
+
+function findProgramScopedShaderIOReferences(document, programName, symbolName) {
+    const references = [];
+    const programBlock = findProgramBlockRangeByName(document, programName);
+    const rebindBlocks = findRebindBlockRangesByProgram(document, programName);
+
+    if (programBlock) {
+        references.push(...findNamedTokenReferencesInRange(document, symbolName, programBlock.start, programBlock.end, (line) => {
+            const code = stripLineComment(line);
+            return /^\s*tex2D\b/.test(code);
+        }));
+    }
+
+    for (const block of rebindBlocks) {
+        references.push(...findNamedTokenReferencesInRange(document, symbolName, block.start, block.end, (line) => {
+            const code = stripLineComment(line);
+            return code.includes("->");
+        }));
+    }
+
+    return references;
+}
+
+function findNamedTokenReferencesInRange(document, token, startOffset, endOffset, lineFilter = null) {
+    const references = [];
+    const startPos = document.positionAt(startOffset);
+    const endPos = document.positionAt(endOffset);
+    for (let lineNo = startPos.line; lineNo <= endPos.line; lineNo++) {
+        const line = document.lineAt(lineNo).text;
+        if (lineFilter && !lineFilter(line)) {
+            continue;
+        }
+        const code = stripLineComment(line);
+        const lineStart = document.offsetAt(new vscode.Position(lineNo, 0));
+        const regex = new RegExp(`\\b${escapeRegExp(token)}\\b`, "g");
+        let match;
+        while ((match = regex.exec(code)) !== null) {
+            const start = lineStart + match.index;
+            const end = start + token.length;
+            references.push(new vscode.Location(document.uri, rangeFromOffsets(document, start, end)));
+        }
+    }
+    return references;
+}
+
+function findProgramBlockRangeByName(document, programName) {
+    for (let lineNo = 0; lineNo < document.lineCount; lineNo++) {
+        const rawLine = document.lineAt(lineNo).text;
+        const line = stripLineComment(rawLine);
+        const match = line.match(/^\s*program\s+([A-Za-z_]\w*)(?:\s*\|\s*[A-Za-z_]\w*)?\s+"([^"]*)"\s*\{/);
+        if (match && match[1] === programName) {
+            const start = document.offsetAt(new vscode.Position(lineNo, 0));
+            let end = document.offsetAt(document.lineAt(lineNo).range.end);
+            for (let scan = lineNo + 1; scan < document.lineCount; scan++) {
+                const candidateLine = document.lineAt(scan).text;
+                const candidate = stripLineComment(candidateLine);
+                end = document.offsetAt(document.lineAt(scan).range.end);
+                if (/^\s*}\s*$/.test(candidate)) {
+                    return { start, end };
+                }
+            }
+            return { start, end };
+        }
+    }
+    return null;
+}
+
+function findRebindBlockRangesByProgram(document, programName) {
+    const ranges = [];
+    for (let lineNo = 0; lineNo < document.lineCount; lineNo++) {
+        const rawLine = document.lineAt(lineNo).text;
+        const line = stripLineComment(rawLine);
+        const match = line.match(/^\s*rebind\s+([A-Za-z_]\w*)\s*\{/);
+        if (match && match[1] === programName) {
+            const start = document.offsetAt(new vscode.Position(lineNo, 0));
+            let end = document.offsetAt(document.lineAt(lineNo).range.end);
+            for (let scan = lineNo + 1; scan < document.lineCount; scan++) {
+                const candidateLine = document.lineAt(scan).text;
+                const candidate = stripLineComment(candidateLine);
+                end = document.offsetAt(document.lineAt(scan).range.end);
+                if (/^\s*}\s*$/.test(candidate)) {
+                    ranges.push({ start, end });
+                    break;
+                }
+            }
+        }
+    }
+    return ranges;
+}
+
+function findProgramDefinitionByNameInDocument(document, programName) {
+    const text = document.getText();
+    const defs = parseProgramTextureDefinitions(text, document.uri.fsPath);
+    const programDef = defs.get(programName);
+    if (!programDef) {
+        return null;
+    }
+    return {
+        name: programName,
+        fragPath: programDef.fragPath || "",
+        sourcePath: programDef.sourcePath || document.uri.fsPath,
+    };
+}
+
+function dedupeLocations(locations) {
+    const seen = new Set();
+    const deduped = [];
+    for (const loc of locations) {
+        const key = `${loc.uri.toString()}:${loc.range.start.line}:${loc.range.start.character}:${loc.range.end.line}:${loc.range.end.character}`;
+        if (seen.has(key)) {
+            continue;
+        }
+        seen.add(key);
+        deduped.push(loc);
+    }
+    return deduped;
 }
 
 function findTexUnitSymbolAtPosition(line, character) {
@@ -1102,6 +2154,84 @@ function findTexUnitSymbolAtPosition(line, character) {
     }
 
     return null;
+}
+
+function findParseTextImportSymbolAtPosition(line, character) {
+    const importRegex = /^\s*import\s+<([A-Za-z_]\w*)>\s+from\s+([^\s]+)\s*$/;
+    const match = line.match(importRegex);
+    if (!match) {
+        return null;
+    }
+
+    const marker = match[1];
+    const rawPath = match[2];
+    const pathText = rawPath.replace(/^["']|["']$/g, "");
+    const markerStart = line.indexOf(`<${marker}>`) + 1;
+    const markerEnd = markerStart + marker.length;
+    if (character >= markerStart && character <= markerEnd) {
+        return {
+            text: marker,
+            importPath: pathText,
+            range: null,
+            kind: "parseTextImportMarker",
+        };
+    }
+
+    const pathStart = line.indexOf(rawPath) + (rawPath.startsWith("\"") || rawPath.startsWith("'") ? 1 : 0);
+    const pathEnd = pathStart + pathText.length;
+    if (character >= pathStart && character <= pathEnd) {
+        return {
+            text: pathText,
+            importPath: pathText,
+            range: null,
+            kind: "parseTextImportPath",
+        };
+    }
+
+    return null;
+}
+
+function findProgramPathSymbolAtPosition(line, character) {
+    const match = line.match(/^\s*program\s+([A-Za-z_]\w*)(?:\s*\|\s*[A-Za-z_]\w*)?\s+"([^"]+)"\s*\{/);
+    if (!match) return null;
+    const pathText = match[2];
+    const start = line.indexOf(`"${pathText}"`) + 1;
+    const end = start + pathText.length;
+    if (character < start || character > end) return null;
+    return {
+        text: pathText,
+        range: null,
+        kind: "programPath",
+    };
+}
+
+function resolveParseTextImportLocation(document, symbol) {
+    const path = require("path");
+    const fs = require("node:fs");
+    const resolvedPath = path.resolve(path.dirname(document.uri.fsPath), symbol.importPath);
+
+    if (symbol.kind === "parseTextImportPath") {
+        return new vscode.Location(vscode.Uri.file(resolvedPath), new vscode.Position(0, 0));
+    }
+
+    try {
+        const text = fs.readFileSync(resolvedPath, "utf8");
+        const markerRegex = new RegExp(`<${escapeRegExp(symbol.text)}\\s*\\/?>`, "m");
+        const match = markerRegex.exec(text);
+        if (match) {
+            return new vscode.Location(
+                vscode.Uri.file(resolvedPath),
+                rangeFromOffsets({ positionAt: (offset) => {
+                    const docText = text.slice(0, offset).split(/\r?\n/);
+                    const line = docText.length - 1;
+                    const ch = docText[docText.length - 1].length;
+                    return new vscode.Position(line, ch);
+                } }, match.index, match.index + match[0].length),
+            );
+        }
+    } catch {}
+
+    return new vscode.Location(vscode.Uri.file(resolvedPath), new vscode.Position(0, 0));
 }
 
 function findTexUnitDefinition(document, unitIndex) {
@@ -1129,6 +2259,141 @@ function findTexUnitDefinition(document, unitIndex) {
     return fallback;
 }
 
+function resolveRebindSymbolDefinition(document, position, symbol) {
+    if (symbol.kind !== "text" && symbol.kind !== "shaderIOName") return null;
+    const text = document.getText();
+    const programName = findEnclosingRebindProgram(text, position);
+    if (!programName) return null;
+
+    const linePrefix = document.lineAt(position.line).text.slice(0, position.character);
+    if (linePrefix.includes("->")) return null;
+
+    const defs = parseProgramTextureDefinitions(text, document.uri.fsPath);
+    const programDef = defs.get(programName);
+    if (!programDef?.fragPath) return null;
+
+    try {
+        const path = require("path");
+        const fs = require("node:fs");
+        const normalized = programDef.fragPath.endsWith(".frag") ? programDef.fragPath : `${programDef.fragPath}.frag`;
+        const baseDir = path.dirname(programDef.sourcePath || document.uri.fsPath);
+        const resolved = path.resolve(baseDir, "glsl", normalized);
+        const fragText = fs.readFileSync(resolved, "utf8");
+        return resolveShaderIOInFragment({
+            name: programName,
+            fragPath: programDef.fragPath,
+            sourcePath: programDef.sourcePath || document.uri.fsPath,
+        }, symbol.text);
+    } catch {
+        return null;
+    }
+}
+
+function resolveLocalShaderDslContextDefinition(document, position, symbol) {
+    if (symbol.kind !== "text" && symbol.kind !== "shaderIOName" && symbol.kind !== "programName") return null;
+    const line = document.lineAt(position.line).text;
+    const code = stripLineComment(line);
+    const lineStart = document.offsetAt(new vscode.Position(position.line, 0));
+
+    const programMatch = code.match(/^\s*program\s+([A-Za-z_]\w*)(?:\s*\|\s*[A-Za-z_]\w*)?\s+"([^"]*)"\s*\{/);
+    if (programMatch) {
+        const programName = programMatch[1];
+        const start = code.indexOf(programName);
+        const end = start + programName.length;
+        if (symbol.text === programName && position.character >= start && position.character <= end) {
+            return new vscode.Location(document.uri, rangeFromOffsets(document, lineStart + start, lineStart + end));
+        }
+    }
+
+    const useOrUniformsMatch = code.match(/^\s*(use|uniforms)\s+([A-Za-z_]\w*)\b/);
+    if (useOrUniformsMatch) {
+        const programName = useOrUniformsMatch[2];
+        const start = code.indexOf(programName);
+        const end = start + programName.length;
+        if (symbol.text === programName && position.character >= start && position.character <= end) {
+            const definition = findProgramNameDefinition(document, programName);
+            if (definition) {
+                return definition;
+            }
+        }
+    }
+
+    const texDeclMatch = code.match(/^\s*tex2D\s+([A-Za-z_]\w*)(?:\s*\|\s*([A-Za-z_]\w*)|\s*~\s*([A-Za-z_]\w*))?/);
+    if (texDeclMatch && symbol.text === texDeclMatch[1]) {
+        const tokenStart = code.indexOf(texDeclMatch[1]);
+        const tokenEnd = tokenStart + texDeclMatch[1].length;
+        if (position.character >= tokenStart && position.character <= tokenEnd) {
+            const programDef = findEnclosingProgramDefinition(document.getText(), position, document.uri.fsPath);
+            const shaderIOLoc = resolveShaderIOInFragment(programDef, symbol.text);
+            if (shaderIOLoc) return shaderIOLoc;
+        }
+    }
+
+    return null;
+}
+
+function findProgramNameDefinition(document, programName) {
+    const lines = document.getText().split(/\r?\n/);
+    for (let lineNo = 0; lineNo < lines.length; lineNo++) {
+        const code = stripLineComment(lines[lineNo]);
+        const match = code.match(/^\s*program\s+([A-Za-z_]\w*)(?:\s*\|\s*[A-Za-z_]\w*)?\s+"([^"]*)"\s*\{/);
+        if (!match || match[1] !== programName) {
+            continue;
+        }
+        const lineStart = document.offsetAt(new vscode.Position(lineNo, 0));
+        const start = lineStart + code.indexOf(programName);
+        const end = start + programName.length;
+        return new vscode.Location(document.uri, rangeFromOffsets(document, start, end));
+    }
+    return null;
+}
+
+function findEnclosingProgramDefinition(text, position, sourcePath = "") {
+    const lines = text.split(/\r?\n/);
+    for (let lineNo = position.line; lineNo >= 0; lineNo--) {
+        const line = stripLineComment(lines[lineNo]);
+        const match = line.match(/^\s*program\s+([A-Za-z_]\w*)(?:\s*\|\s*[A-Za-z_]\w*)?\s+"([^"]*)"\s*\{/);
+        if (match) {
+            return { name: match[1], fragPath: match[2] || "", sourcePath };
+        }
+        if (/^\s*}\s*$/.test(line) && lineNo !== position.line) break;
+    }
+    return null;
+}
+
+function resolveShaderIOInFragment(programDef, symbolName) {
+    if (!programDef?.fragPath || !symbolName) return null;
+    try {
+        const path = require("path");
+        const fs = require("node:fs");
+        const normalized = programDef.fragPath.endsWith(".frag") ? programDef.fragPath : `${programDef.fragPath}.frag`;
+        const baseDir = path.dirname(programDef.sourcePath || "");
+        const resolved = path.resolve(baseDir, "glsl", normalized);
+        const fragText = fs.readFileSync(resolved, "utf8");
+        const patterns = [
+            new RegExp(`^\\s*uniform\\s+(?:sampler2D|usampler2D|isampler2D)\\s+${escapeRegExp(symbolName)}\\s*;`, "m"),
+            new RegExp(`^\\s*layout\\s*\\([^\\)]*\\)\\s*out\\s+[A-Za-z_][A-Za-z0-9_]*\\s+${escapeRegExp(symbolName)}\\s*;`, "m"),
+            new RegExp(`^\\s*out\\s+[A-Za-z_][A-Za-z0-9_]*\\s+${escapeRegExp(symbolName)}\\s*;`, "m"),
+        ];
+        for (const pattern of patterns) {
+            const match = pattern.exec(fragText);
+            if (!match) continue;
+            const start = match.index + match[0].indexOf(symbolName);
+            const end = start + symbolName.length;
+            const pseudoDoc = {
+                positionAt(offset) {
+                    const lines = fragText.slice(0, offset).split(/\r?\n/);
+                    return new vscode.Position(lines.length - 1, lines[lines.length - 1].length);
+                },
+            };
+            return new vscode.Location(vscode.Uri.file(resolved), rangeFromOffsets(pseudoDoc, start, end));
+        }
+        return null;
+    } catch {
+        return null;
+    }
+}
+
 function findTexUnitReferences(document, unitIndex) {
     const references = [];
     const lines = document.getText().split(/\r?\n/);
@@ -1151,15 +2416,15 @@ function findTexUnitReferences(document, unitIndex) {
 function buildDeclarationMatchers(symbol) {
     const name = escapeRegExp(symbol);
     return [
-        new RegExp(`\\b(?:const|let|var)\\s+${name}\\b`, "m"),
-        new RegExp(`\\b(?:let|var)\\s*\\{[\\s\\S]*?\\b${name}\\s*=`, "m"),
-        new RegExp(`\\b(?:async\\s+)?function\\s+${name}\\b`, "m"),
-        new RegExp(`\\bclass\\s+${name}\\b`, "m"),
-        new RegExp(`\\b(?:interface|type|enum)\\s+${name}\\b`, "m"),
-        new RegExp(`\\b${name}\\s*=\\s*\\(`, "m"),
-        new RegExp(`\\b${name}\\s*:\\s*\\(`, "m"),
-        new RegExp(`\\bprogram\\s+[^\\n{]*\\b${name}\\b`, "m"),
-        new RegExp(`\\btex2D\\s+[^\\n]*\\b${name}\\b`, "m"),
+        new RegExp(`^\\s*(?:const|let|var)\\s+${name}\\b`, "m"),
+        new RegExp(`^\\s*(?:let|var)\\s*\\{[\\s\\S]*?\\b${name}\\s*=`, "m"),
+        new RegExp(`^\\s*(?:async\\s+)?function\\s+${name}\\b`, "m"),
+        new RegExp(`^\\s*class\\s+${name}\\b`, "m"),
+        new RegExp(`^\\s*(?:interface|type|enum)\\s+${name}\\b`, "m"),
+        new RegExp(`^\\s*${name}\\s*=\\s*\\(`, "m"),
+        new RegExp(`^\\s*${name}\\s*:\\s*\\(`, "m"),
+        new RegExp(`^\\s*program\\s+[^\\n{]*\\b${name}\\b`, "m"),
+        new RegExp(`^\\s*tex2D\\s+[^\\n]*\\b${name}\\b`, "m"),
     ];
 }
 
@@ -1191,21 +2456,36 @@ function findDslDefinition(document, symbol) {
     return null;
 }
 
-async function getSearchDocuments(currentDocument) {
-    const uris = await vscode.workspace.findFiles("**/*.{snippet.ts,shaderdsl.ts,ts,tsx,js,mjs,cjs}");
+async function getSearchDocuments(currentDocument, options = {}) {
+    const family = options.family || "code";
+    const includeGlobs = family === "dsl-first"
+        ? ["**/*.shaderdsl.ts", "**/*.snippet.ts"]
+        : ["**/*.shaderdsl.ts", "**/*.snippet.ts", "**/*.ts", "**/*.tsx", "**/*.js", "**/*.mjs", "**/*.cjs"];
+
     const docs = [currentDocument];
     const seen = new Set([currentDocument.uri.toString()]);
 
-    for (const uri of uris) {
-        const key = uri.toString();
-        if (seen.has(key)) {
-            continue;
+    for (const doc of vscode.workspace.textDocuments) {
+        if (!isSearchableCodeDocument(doc)) continue;
+        const key = doc.uri.toString();
+        if (seen.has(key)) continue;
+        docs.push(doc);
+        seen.add(key);
+    }
+
+    for (const includeGlob of includeGlobs) {
+        const uris = await getCachedWorkspaceUris(currentDocument, `${family}:${includeGlob}`, includeGlob);
+        for (const uri of uris) {
+            const key = uri.toString();
+            if (seen.has(key)) {
+                continue;
+            }
+            try {
+                const doc = await vscode.workspace.openTextDocument(uri);
+                docs.push(doc);
+                seen.add(key);
+            } catch {}
         }
-        try {
-            const doc = await vscode.workspace.openTextDocument(uri);
-            docs.push(doc);
-            seen.add(key);
-        } catch {}
     }
 
     return docs;
