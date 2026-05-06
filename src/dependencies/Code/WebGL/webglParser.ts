@@ -82,6 +82,15 @@ import { WebGLMan, WebProgram, BindableTexture, parseTexUnitType, TexExamples } 
 
 
 export class DetailedParser {
+    static DRAW_BLOCK_MODES: Record<string, string> = {
+        drawPoints: "POINTS",
+        drawLineStrip: "LINE_STRIP",
+        drawLineLoop: "LINE_LOOP",
+        drawLines: "LINES",
+        drawTriangleStrip: "TRIANGLE_STRIP",
+        drawTriangleFan: "TRIANGLE_FAN",
+        drawTriangles: "TRIANGLES",
+    };
     static GLSL_TYPE_HINTS = new Set([
         "float", "int", "uint", "vec2", "vec3", "vec4", "mat2", "mat3", "mat4"
     ]);
@@ -95,6 +104,7 @@ export class DetailedParser {
     static transpileShaderFilters: Array<{ stage: string, filePatternExpr: string, searchPatternExpr: string, replacementExpr: string }> = [];
     static transpileTexAliasToUniform = new Map<string, string>();
     static transpileTexDeclaredNames = new Set<string>();
+    static transpileProgramOutAliases = new Map<string, Map<string, string[]>>();
     static transpileTemplateBlocks = new Map<string, { kind: "uniforms" | "rebind" | "framebuffer", lines: string[] }>();
     static transpileFunctionBlocks = new Map<string, { params: string[], lines: string[] }>();
     static transpileLastUsedProgramExpr = "lastUsedProgram";
@@ -674,7 +684,7 @@ export class DetailedParser {
 
         const isAsync = m[1] === "async";
         const name = m[2];
-        if (["use", "lduse", "uniforms", "rebind", "framebuffer", "viewport", "drawTriangles"].includes(name)) {
+        if (["use", "lduse", "uniforms", "rebind", "framebuffer", "viewport"].includes(name) || Object.prototype.hasOwnProperty.call(DetailedParser.DRAW_BLOCK_MODES, name)) {
             return null;
         }
         let tail = (m[3] || "").trim();
@@ -1222,6 +1232,19 @@ export class DetailedParser {
         return out;
     }
 
+    static parseUniformSnapshotEntry(line: string): { name: string, expr: string } | null {
+        const shortMatch = line.match(/^\{([a-zA-Z_]\w*)\}([iuf])\s*$/);
+        if (shortMatch) {
+            const [, shortName] = shortMatch;
+            return { name: shortName, expr: DetailedParser.transpileExpr(`{${shortName}}`) };
+        }
+
+        const m = line.match(/^(\w+)\s*=\s*(.+?)([iuf])?\s*$/);
+        if (!m) return null;
+        const [, name, rawValue] = m;
+        return { name, expr: DetailedParser.transpileExpr(rawValue) };
+    }
+
     static buildRuntimeLetHelperLines(): string[] {
         return [
             `const __runtimeLetCache = new Map<string, any>();`,
@@ -1284,6 +1307,222 @@ export class DetailedParser {
             `    }`,
             `    __runtimeLetCache.set(resolvedPath, parsed);`,
             `    return parsed;`,
+            `};`,
+        ];
+    }
+
+    static buildBackupRuntimeHelperLines(defaultScope: string): string[] {
+        return [
+            `const __backupBaseUrl = "/api/backups";`,
+            `const __backupDefaultScope = ${JSON.stringify(defaultScope)};`,
+            `const __backupPad2 = (n:any)=>String(n).padStart(2, "0");`,
+            `const __backupStamp = ()=>{`,
+            `    const d = new Date();`,
+            `    return String(d.getFullYear()) + __backupPad2(d.getMonth()+1) + __backupPad2(d.getDate()) + __backupPad2(d.getHours()) + __backupPad2(d.getMinutes());`,
+            `};`,
+            `const __backupSafeName = (name:any)=>String(name ?? "backup").replace(/[^A-Za-z0-9_.-]+/g, "_").replace(/^_+|_+$/g, "") || "backup";`,
+            `const __backupDefaultPath = (value:any, varName:any)=>{`,
+            `    const isTex = value && typeof value === "object" && ("w" in value || "h" in value || "unit" in value || value instanceof WebGLTexture);`,
+            `    const parts = [__backupSafeName(varName)];`,
+            `    if(isTex){`,
+            `        parts.push(String(value.w ?? value.width ?? "x"));`,
+            `        parts.push(String(value.h ?? value.height ?? "y"));`,
+            `        parts.push("TexUnit" + String(value.unit ?? "NA").replace(/^TexUnit/i, ""));`,
+            `        parts.push(__backupSafeName(value.__backupProgram ?? value.programName ?? value.program ?? "programNA"));`,
+            `    }`,
+            `    parts.push(__backupStamp());`,
+            `    return parts.join("_") + ".txt";`,
+            `};`,
+            `const __backupTexturePreview = (tex:any, varName:any)=>{`,
+            `    if(!tex || tex.__backupType !== "texture2D") return "";`,
+            `    const w = Number(tex.w ?? 0) || 0;`,
+            `    const h = Number(tex.h ?? 0) || 0;`,
+            `    const dim = Number(tex.dim ?? 1) || 1;`,
+            `    const name = String(varName ?? "texture");`,
+            `    const program = String(tex.program ?? "programNA");`,
+            `    const values = Array.isArray(tex.data) ? tex.data : [];`,
+            `    const formatScalar = (value:any)=>{`,
+            `        const num = Number(value);`,
+            `        if(!Number.isFinite(num)) return String(value ?? "").padStart(10, " ");`,
+            `        return num.toFixed(4).padStart(10, " ");`,
+            `    };`,
+            `    const lines = [name + " [" + w + " x " + h + "] " + program];`,
+            `    for(let y = 0; y < h; y++){`,
+            `        const row:string[] = [];`,
+            `        for(let x = 0; x < w; x++){`,
+            `            const base = (y * w + x) * dim;`,
+            `            for(let c = 0; c < dim; c++){`,
+            `                row.push(formatScalar(values[base + c]));`,
+            `            }`,
+            `        }`,
+            `        lines.push(row.join(" "));`,
+            `    }`,
+            `    return lines.join("\\n");`,
+            `};`,
+            `const __backupNormalizeScopePath = (pathHint:any)=>{`,
+            `    const raw = String(pathHint ?? "").trim().replace(/\\\\/g, "/");`,
+            `    const scope = String(__backupDefaultScope || "").replace(/^\\/+|\\/+$/g, "");`,
+            `    const withScope = (value:string)=>{`,
+            `        const clean = String(value || "").replace(/^\\/+/, "");`,
+            `        if(!scope) return clean;`,
+            `        if(!clean) return scope;`,
+            `        if(clean === scope || clean.startsWith(scope + "/")) return clean;`,
+            `        return scope + "/" + clean;`,
+            `    };`,
+            `    if(!raw || raw === "/" || raw === ".") return { path: withScope(""), directoryMode: true };`,
+            `    if(raw.startsWith("./")){`,
+            `        const rest = raw.slice(2);`,
+            `        return { path: withScope(rest), directoryMode: !rest || /\\/$/.test(rest) };`,
+            `    }`,
+            `    if(raw.startsWith("/")) return { path: withScope(raw.slice(1)), directoryMode: true };`,
+            `    return { path: withScope(raw), directoryMode: true };`,
+            `};`,
+            `const __backupReadTexture2D = (tex:any)=>{`,
+            `    if(!tex || typeof tex !== "object" || !(tex instanceof WebGLTexture)) return null;`,
+            `    const w = Number(tex.w ?? tex.width ?? 1) || 1;`,
+            `    const h = Number(tex.h ?? tex.height ?? 1) || 1;`,
+            `    const format = tex.format || (TexExamples as any).RGBAFloat;`,
+            `    const dim = format?.[0] === gl.RED ? 1 : format?.[0] === gl.RG ? 2 : format?.[0] === gl.RGB ? 3 : 4;`,
+            `    const fbo = gl.createFramebuffer();`,
+            `    gl.bindFramebuffer(gl.READ_FRAMEBUFFER, fbo);`,
+            `    gl.framebufferTexture2D(gl.READ_FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);`,
+            `    gl.readBuffer(gl.COLOR_ATTACHMENT0);`,
+            `    const data = new Float32Array(w * h * dim);`,
+            `    gl.readPixels(0, 0, w, h, format[0], format[2], data);`,
+            `    gl.bindFramebuffer(gl.READ_FRAMEBUFFER, null);`,
+            `    gl.deleteFramebuffer(fbo);`,
+            `    return { __backupType: "texture2D", w, h, dim, format: Array.from(format || []), unit: tex.unit, program: tex.__backupProgram, data: Array.from(data) };`,
+            `};`,
+            `const __backupSerializeValue = (value:any, varName:any)=>{`,
+            `    const tex = __backupReadTexture2D(value);`,
+            `    if(tex){`,
+            `        const jsonLine = JSON.stringify({ varName, savedAt: new Date().toISOString(), value: tex });`,
+            `        return __backupTexturePreview(tex, varName) + "\\n" + jsonLine;`,
+            `    }`,
+            `    if(value instanceof Float32Array || value instanceof Int32Array || value instanceof Uint32Array || value instanceof Uint8Array){`,
+            `        return JSON.stringify({ varName, savedAt: new Date().toISOString(), value: { __backupType: value.constructor.name, data: Array.from(value) } });`,
+            `    }`,
+            `    try { return JSON.stringify({ varName, savedAt: new Date().toISOString(), value }); }`,
+            `    catch { return String(value); }`,
+            `};`,
+            `const __backupNormalizeValue = (value:any, varName:any)=>{`,
+            `    const tex = __backupReadTexture2D(value);`,
+            `    if(tex) return { varName, value: tex };`,
+            `    if(value instanceof Float32Array || value instanceof Int32Array || value instanceof Uint32Array || value instanceof Uint8Array){`,
+            `        return { varName, value: { __backupType: value.constructor.name, data: Array.from(value) } };`,
+            `    }`,
+            `    return { varName, value };`,
+            `};`,
+            `const __backupPut = async (route:string, path:any, content:any, extra:any={})=>{`,
+            `    const response = await fetch(__backupBaseUrl + route, {`,
+            `        method: "PUT",`,
+            `        headers: { "Content-Type": "application/json" },`,
+            `        body: JSON.stringify({ path, content, ...extra })`,
+            `    });`,
+            `    const raw = await response.text();`,
+            `    if(!response.ok) throw new Error("Backup request failed: " + response.status + " " + raw);`,
+            `    try { return raw ? JSON.parse(raw) : { ok: true, path: String(path ?? "") }; }`,
+            `    catch { return { ok: true, path: String(path ?? ""), raw }; }`,
+            `};`,
+            `const __backupStore = async (value:any, varName:any, pathHint?:any)=>{`,
+            `    try {`,
+            `        const target = __backupNormalizeScopePath(pathHint);`,
+            `        const result = await __backupPut("/file", target.path, __backupSerializeValue(value, varName), target.directoryMode ? { directoryMode: true, suggestedName: __backupDefaultPath(value, varName) } : {});`,
+            `        console.log("[backUp store]", result.path);`,
+            `        return result;`,
+            `    } catch (err) {`,
+            `        console.error("[backUp store] failed", err);`,
+            `        return { ok: false, error: String(err) };`,
+            `    }`,
+            `};`,
+            `const __backupFetchText = async (pathHint:any)=>{`,
+            `    const target = __backupNormalizeScopePath(pathHint);`,
+            `    const response = await fetch(__backupBaseUrl + "/file?path=" + encodeURIComponent(target.path));`,
+            `    if(!response.ok) throw new Error("Backup restore failed: " + response.status + " " + await response.text());`,
+            `    return await response.text();`,
+            `};`,
+            `const __backupDecodeValue = (text:string)=>{`,
+            `    try {`,
+            `        const lines = String(text ?? "").split(/\\r?\\n/).map(line=>line.trim()).filter(Boolean);`,
+            `        const jsonLine = lines.length ? lines[lines.length - 1] : "";`,
+            `        const parsed = JSON.parse(jsonLine);`,
+            `        return parsed && Object.prototype.hasOwnProperty.call(parsed, "value") ? parsed.value : parsed;`,
+            `    } catch {`,
+            `        const nums = text.trim().split(/[\\s,;]+/).map(Number).filter(Number.isFinite);`,
+            `        return nums.length ? new Float32Array(nums) : text;`,
+            `    }`,
+            `};`,
+            `const __backupRestoreInto = async (target:any, pathHint:any)=>{`,
+            `    const value = __backupDecodeValue(await __backupFetchText(pathHint));`,
+            `    if(target && typeof target.fill === "function" && value?.__backupType === "texture2D"){`,
+            `        target.fill(new Float32Array(value.data || []), 0, 0, value.w, value.h);`,
+            `        return target;`,
+            `    }`,
+            `    if(value?.__backupType && Array.isArray(value.data)) return new Float32Array(value.data);`,
+            `    return value;`,
+            `};`,
+            `const __backupLog = async (pathHint:any)=>{`,
+            `    const target = __backupNormalizeScopePath(pathHint);`,
+            `    const p = target.path;`,
+            `    const prevLog = console.log.bind(console);`,
+            `    const prevWarn = console.warn.bind(console);`,
+            `    const prevError = console.error.bind(console);`,
+            `    const append = (level:string, args:any[])=>{`,
+            `        const line = "[" + new Date().toISOString() + "] " + level + " " + args.map(a=>{ try{return typeof a === "string" ? a : JSON.stringify(a);}catch{return String(a);} }).join(" ") + "\\n";`,
+            `        __backupPut("/append", p, line, target.directoryMode ? { directoryMode: true, suggestedName: "log_" + __backupStamp() + ".txt" } : {}).catch(prevError);`,
+            `    };`,
+            `    console.log = (...args:any[])=>{ prevLog(...args); append("log", args); };`,
+            `    console.warn = (...args:any[])=>{ prevWarn(...args); append("warn", args); };`,
+            `    console.error = (...args:any[])=>{ prevError(...args); append("error", args); };`,
+            `    console.log("[backUp log]", p);`,
+            `};`,
+            `const __backupResolveMultiTarget = (pathHint:any, defaultStem:any, suffix:any)=>{`,
+            `    const target = __backupNormalizeScopePath(pathHint);`,
+            `    const stem = __backupSafeName(defaultStem);`,
+            `    const cleanSuffix = String(suffix ?? "").replace(/^_+/, "");`,
+            `    const fileName = stem + "_" + cleanSuffix + "_" + __backupStamp() + ".txt";`,
+            `    if(target.directoryMode) return { path: target.path, directoryMode: true, suggestedName: fileName };`,
+            `    const p = target.path;`,
+            `    if(/\\.txt$/i.test(p)){`,
+            `        const slash = Math.max(p.lastIndexOf("/"), p.lastIndexOf("\\\\"));`,
+            `        const dir = slash >= 0 ? p.slice(0, slash + 1) : "";`,
+            `        const base = slash >= 0 ? p.slice(slash + 1) : p;`,
+            `        const dot = base.toLowerCase().endsWith(".txt") ? base.slice(0, -4) : base;`,
+            `        return { path: dir + dot + "_" + cleanSuffix + ".txt", directoryMode: false };`,
+            `    }`,
+            `    return { path: p, directoryMode: true, suggestedName: fileName };`,
+            `};`,
+            `const __backupStoreDrawBlock = async (drawKind:any, pathHint:any, outputTextures:any[], uniformEntries:any[], program:any)=>{`,
+            `    try {`,
+            `        const drawName = __backupSafeName(drawKind || "draw");`,
+            `        const outputs = Array.isArray(outputTextures) ? outputTextures.filter(Boolean) : [];`,
+            `        const outputSet = new Set(outputs.map(item => item?.tex).filter(Boolean));`,
+            `        const programTextures = Array.isArray(program?.textures) ? program.textures.filter((tex:any)=>tex && !outputSet.has(tex)) : [];`,
+            `        const prependedInputs = programTextures.map((tex:any, idx:number)=>__backupNormalizeValue(tex, tex.__backupVarName || tex.__backupUniformName || ("inputTex" + idx)));`,
+            `        const normalizedUniforms = (Array.isArray(uniformEntries) ? uniformEntries : []).map((entry:any)=>({`,
+            `            kind: entry?.kind || "uniform",`,
+            `            name: entry?.name || "uniform",`,
+            `            ...__backupNormalizeValue(entry?.value, entry?.name || "uniform")`,
+            `        }));`,
+            `        const uniformPayload = JSON.stringify({`,
+            `            source: drawKind,`,
+            `            savedAt: new Date().toISOString(),`,
+            `            entries: [`,
+            `                ...prependedInputs.map((entry:any)=>({ kind: "programTexture", name: entry.varName, value: entry.value })),`,
+            `                ...normalizedUniforms`,
+            `            ]`,
+            `        });`,
+            `        const uniformTarget = __backupResolveMultiTarget(pathHint, drawName, "uniforms");`,
+            `        await __backupPut("/file", uniformTarget.path, uniformPayload, uniformTarget.directoryMode ? { directoryMode: true, suggestedName: uniformTarget.suggestedName } : {});`,
+            `        for (const output of outputs) {`,
+            `            const outputTarget = __backupResolveMultiTarget(pathHint, drawName, __backupSafeName(output?.name || "output"));`,
+            `            await __backupPut("/file", outputTarget.path, __backupSerializeValue(output?.tex, output?.name || "output"), outputTarget.directoryMode ? { directoryMode: true, suggestedName: outputTarget.suggestedName } : {});`,
+            `        }`,
+            `        return { ok: true };`,
+            `    } catch (err) {`,
+            `        console.error("[backUp draw] failed", drawKind, pathHint, err);`,
+            `        return { ok: false, error: String(err) };`,
+            `    }`,
             `};`,
         ];
     }
@@ -1402,6 +1641,7 @@ export class DetailedParser {
         const initSplit = DetailedParser.splitTopLevelAssignLE(line);
         const lineNoInit = initSplit ? initSplit[0] : line;
         const initExpr = initSplit ? DetailedParser.transpileExpr(initSplit[1]) : "null";
+        const normalizedLineNoInit = lineNoInit.replace(/^\s*(?:new-|in-)?tex2D\b/, "tex2D");
 
         let namesPart = "";
         let sizeBody = "";
@@ -1409,7 +1649,7 @@ export class DetailedParser {
         let maybeFilterToken: string | undefined;
         let texUnitToken: string | undefined;
 
-        const modern = lineNoInit.match(/^tex2D\s+(.+?)\s+RES\s*\[([\s\S]+?)\]\s+TYPE\s+([^\s]+)(?:\s+FILTER\s+(\[[\s\S]+\]))?\s*->\s*([^\s]+)\s*$/);
+        const modern = normalizedLineNoInit.match(/^tex2D\s+(.+?)\s+RES\s*\[([\s\S]+?)\]\s+TYPE\s+([^\s]+)(?:\s+FILTER\s+(\[[\s\S]+\]))?\s*->\s*([^\s]+)\s*$/);
         if (modern) {
             namesPart = modern[1].trim();
             sizeBody = modern[2].trim();
@@ -1417,7 +1657,7 @@ export class DetailedParser {
             maybeFilterToken = modern[4]?.trim();
             texUnitToken = modern[5]?.trim();
         } else {
-            const modernNoType = lineNoInit.match(/^tex2D\s+(.+?)\s+RES\s*\[([\s\S]+?)\]\s+([\s\S]+)$/);
+            const modernNoType = normalizedLineNoInit.match(/^tex2D\s+(.+?)\s+RES\s*\[([\s\S]+?)\]\s+([\s\S]+)$/);
             if (modernNoType) {
                 namesPart = modernNoType[1].trim();
                 sizeBody = modernNoType[2].trim();
@@ -1438,7 +1678,7 @@ export class DetailedParser {
                     texUnitToken = tailTokens[k];
                 }
             } else {
-                const legacy = lineNoInit.match(/^tex2D\s+([A-Za-z_]\w*(?:[\|~][A-Za-z_]\w*)*)\s*\[([\s\S]+)\]\s+([\s\S]+)$/);
+                const legacy = normalizedLineNoInit.match(/^tex2D\s+([A-Za-z_]\w*(?:[\|~][A-Za-z_]\w*)*)\s*\[([\s\S]+)\]\s+([\s\S]+)$/);
                 if (!legacy) return null;
                 namesPart = legacy[1].trim();
                 sizeBody = legacy[2].trim();
@@ -1504,6 +1744,9 @@ export class DetailedParser {
         const decl = declaredVars.has(firstAlias) ? firstAlias : `var ${firstAlias}`;
         declaredVars.add(firstAlias);
         out.push(`${decl} = ${programRef}.createTexture2D(${JSON.stringify(uniformName)}, ${sizeExpr}, ${formatExpr}, ${initExpr}, [${filterMinExpr}, ${filterMagExpr}, ${wrapSExpr}, ${wrapTExpr}], ${texUnitExpr});`);
+        out.push(`(${firstAlias} as any).__backupVarName = ${JSON.stringify(firstAlias)};`);
+        out.push(`(${firstAlias} as any).__backupUniformName = ${JSON.stringify(uniformName)};`);
+        out.push(`(${firstAlias} as any).__backupProgram = (${programRef} as any)?.ID ?? (${programRef} as any)?.fragPath ?? ${JSON.stringify(programRef)};`);
         for (const alias of extraAliases) {
             if (!declaredVars.has(alias)) {
                 declaredVars.add(alias);
@@ -1540,9 +1783,30 @@ export class DetailedParser {
         DetailedParser.transpileLastUsedProgramExpr = firstAlias;
         out.push(`${firstAlias}.createVAO().bind();`);
 
-        for (const rawLine of lines) {
+        DetailedParser.transpileProgramOutAliases.set(firstAlias, new Map());
+
+        for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+            const rawLine = lines[lineIndex];
             const trimmed = rawLine.trim();
             if (!trimmed) continue;
+            const outAliasesMatch = trimmed.match(/^out-aliases\s+([A-Za-z_]\w*)\s*:\s*\[(.*)$/);
+            if (outAliasesMatch) {
+                const aliasName = outAliasesMatch[1];
+                const values: string[] = [];
+                const initialTail = (outAliasesMatch[2] || "").trim();
+                if (initialTail && initialTail !== "]") {
+                    values.push(...DetailedParser.splitByWhitespaceTopLevel(initialTail.replace(/\]$/, "")).filter(Boolean));
+                }
+                while (!/\]\s*$/.test(lines[lineIndex] || "")) {
+                    lineIndex++;
+                    if (lineIndex >= lines.length) break;
+                    const aliasLine = lines[lineIndex].trim();
+                    if (!aliasLine || aliasLine === "]") continue;
+                    values.push(...DetailedParser.splitByWhitespaceTopLevel(aliasLine.replace(/\]$/, "")).filter(Boolean));
+                }
+                DetailedParser.transpileProgramOutAliases.get(firstAlias)?.set(aliasName, values);
+                continue;
+            }
             const texLines = DetailedParser.transpileTex2DResourceLine(firstAlias, trimmed, declaredVars);
             if (texLines) {
                 out.push(...texLines);
@@ -1554,7 +1818,10 @@ export class DetailedParser {
     }
 
     static transpileRebindBlock(targetExprRaw: string, lines: string[]): string[] {
-        const targetExpr = DetailedParser.transpileExpr(targetExprRaw.trim());
+        const targetRaw = (targetExprRaw || "").trim();
+        const targetExpr = !targetRaw || /^-\w[\w-]*-$/.test(targetRaw)
+            ? "lastUsedProgram"
+            : DetailedParser.transpileExpr(targetRaw);
         const out: string[] = [];
         const clauses: string[] = [];
         for (const rawLine of lines) {
@@ -1623,20 +1890,27 @@ export class DetailedParser {
 
     static transpileDrawCallBlock(headerRaw: string, lines: string[], declaredVars: Set<string>): string[] {
         const header = headerRaw.trim();
-        const m = header.match(/^(draw[A-Za-z0-9_]*)\s*([\s\S]*?)\s*(?:->\s*\[([\s\S]*?)\])?(?:\s+size\s+(\[[\s\S]*\]))?\s*$/);
+        const m = header.match(/^((?:drawPoints|drawLineStrip|drawLineLoop|drawLines|drawTriangleStrip|drawTriangleFan|drawTriangles))\s*([\s\S]*?)\s*(?:->\s*\[([\s\S]*?)\])?(?:\s+size\s+(\[[\s\S]*\]))?\s*$/);
         if (!m) return [`// TODO(draw-block): ${header}`];
         const drawFn = m[1];
+        const drawMode = DetailedParser.DRAW_BLOCK_MODES[drawFn];
+        if (!drawMode) return [`// TODO(draw-block-unsupported): ${header}`];
         const argsRaw = (m[2] || "").trim();
         const outTexRaw = (m[3] || "").trim();
         const sizeRaw = (m[4] || "").trim();
         const drawArgs = argsRaw ? DetailedParser.splitByWhitespaceTopLevel(argsRaw).map(x => DetailedParser.transpileExpr(x)) : ["0", "6"];
-        if (drawFn === "drawTriangles" && drawArgs.length < 2) {
+        if (drawArgs.length < 2) {
             drawArgs.push("0");
             drawArgs.push("6");
         }
 
         const runtimeLines: string[] = [];
         let framebufferAliases: string[] = [];
+        let backupPathExpr = "undefined";
+        const outputRefs = outTexRaw
+            ? DetailedParser.splitTopLevelByChar(outTexRaw, ",").map(x => x.trim()).filter(Boolean)
+            : [];
+        const uniformSnapshotEntries: string[] = [];
         for (const rawLine of lines) {
             const trimmed = rawLine.trim();
             if (!trimmed) {
@@ -1649,6 +1923,11 @@ export class DetailedParser {
                     .split(/\|=/)
                     .map(x => x.trim())
                     .filter(Boolean);
+                continue;
+            }
+            const backupMeta = trimmed.match(/^backUp\s*:\s*(.+)$/i);
+            if (backupMeta) {
+                backupPathExpr = JSON.stringify(backupMeta[1].trim());
                 continue;
             }
             runtimeLines.push(rawLine);
@@ -1700,16 +1979,22 @@ export class DetailedParser {
                     const uniLn = runtimeLines[i].trim();
                     const tpl = DetailedParser.transpileTemplateBlocks.get(uniLn.split(/\s+/)[0]);
                     if (tpl?.kind === "uniforms") {
-                        out.push(...tpl.lines.flatMap(x => DetailedParser.transpileUniformLine("lastUsedProgram", x)));
+                        for (const tplLine of tpl.lines) {
+                            out.push(...DetailedParser.transpileUniformLine("lastUsedProgram", tplLine));
+                            const snap = DetailedParser.parseUniformSnapshotEntry(tplLine);
+                            if (snap) uniformSnapshotEntries.push(`{ kind: "uniform", name: ${JSON.stringify(snap.name)}, value: ${snap.expr} }`);
+                        }
                     } else {
                         out.push(...DetailedParser.transpileUniformLine("lastUsedProgram", uniLn));
+                        const snap = DetailedParser.parseUniformSnapshotEntry(uniLn);
+                        if (snap) uniformSnapshotEntries.push(`{ kind: "uniform", name: ${JSON.stringify(snap.name)}, value: ${snap.expr} }`);
                     }
                     i++;
                 }
                 i++;
                 continue;
             }
-            if (ln === "rebind {" || /^rebind\s*\{$/.test(ln)) {
+            if (ln === "rebind {" || /^rebind(?:\s+-\w[\w-]*-)?\s*\{$/.test(ln)) {
                 const rb: string[] = [];
                 i++;
                 while (i < runtimeLines.length && runtimeLines[i].trim() !== "}") {
@@ -1723,7 +2008,11 @@ export class DetailedParser {
             const tpl = DetailedParser.transpileTemplateBlocks.get(ln.split(/\s+/)[0]);
             if (tpl) {
                 if (tpl.kind === "uniforms") {
-                    out.push(...tpl.lines.flatMap(x => DetailedParser.transpileUniformLine("lastUsedProgram", x)));
+                    for (const tplLine of tpl.lines) {
+                        out.push(...DetailedParser.transpileUniformLine("lastUsedProgram", tplLine));
+                        const snap = DetailedParser.parseUniformSnapshotEntry(tplLine);
+                        if (snap) uniformSnapshotEntries.push(`{ kind: "uniform", name: ${JSON.stringify(snap.name)}, value: ${snap.expr} }`);
+                    }
                 } else if (tpl.kind === "rebind") {
                     out.push(...DetailedParser.transpileRebindBlock("lastUsedProgram", tpl.lines));
                 } else if (tpl.kind === "framebuffer") {
@@ -1736,10 +2025,13 @@ export class DetailedParser {
             i++;
         }
 
-        if (drawFn === "drawTriangles") {
-            out.push(`lastUsedProgram?.drawArrays("TRIANGLES", ${drawArgs[0] ?? "0"}, ${drawArgs[1] ?? "6"});`);
-        } else {
-            out.push(`(lastUsedProgram as any)?.${drawFn}?.(${drawArgs.join(", ")});`);
+        out.push(`lastUsedProgram?.drawArrays(${JSON.stringify(drawMode)}, ${drawArgs[0] ?? "0"}, ${drawArgs[1] ?? "6"});`);
+        if (backupPathExpr !== "undefined") {
+            const outputEntriesExpr = outputRefs.length
+                ? `[${outputRefs.map(ref => `{ name: ${JSON.stringify(ref)}, tex: ${DetailedParser.transpileExpr(ref)} }`).join(", ")}]`
+                : `[]`;
+            const uniformEntriesExpr = `[${uniformSnapshotEntries.join(", ")}]`;
+            out.push(`void __backupStoreDrawBlock(${JSON.stringify(drawFn)}, ${backupPathExpr}, ${outputEntriesExpr}, ${uniformEntriesExpr}, lastUsedProgram);`);
         }
         return out;
     }
@@ -1754,6 +2046,16 @@ export class DetailedParser {
         if (!t) return t;
         if (t.endsWith(";") || t.endsWith("{") || t.endsWith("}") || t.endsWith(");")) return t;
         return t + ";";
+    }
+
+    static inferBackupDefaultScope(str: string, outPath?: string, backupScopeHint?: string): string {
+        const hinted = String(backupScopeHint || "").trim().replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
+        if (hinted) return hinted;
+        if (/parseTextC23\.shaderdsl\.ts/i.test(str || "")) return "parseTextC23";
+        const m = String(outPath || "").match(/generatedParser([^\\/]+)\.ts$/i);
+        if (!m) return "backups";
+        const suffix = m[1] || "";
+        return `parseText${suffix || ""}`;
     }
 
     static getNodeRequire() {
@@ -1972,6 +2274,16 @@ export class DetailedParser {
             return [`${programRef}.uNum("${shortName}", ${shortSuffix === "f"}, ${shortSuffix === "u"}).set(${expr});`];
         }
 
+        const vectorMatch = line.match(/^(\w+)\s*=\s*(.+?)(?:(i|u|f)?v([2-4]))\s*$/);
+        if (vectorMatch) {
+            const [, name, rawValue, rawScalarSuffix, rawDim] = vectorMatch;
+            const dim = Number.parseInt(rawDim, 10);
+            const scalarSuffix = rawScalarSuffix || "f";
+            return [
+                `${programRef}.uVec("${name}", ${dim}, ${scalarSuffix === "f"}, ${scalarSuffix === "u"}).set(${DetailedParser.transpileUniformVectorExpr(rawValue, dim)});`
+            ];
+        }
+
         const m = line.match(/^(\w+)\s*=\s*(.+?)([iuf])?\s*$/);
         if (!m) return [`// TODO(uniform): ${line}`];
 
@@ -1992,6 +2304,12 @@ export class DetailedParser {
 
         const expr = DetailedParser.transpileExpr(rawValue);
         return [`${programRef}.uNum("${name}", ${isFloat}, ${isUnsigned}).set(${expr});`];
+    }
+
+    static transpileUniformVectorExpr(rawValue: string, dimension: number): string {
+        const expr = DetailedParser.transpileExpr(rawValue);
+        const dim = Math.max(2, Math.min(4, ~~dimension));
+        return `(()=>{ const __src:any = ${expr}; const __arr:any[] = Array.isArray(__src) ? [...__src] : [__src]; if(__arr.length === 1){ return Array(${dim}).fill(__arr[0]); } const __out:any[] = []; for(let __i = 0; __i < ${dim}; __i++){ __out.push(__i < __arr.length ? __arr[__i] : 0); } return __out; })()`;
     }
 
     static transpileProgramObject(aliases: string[], core: string): string[] | null {
@@ -2401,6 +2719,25 @@ export class DetailedParser {
             ];
         }
 
+        const backupStoreMatch = line.match(/^backUp\s+store\s+([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\s*(?:\/([\s\S]*))?$/i);
+        if (backupStoreMatch) {
+            const [, valueRaw, pathRaw] = backupStoreMatch;
+            const pathExpr = pathRaw !== undefined ? JSON.stringify(pathRaw.trim()) : "undefined";
+            return [`void __backupStore(${DetailedParser.transpileExpr(valueRaw)}, ${JSON.stringify(valueRaw)}, ${pathExpr});`];
+        }
+
+        const backupRestoreMatch = line.match(/^backUp\s+restore\s+([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\s+\/([\s\S]+)$/i);
+        if (backupRestoreMatch) {
+            const [, targetRaw, pathRaw] = backupRestoreMatch;
+            const targetExpr = DetailedParser.transpileExpr(targetRaw);
+            return [`${targetExpr} = await __backupRestoreInto(${targetExpr}, ${JSON.stringify(pathRaw.trim())});`];
+        }
+
+        const backupLogMatch = line.match(/^backUp\s+log\s+\/?([\s\S]+)$/i);
+        if (backupLogMatch) {
+            return [`await __backupLog(${JSON.stringify(backupLogMatch[1].trim())});`];
+        }
+
         const depthTestMatch = line.match(/^depthTest\s+(.+)$/);
         if (depthTestMatch) {
             return [`if(lastUsedProgram) lastUsedProgram.isDepthTest = ${DetailedParser.transpileExpr(depthTestMatch[1])};`];
@@ -2456,7 +2793,8 @@ export class DetailedParser {
     static async transpileToFile(
         str: string,
         outPath: string,
-        mainImportsPath?: string
+        mainImportsPath?: string,
+        backupScopeHint?: string
     ): Promise<string> {
         const req = DetailedParser.getNodeRequire();
         const pathMod = req ? req("path") : await import("node:path");
@@ -2491,6 +2829,7 @@ export class DetailedParser {
         const declaredVars = new Set<string>();
         DetailedParser.transpileTexAliasToUniform = new Map<string, string>();
         DetailedParser.transpileTexDeclaredNames = new Set<string>();
+        DetailedParser.transpileProgramOutAliases = new Map<string, Map<string, string[]>>();
         DetailedParser.transpileTemplateBlocks = new Map();
         DetailedParser.transpileFunctionBlocks = new Map();
         let indent = 0;
@@ -2530,6 +2869,7 @@ export class DetailedParser {
                 body.push(...shaderFilterHelper);
             }
             body.push(...DetailedParser.buildRuntimeLetHelperLines());
+            body.push(...DetailedParser.buildBackupRuntimeHelperLines(DetailedParser.inferBackupDefaultScope(str, outPath, backupScopeHint)));
             scaffoldInserted = true;
         };
 
@@ -2686,7 +3026,7 @@ export class DetailedParser {
                 }
             }
 
-            const drawCallStart = line.match(/^(drawTriangles(?:[\s\S]*?))\{$/);
+            const drawCallStart = line.match(/^((?:drawPoints|drawLineStrip|drawLineLoop|drawLines|drawTriangleStrip|drawTriangleFan|drawTriangles)(?:[\s\S]*?))\{$/);
             if (drawCallStart) {
                 blockStack.push({
                     kind: "drawCallBlock",
@@ -2723,11 +3063,12 @@ export class DetailedParser {
                 continue;
             }
 
-            const rebindStart = line.match(/^rebind\s+(.+?)\s*\{$/);
+            const rebindStart = line.match(/^rebind(?:\s+(.+?))?\s*\{$/);
             if (rebindStart) {
+                const rebindTarget = (rebindStart[1] || "").trim() || "lastUsedProgram";
                 blockStack.push({
                     kind: "rebind",
-                    name: rebindStart[1].trim(),
+                    name: rebindTarget,
                     ifDepth: 0,
                     loopCount: 0,
                     buffer: [],
@@ -3031,9 +3372,9 @@ export class DetailedParser {
     /**
      * Método principal para parsear y ejecutar la configuración del script.
      */
-    static async parse(str: string, gl: WebGL2RenderingContext, thiscontext, outPath?: string, mainImportsPath?: string) {
+    static async parse(str: string, gl: WebGL2RenderingContext, thiscontext, outPath?: string, mainImportsPath?: string, backupScopeHint?: string) {
         if (outPath) {
-            return await DetailedParser.transpileToFile(str, outPath, mainImportsPath);
+            return await DetailedParser.transpileToFile(str, outPath, mainImportsPath, backupScopeHint);
         }
         str = await DetailedParser.resolveParseTextImports(str);
         DetailedParser.gctx.gl = gl;
@@ -3132,12 +3473,30 @@ export class DetailedParser {
             }
 
             if (inUniforms) {
-                const m = line.match(/^(\w+)\s*=\s*(.+?)([iuf]?)$/);
-                if (!m) continue;
+                const vectorMatch = line.match(/^(\w+)\s*=\s*(.+?)(?:(i|u|f)?v([2-4]))\s*$/);
+                const scalarMatch = line.match(/^(\w+)\s*=\s*(.+?)([iuf]?)$/);
+                if (!vectorMatch && !scalarMatch) continue;
 
-                let [, name, rawValue, suffix] = m;
-                const value = DetailedParser.parseValue(rawValue);
-                suffix||="f";
+                let name = "";
+                let value: any = undefined;
+                let suffix = "f";
+                let vectorDim = 0;
+                if (vectorMatch) {
+                    name = vectorMatch[1];
+                    value = DetailedParser.parseValue(vectorMatch[2]);
+                    suffix = vectorMatch[3] || "f";
+                    vectorDim = Number.parseInt(vectorMatch[4], 10);
+                    const arr = Array.isArray(value) ? [...value] : [value];
+                    if (arr.length === 1) {
+                        value = Array(Math.max(2, Math.min(4, vectorDim))).fill(arr[0]);
+                    } else {
+                        value = Array.from({ length: Math.max(2, Math.min(4, vectorDim)) }, (_, i) => i < arr.length ? arr[i] : 0);
+                    }
+                } else {
+                    [, name, rawValue, suffix] = scalarMatch as RegExpMatchArray;
+                    value = DetailedParser.parseValue(rawValue);
+                    suffix ||= "f";
+                }
 
                 // console.log("[uniforms] set", name, value, suffix);
 
@@ -3145,8 +3504,8 @@ export class DetailedParser {
                     if (!uniformsProgram) continue;
                     uniformsProgram.use?.();
                     if (Array.isArray(value)) {
-                        uniformsProgram.uVec(name, value.length, value, suffix === "f", suffix === "u")
-                        .set(value);
+                        uniformsProgram.uVec(name, vectorDim || value.length, suffix === "f", suffix === "u")
+                            .set(value);
                     } else {
                         uniformsProgram.uNum(
                             name,

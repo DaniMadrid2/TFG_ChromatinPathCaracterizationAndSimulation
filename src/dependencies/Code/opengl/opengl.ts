@@ -26,9 +26,16 @@ export function __mountGlobalBlocks(
 ) {
     if (!globalBlocks?.length) return;
     globalBlocks.sort((a,b)=> (a.priority-b.priority) || (a.order-b.order));
+    let running = false;
     addFunc(async (dt:any)=>{
-        for (const item of globalBlocks) {
-            await item.fn(dt);
+        if (running) return;
+        running = true;
+        try {
+            for (const item of globalBlocks) {
+                await item.fn(dt);
+            }
+        } finally {
+            running = false;
         }
     });
 }

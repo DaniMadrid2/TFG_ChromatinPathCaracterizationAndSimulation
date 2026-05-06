@@ -26,9 +26,18 @@ export function __mountGlobalBlocks(globalBlocks, addFunc) {
     if (!(globalBlocks === null || globalBlocks === void 0 ? void 0 : globalBlocks.length))
         return;
     globalBlocks.sort((a, b) => (a.priority - b.priority) || (a.order - b.order));
+    let running = false;
     addFunc((dt) => __awaiter(this, void 0, void 0, function* () {
-        for (const item of globalBlocks) {
-            yield item.fn(dt);
+        if (running)
+            return;
+        running = true;
+        try {
+            for (const item of globalBlocks) {
+                yield item.fn(dt);
+            }
+        }
+        finally {
+            running = false;
         }
     }));
 }

@@ -55,9 +55,16 @@ async function generateParserOutput(DetailedParser: any, baseDir: string) {
     const outPath = path.join(outDir, "generatedParserC2.ts");
     const mainImportsPath = path.join(baseDir, "main.ts");
     await fs.mkdir(outDir, { recursive: true });
+    const source = await fs.readFile(parseTextPath, "utf8");
     const text = await resolveShaderDslImports(parseTextPath);
-    await DetailedParser.parse(text, null, {}, outPath, mainImportsPath);
+    await DetailedParser.parse(text, null, {}, outPath, mainImportsPath, inferBackupScope(parseTextPath, source));
     return outPath;
+}
+
+function inferBackupScope(parseTextPath: string, sourceText: string) {
+    if (/parseTextC23\.shaderdsl\.ts/i.test(String(sourceText || ""))) return "parseTextC23";
+    if (/parseTextC23/i.test(path.basename(parseTextPath))) return "parseTextC23";
+    return path.basename(parseTextPath).replace(/\.shaderdsl\.ts$/i, "");
 }
 
 async function resolveShaderDslImports(filePath: string, seen = new Set<string>()) {

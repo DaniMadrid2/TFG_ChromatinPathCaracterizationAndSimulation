@@ -1,5 +1,5 @@
 let {
-  tauMaxVeces=10, tauMinVeces=1
+  tauMaxVeces=3, tauMinVeces=1
   nBins=64
   tauEStar=1.0, dtSample=1.0
   recomputeTau=false, tauDebugFrames=4, c2DrawLogFrames=3
@@ -170,17 +170,21 @@ program tauKrylovInit "tau/03_afp/12_tauKrylovInit" {
 
 // file://./glsl/tau/03_afp/13_tauKrylovStep.frag
 program tauKrylovStep "tau/03_afp/13_tauKrylovStep" {
-   tex2D tauKrylov1 ~ tauKrylov1Tex RES [nBins x tauAdjTauBatch*tauMaxVeces*9] TauFloatTex TexUnit24
-   tex2D tauKrylov2 ~ tauKrylov2Tex RES [nBins x tauAdjTauBatch*tauMaxVeces*9] TauFloatTex TexUnit25
-   tex2D tauKrylov3 ~ tauKrylov3Tex RES [nBins x tauAdjTauBatch*tauMaxVeces*9] TauFloatTex TexUnit26
-   tex2D tauKrylov4 ~ tauKrylov4Tex RES [nBins x tauAdjTauBatch*tauMaxVeces*9] TauFloatTex TexUnit2
-   tex2D tauKrylov5 ~ tauKrylov5Tex RES [nBins x tauAdjTauBatch*tauMaxVeces*9] TauFloatTex TexUnit3
+   out-aliases tauKrylovNext: [
+         tauKrylov1Tex tauKrylov2Tex tauKrylov3Tex tauKrylov4Tex
+         tauKrylov5Tex
+      ]
 }
 
 
 // file://./glsl/tau/03_afp/14_tauArnoldiCoeff.frag
 program tauArnoldiCoeff "tau/03_afp/14_tauArnoldiCoeff" {
    tex2D tauArnoldiCoeff ~ tauArnoldiCoeffTex RES [14 x tauAdjTauBatch*tauMaxVeces*9] TauFloatTex TexUnit22
+   in-tex2D tauKrylov1 ~ tauKrylov1Tex RES [nBins x tauAdjTauBatch*tauMaxVeces*9] TauFloatTex TexUnit24
+   in-tex2D tauKrylov2 ~ tauKrylov2Tex RES [nBins x tauAdjTauBatch*tauMaxVeces*9] TauFloatTex TexUnit25
+   in-tex2D tauKrylov3 ~ tauKrylov3Tex RES [nBins x tauAdjTauBatch*tauMaxVeces*9] TauFloatTex TexUnit26
+   in-tex2D tauKrylov4 ~ tauKrylov4Tex RES [nBins x tauAdjTauBatch*tauMaxVeces*9] TauFloatTex TexUnit2
+   in-tex2D tauKrylov5 ~ tauKrylov5Tex RES [nBins x tauAdjTauBatch*tauMaxVeces*9] TauFloatTex TexUnit3
 }
 
 
@@ -192,25 +196,25 @@ program tauStats "tau/04_stats_mask/1_tauModelStats" {
 
 // file://./glsl/tau/04_stats_mask/2_tauModelMask.frag
 program tauMask "tau/04_stats_mask/2_tauModelMask" {
-   tex2D tauMask ~ tauMaskTex RES [tauMaxVeces x tauMaxVeces] TauFloatTex TexUnit22
+   tex2D tauModelMask ~ tauMaskTex RES [tauMaxVeces x tauMaxVeces] TauFloatTex TexUnit22
 }
 
 
 // file://./glsl/tau/05_filters/1_tauFPProxy.frag
 program tauFP "tau/05_filters/1_tauFPProxy" {
-   tex2D tauFP ~ tauFPTex RES [tauMaxVeces x tauMaxVeces] TauFloatTex TexUnit23
+   tex2D tauFPProxy ~ tauFPTex RES [tauMaxVeces x tauMaxVeces] TauFloatTex TexUnit23
 }
 
 
 // file://./glsl/tau/05_filters/2_tauModelKL.frag
 program tauKL "tau/05_filters/2_tauModelKL" {
-   tex2D tauKL ~ tauKLTex RES [tauMaxVeces x tauMaxVeces] TauFloatTex TexUnit4
+   tex2D tauModelKL ~ tauKLTex RES [tauMaxVeces x tauMaxVeces] TauFloatTex TexUnit4
 }
 
 
 // file://./glsl/tau/05_filters/3_tauModelScore.frag
 program tauScore "tau/05_filters/3_tauModelScore" {
-   tex2D tauScore ~ tauScoreTex RES [tauMaxVeces x tauMaxVeces] TauFloatTex TexUnit5
+   tex2D tauModelScore ~ tauScoreTex RES [tauMaxVeces x tauMaxVeces] TauFloatTex TexUnit5
 }
 
 
@@ -223,14 +227,14 @@ program tauBest "tau/06_select/1_tauBestModel" {
 // file://./glsl/tau/07_fields/1_tauSindyFields.frag
 program tauSindy "tau/07_fields/1_tauSindyFields" {
    tex2D tauSindy ~ tauSindyTex RES [nBins x 1] TauFloatTex TexUnit6
-   tex2D tauSindyInit ~ tauSindyInitTex RES [nBins x 1] TauFloatTex TexUnit7
-   tex2D tauSindyTau1Ref ~ tauSindyTau1RefTex RES [nBins x 1] TauFloatTex TexUnit8
+   new-tex2D tauSindyInit ~ tauSindyInitTex RES [nBins x 1] TauFloatTex TexUnit7
+   new-tex2D tauSindyTau1Ref ~ tauSindyTau1RefTex RES [nBins x 1] TauFloatTex TexUnit8
 }
 
 
 // file://./glsl/tau/07_fields/2_tauFPStationary.frag
 program tauFPStat "tau/07_fields/2_tauFPStationary" {
-   tex2D tauFPStat ~ tauFPStatTex RES [nBins x 1] TauFloatTex TexUnit24
+   tex2D tauFPStationary ~ tauFPStatTex RES [nBins x 1] TauFloatTex TexUnit24
 }
 
 
@@ -276,11 +280,10 @@ tick {
       log "C2 recomputeTau=true -> s1 tauMaxVeces + s2 tauXiLS + s2.5 tauAFP0 + s2.6 tauAFPOpt + s2.7 stats/mask + s2.8 fpProxy + s2.9 modelKL/score + s3 bestModel + s4 sindy + s4.5 fpStationary"
 
       //? phase 01_moments - tauMom - file://./glsl/tau/01_moments/1_tauMaxVeces.frag
-      // Entrada: datosX1 con la seÃ±al 1D original del eje actual.
-      // Salida: tauMom1 = [count,sumD,sumD2,maxAbs] y tauMom2 = [fKM,aKM,fErr,aErr].
-      // Llamadas: 1 por cada recomputeTau. La malla depende de tauMaxVeces, tauMinVeces y nBins.
-      // Efecto de variables: dtSample y tauEStar reescalan los momentos; tauMaxVeces cambia cuÃ¡ntos modelos
-      // (tau,subseq) se generan y nBins cambia la resoluciÃ³n espacial de cada modelo.
+      // Entrada: datosX1 con la señal 1D original del eje actual.
+      // Salida: tauMom1 = [count,sumD,sumD2,maxAbs] y tauMom2 = [fKM,aKM,fErr,aErr]. La malla depende de tauMaxVeces, tauMinVeces y nBins.
+      // Efecto de variables: dtSample y tauEStar reescalan los momentos; tauMaxVeces cambia cuántos modelos
+      // (tau,subseq) se generan y nBins cambia la resolución espacial de cada modelo.
       log "-> phase 01 tauMom" {tauModelStamp}
       use tauMom
       drawTriangles -> [tauMom1, tauMom2] size [nBins,tauMaxVeces*tauMaxVeces] {
@@ -290,17 +293,17 @@ tick {
             {dtSample}f
             {tauEStar}f
          }
-         rebind {
+         rebind -assure- {
             datosX1 -> TexUnit10
          }
          framebuffer: tauMomFBO
+         backUp: /parseTextC23/tauMom/
       }
 
 
       //? phase 02_ls - tauXi - file://./glsl/tau/02_ls/1_tauXiLS.frag
       // Entrada: tauMom1 y tauMom2.
-      // Salida: tauXiF y tauXiS con los coeficientes empaquetados, tauXiMeta = [cost,valid,nUsed,reserved].
-      // Llamadas: 1 por cada recomputeTau. Recorre toda la rejilla (tau,subseq).
+      // Salida: tauXiF y tauXiS con los coeficientes empaquetados, tauXiMeta = [cost,valid,nUsed,reserved]. Recorre toda la rejilla (tau,subseq).
       // Efecto de variables: tauFDegrees y tauSDegrees cambian la librerÃ­a polinÃ³mica; tauMaxVeces,
       // tauMinVeces y nBins cambian el tamaÃ±o del ajuste y cuÃ¡ntos bins usa el LS.
       log "-> phase 02 tauXi" {Array.from(tauMomFBO.readColorAttachment(1,0,0,4,1,TexExamples.RGBAFloat16,4))}
@@ -314,13 +317,13 @@ tick {
             tauMom2 -> TexUnit15
          }
          framebuffer: tauXiFBO
+         backUp: /parseTextC23/tauXi/
       }
 
 
       //? phase 03_afp - tauAFP - file://./glsl/tau/03_afp/1_tauAFP0.frag
       // Entrada: momentos (tauMom1,tauMom2) y semilla LS (tauXiF,tauXiS,tauXiMeta).
       // Salida: tauXiFOpt, tauXiSOpt, tauXiMetaOpt.
-      // Llamadas: 1 por cada recomputeTau.
       // Efecto de variables: afpLrF, afpLrS, afpL1F, afpL1S y afpIters controlan el descenso inicial
       // con regularizaciÃ³n L1; subir iteraciones o learning rates cambia cuÃ¡nto se aparta de la soluciÃ³n LS.
       log "-> phase 03 tauAFP" {Array.from(tauXiFBO.readColorAttachment(2,0,0,4,1,TexExamples.RGBAFloat16,4))}
@@ -339,6 +342,7 @@ tick {
             tauXiF, tauXiS -> TexUnit12, 13
             tauXiMeta -> TexUnit16
          }
+         backUp: /parseTextC23/tauAFP/
       }
 
 
@@ -348,19 +352,20 @@ tick {
       // Llamadas: multipaso dentro del while. Cada iteraci?n hace coste real por v?rtice + paso Nelder-Mead.
       // Efecto de variables: Nelder-Mead ya se propaga con el coste del shader adjoint, no con uno simplificado fuera del bucle.
       use tauNMSimplexInit
-      uniforms tauNMSimplexInit {
-         tauMax = {tauMaxVeces}i
-         tauMin = {tauMinVeces}i
-         {nelderShift}f
+      drawTriangles -> [tauNMXiF0, tauNMXiS0, tauNMMeta0] size [tauMaxVeces,tauMaxVeces*9] {
+         uniforms {
+            tauMax = {tauMaxVeces}i
+            tauMin = {tauMinVeces}i
+            {nelderShift}f
+         }
+         rebind {
+            tauXiFOpt -> TexUnit18
+            tauXiSOpt -> TexUnit19
+            tauXiMetaOpt -> TexUnit20
+         }
+         framebuffer: tauNMInitFBO
+         backUp: /parseTextC23/tauNMInit/
       }
-      rebind tauNMSimplexInit {
-         tauXiFOpt -> TexUnit18
-         tauXiSOpt -> TexUnit19
-         tauXiMetaOpt -> TexUnit20
-      }
-      framebuffer tauNMInitFBO [tauNMXiF0, tauNMXiS0, tauNMMeta0]
-      viewport [0,0,tauMaxVeces,tauMaxVeces*9]
-      drawTriangles
 
       let tauNMReadF=tauNMXiF0
       let tauNMReadS=tauNMXiS0
@@ -384,207 +389,247 @@ tick {
                var tauAdjCount={Math.min(Math.max(1,~~tauAdjTauBatch), tauMaxVeces-tauAdjX0)}
 
                use tauAdjFields
-               uniforms tauAdjFields {
-                  tauMax = {tauMaxVeces}i
-                  tauMin = {tauMinVeces}i
-                  {nBins}i
-                  tauBatchOffset = {tauAdjX0}i
-                  tauBatchCount = {tauAdjCount}i
+               drawTriangles -> [tauAdjFieldsTex] size [nBins,tauAdjCount*tauMaxVeces*9] {
+                  uniforms {
+                     tauMax = {tauMaxVeces}i
+                     tauMin = {tauMinVeces}i
+                     {nBins}i
+                     tauBatchOffset = {tauAdjX0}i
+                     tauBatchCount = {tauAdjCount}i
+                  }
+                  rebind {
+                     tauMom1 -> TexUnit14
+                     tauNMXiFRead -> TexUnit4
+                     tauNMXiSRead -> TexUnit5
+                     tauNMMetaRead -> TexUnit6
+                  }
+                  framebuffer: tauAdjFieldsFBO
+                  backUp: /parseTextC23/tauAdjFields/
                }
-               rebind tauAdjFields {
-                  tauMom1 -> TexUnit14
-                  tauNMXiFRead -> TexUnit4
-                  tauNMXiSRead -> TexUnit5
-                  tauNMMetaRead -> TexUnit6
-               }
-               framebuffer tauAdjFieldsFBO [tauAdjFieldsTex]
-               viewport [0,0,nBins,tauAdjCount*tauMaxVeces*9]
-               drawTriangles
 
                use tauAdjDiffOps
-               uniforms tauAdjDiffOps {
-                  tauMax = {tauMaxVeces}i
-                  tauMin = {tauMinVeces}i
-                  {nBins}i
-                  tauBatchOffset = {tauAdjX0}i
-                  tauBatchCount = {tauAdjCount}i
+               drawTriangles -> [tauAdjDiffOpsTex] size [nBins*nBins,tauAdjCount*tauMaxVeces*9] {
+                  uniforms {
+                     tauMax = {tauMaxVeces}i
+                     tauMin = {tauMinVeces}i
+                     {nBins}i
+                     tauBatchOffset = {tauAdjX0}i
+                     tauBatchCount = {tauAdjCount}i
+                  }
+                  rebind {
+                     tauMom1 -> TexUnit14
+                  }
+                  framebuffer: tauAdjDiffOpsFBO
+                  backUp: /parseTextC23/tauAdjDiffOps/
                }
-               rebind tauAdjDiffOps {
-                  tauMom1 -> TexUnit14
-               }
-               framebuffer tauAdjDiffOpsFBO [tauAdjDiffOpsTex]
-               viewport [0,0,nBins*nBins,tauAdjCount*tauMaxVeces*9]
-               drawTriangles
 
                use tauAdjOperator
-               uniforms tauAdjOperator {
-                  tauMax = {tauMaxVeces}i
-                  tauMin = {tauMinVeces}i
-                  {nBins}i
-                  tauBatchOffset = {tauAdjX0}i
-                  tauBatchCount = {tauAdjCount}i
+               drawTriangles -> [tauAdjOperatorTex] size [nBins*nBins,tauAdjCount*tauMaxVeces*9] {
+                  uniforms {
+                     tauMax = {tauMaxVeces}i
+                     tauMin = {tauMinVeces}i
+                     {nBins}i
+                     tauBatchOffset = {tauAdjX0}i
+                     tauBatchCount = {tauAdjCount}i
+                  }
+                  rebind {
+                     tauAdjFields -> TexUnit28
+                     tauAdjDiffOps -> TexUnit29
+                  }
+                  framebuffer: tauAdjOperatorFBO
+                  backUp: /parseTextC23/tauAdjOperator/
                }
-               rebind tauAdjOperator {
-                  tauAdjFields -> TexUnit28
-                  tauAdjDiffOps -> TexUnit29
-               }
-               framebuffer tauAdjOperatorFBO [tauAdjOperatorTex]
-               viewport [0,0,nBins*nBins,tauAdjCount*tauMaxVeces*9]
-               drawTriangles
 
-               // separador para evitar que el parser anide el siguiente bloque dentro del draw anterior
                use tauKrylovInit
-               uniforms tauKrylovInit {
-                  tauMax = {tauMaxVeces}i
-                  tauMin = {tauMinVeces}i
-                  {nBins}i
-                  tauBatchOffset = {tauAdjX0}i
-                  tauBatchCount = {tauAdjCount}i
+               drawTriangles -> [tauKrylov0Tex] size [nBins,tauAdjCount*tauMaxVeces*9] {
+                  uniforms {
+                     tauMax = {tauMaxVeces}i
+                     tauMin = {tauMinVeces}i
+                     {nBins}i
+                     tauBatchOffset = {tauAdjX0}i
+                     tauBatchCount = {tauAdjCount}i
+                  }
+                  rebind {
+                     tauAdjFields -> TexUnit28
+                  }
+                  framebuffer: tauKrylov0FBO
+                  backUp: /parseTextC23/tauKrylovInit/
                }
-               rebind tauKrylovInit {
-                  tauAdjFields -> TexUnit28
-               }
-               framebuffer tauKrylov0FBO [tauKrylov0Tex]
-               viewport [0,0,nBins,tauAdjCount*tauMaxVeces*9]
-               drawTriangles
 
                use tauKrylovStep
-               uniforms tauKrylovStep {
-                  tauMax = {tauMaxVeces}i
-                  tauMin = {tauMinVeces}i
-                  {nBins}i
-                  tauBatchOffset = {tauAdjX0}i
-                  tauBatchCount = {tauAdjCount}i
+               drawTriangles -> [tauKrylov1Tex] size [nBins,tauAdjCount*tauMaxVeces*9] {
+                  uniforms {
+                     tauMax = {tauMaxVeces}i
+                     tauMin = {tauMinVeces}i
+                     {nBins}i
+                     tauBatchOffset = {tauAdjX0}i
+                     tauBatchCount = {tauAdjCount}i
+                  }
+                  rebind {
+                     tauAdjOperator -> TexUnit30
+                     tauKrylovPrev -> TexUnit23
+                  }
+                  framebuffer: tauKrylov1FBO
+                  backUp: /parseTextC23/tauKrylovStep/
                }
-               rebind tauKrylovStep {
-                  tauAdjOperator -> TexUnit30
-                  tauKrylovPrev -> TexUnit23
-               }
-               framebuffer tauKrylov1FBO [tauKrylov1Tex]
-               viewport [0,0,nBins,tauAdjCount*tauMaxVeces*9]
-               drawTriangles
 
-               rebind tauKrylovStep {
-                  tauAdjOperator -> TexUnit30
-                  tauKrylovPrev -> TexUnit24
+               drawTriangles -> [tauKrylov2Tex] size [nBins,tauAdjCount*tauMaxVeces*9] {
+                  uniforms {
+                     tauMax = {tauMaxVeces}i
+                     tauMin = {tauMinVeces}i
+                     {nBins}i
+                     tauBatchOffset = {tauAdjX0}i
+                     tauBatchCount = {tauAdjCount}i
+                  }
+                  rebind {
+                     tauAdjOperator -> TexUnit30
+                     tauKrylovPrev -> TexUnit24
+                  }
+                  framebuffer: tauKrylov2FBO
+                  backUp: /parseTextC23/tauKrylovStep/
                }
-               framebuffer tauKrylov2FBO [tauKrylov2Tex]
-               viewport [0,0,nBins,tauAdjCount*tauMaxVeces*9]
-               drawTriangles
 
-               rebind tauKrylovStep {
-                  tauAdjOperator -> TexUnit30
-                  tauKrylovPrev -> TexUnit25
+               drawTriangles -> [tauKrylov3Tex] size [nBins,tauAdjCount*tauMaxVeces*9] {
+                  uniforms {
+                     tauMax = {tauMaxVeces}i
+                     tauMin = {tauMinVeces}i
+                     {nBins}i
+                     tauBatchOffset = {tauAdjX0}i
+                     tauBatchCount = {tauAdjCount}i
+                  }
+                  rebind {
+                     tauAdjOperator -> TexUnit30
+                     tauKrylovPrev -> TexUnit25
+                  }
+                  framebuffer: tauKrylov3FBO
+                  backUp: /parseTextC23/tauKrylovStep/
                }
-               framebuffer tauKrylov3FBO [tauKrylov3Tex]
-               viewport [0,0,nBins,tauAdjCount*tauMaxVeces*9]
-               drawTriangles
 
-               rebind tauKrylovStep {
-                  tauAdjOperator -> TexUnit30
-                  tauKrylovPrev -> TexUnit26
+               drawTriangles -> [tauKrylov4Tex] size [nBins,tauAdjCount*tauMaxVeces*9] {
+                  uniforms {
+                     tauMax = {tauMaxVeces}i
+                     tauMin = {tauMinVeces}i
+                     {nBins}i
+                     tauBatchOffset = {tauAdjX0}i
+                     tauBatchCount = {tauAdjCount}i
+                  }
+                  rebind {
+                     tauAdjOperator -> TexUnit30
+                     tauKrylovPrev -> TexUnit26
+                  }
+                  framebuffer: tauKrylov4FBO
+                  backUp: /parseTextC23/tauKrylovStep/
                }
-               framebuffer tauKrylov4FBO [tauKrylov4Tex]
-               viewport [0,0,nBins,tauAdjCount*tauMaxVeces*9]
-               drawTriangles
 
-               rebind tauKrylovStep {
-                  tauAdjOperator -> TexUnit30
-                  tauKrylovPrev -> TexUnit2
+               drawTriangles -> [tauKrylov5Tex] size [nBins,tauAdjCount*tauMaxVeces*9] {
+                  uniforms {
+                     tauMax = {tauMaxVeces}i
+                     tauMin = {tauMinVeces}i
+                     {nBins}i
+                     tauBatchOffset = {tauAdjX0}i
+                     tauBatchCount = {tauAdjCount}i
+                  }
+                  rebind {
+                     tauAdjOperator -> TexUnit30
+                     tauKrylovPrev -> TexUnit2
+                  }
+                  framebuffer: tauKrylov5FBO
+                  backUp: /parseTextC23/tauKrylovStep/
                }
-               framebuffer tauKrylov5FBO [tauKrylov5Tex]
-               viewport [0,0,nBins,tauAdjCount*tauMaxVeces*9]
-               drawTriangles
 
                use tauArnoldiCoeff
-               uniforms tauArnoldiCoeff {
-                  tauMax = {tauMaxVeces}i
-                  tauMin = {tauMinVeces}i
-                  {nBins}i
-                  tauBatchOffset = {tauAdjX0}i
-                  tauBatchCount = {tauAdjCount}i
-                  tauArnoldiReorth = {Math.max(1, Math.min(4, ~~tauArnoldiReorth))}i
-                  tauArnoldiResidTol = {Math.max(1e-4, Math.min(0.9, tauArnoldiResidTol))}f
+               drawTriangles -> [tauArnoldiCoeffTex] size [14,tauAdjCount*tauMaxVeces*9] {
+                  uniforms {
+                     tauMax = {tauMaxVeces}i
+                     tauMin = {tauMinVeces}i
+                     {nBins}i
+                     tauBatchOffset = {tauAdjX0}i
+                     tauBatchCount = {tauAdjCount}i
+                     tauArnoldiReorth = {Math.max(1, Math.min(4, ~~tauArnoldiReorth))}i
+                     tauArnoldiResidTol = {Math.max(1e-4, Math.min(0.9, tauArnoldiResidTol))}f
+                  }
+                  rebind {
+                     tauKrylov0 -> TexUnit23
+                     tauKrylov1 -> TexUnit24
+                     tauKrylov2 -> TexUnit25
+                     tauKrylov3 -> TexUnit26
+                     tauKrylov4 -> TexUnit2
+                     tauKrylov5 -> TexUnit3
+                  }
+                  framebuffer: tauArnoldiCoeffFBO
+                  backUp: /parseTextC23/tauArnoldiCoeff/
                }
-               rebind tauArnoldiCoeff {
-                  tauKrylov0 -> TexUnit23
-                  tauKrylov1 -> TexUnit24
-                  tauKrylov2 -> TexUnit25
-                  tauKrylov3 -> TexUnit26
-                  tauKrylov4 -> TexUnit2
-                  tauKrylov5 -> TexUnit3
-               }
-               framebuffer tauArnoldiCoeffFBO [tauArnoldiCoeffTex]
-               viewport [0,0,14,tauAdjCount*tauMaxVeces*9]
-               drawTriangles
 
                use tauAdjExp
-               uniforms tauAdjExp {
-                  tauMax = {tauMaxVeces}i
-                  tauMin = {tauMinVeces}i
-                  {nBins}i
-                  tauBatchOffset = {tauAdjX0}i
-                  tauBatchCount = {tauAdjCount}i
-                  adjointTauScale = {tauEStar * dtSample}f
-                  tauExpTerms = {Math.max(1, Math.min(4, ~~tauExpTerms))}i
+               drawTriangles -> [tauAdjExpTex] size [nBins,tauAdjCount*tauMaxVeces*9] {
+                  uniforms {
+                     tauMax = {tauMaxVeces}i
+                     tauMin = {tauMinVeces}i
+                     {nBins}i
+                     tauBatchOffset = {tauAdjX0}i
+                     tauBatchCount = {tauAdjCount}i
+                     adjointTauScale = {tauEStar * dtSample}f
+                     tauExpTerms = {Math.max(1, Math.min(4, ~~tauExpTerms))}i
+                  }
+                  rebind {
+                     tauKrylov0 -> TexUnit23
+                     tauKrylov1 -> TexUnit24
+                     tauKrylov2 -> TexUnit25
+                     tauKrylov3 -> TexUnit26
+                     tauKrylov4 -> TexUnit2
+                     tauKrylov5 -> TexUnit3
+                     tauArnoldiCoeff -> TexUnit22
+                  }
+                  framebuffer: tauAdjExpFBO
+                  backUp: /parseTextC23/tauAdjExp/
                }
-               rebind tauAdjExp {
-                  tauKrylov0 -> TexUnit23
-                  tauKrylov1 -> TexUnit24
-                  tauKrylov2 -> TexUnit25
-                  tauKrylov3 -> TexUnit26
-                  tauKrylov4 -> TexUnit2
-                  tauKrylov5 -> TexUnit3
-                  tauArnoldiCoeff -> TexUnit22
-               }
-               framebuffer tauAdjExpFBO [tauAdjExpTex]
-               viewport [0,0,nBins,tauAdjCount*tauMaxVeces*9]
-               drawTriangles
 
                use tauSteadyFP
-               uniforms tauSteadyFP {
-                  tauMax = {tauMaxVeces}i
-                  tauMin = {tauMinVeces}i
-                  {nBins}i
-                  tauBatchOffset = {tauAdjX0}i
-                  tauBatchCount = {tauAdjCount}i
-                  {fpLogSpanMax}f
-                  steadyFPGaugeMode = {(steadyFPSolverMode==="fourier_zero_mode_like")?1:0}i
+               drawTriangles -> [tauSteadyFPTex] size [nBins,tauAdjCount*tauMaxVeces*9] {
+                  uniforms {
+                     tauMax = {tauMaxVeces}i
+                     tauMin = {tauMinVeces}i
+                     {nBins}i
+                     tauBatchOffset = {tauAdjX0}i
+                     tauBatchCount = {tauAdjCount}i
+                     {fpLogSpanMax}f
+                     steadyFPGaugeMode = {(steadyFPSolverMode==="fourier_zero_mode_like")?1:0}i
+                  }
+                  rebind {
+                     tauMom1 -> TexUnit14
+                     tauAdjFields -> TexUnit28
+                  }
+                  framebuffer: tauSteadyFPFBO
+                  backUp: /parseTextC23/tauSteadyFP/
                }
-               rebind tauSteadyFP {
-                  tauMom1 -> TexUnit14
-                  tauAdjFields -> TexUnit28
-               }
-               framebuffer tauSteadyFPFBO [tauSteadyFPTex]
-               viewport [0,0,nBins,tauAdjCount*tauMaxVeces*9]
-               drawTriangles
 
                use tauAdjCost
-               uniforms tauAdjCost {
-                  tauMax = {tauMaxVeces}i
-                  tauMin = {tauMinVeces}i
-                  {nBins}i
-                  tauBatchOffset = {tauAdjX0}i
-                  tauBatchCount = {tauAdjCount}i
-                  l2F = {afpOptL2F}f
-                  l2S = {afpOptL2S}f
-                  adjointTauScale = {tauEStar * dtSample}f
-                  useAdjointAFP = {!!useAdjointAFP?1:0}i
-                  klReg = {tauKLReg}f
+               drawTriangles -> [tauNMCost] size [tauAdjCount,tauMaxVeces*9] {
+                  uniforms {
+                     tauMax = {tauMaxVeces}i
+                     tauMin = {tauMinVeces}i
+                     {nBins}i
+                     tauBatchOffset = {tauAdjX0}i
+                     tauBatchCount = {tauAdjCount}i
+                     l2F = {afpOptL2F}f
+                     l2S = {afpOptL2S}f
+                     adjointTauScale = {tauEStar * dtSample}f
+                     useAdjointAFP = {!!useAdjointAFP?1:0}i
+                     klReg = {tauKLReg}f
+                  }
+                  rebind {
+                     tauMom1 -> TexUnit14
+                     tauMom2 -> TexUnit15
+                     tauNMXiFRead -> TexUnit4
+                     tauNMXiSRead -> TexUnit5
+                     tauNMMetaRead -> TexUnit6
+                     tauAdjFields -> TexUnit28
+                     tauSteadyFP -> TexUnit27
+                     tauAdjExp -> TexUnit31
+                  }
+                  framebuffer: tauNMCostFBO
+                  backUp: /parseTextC23/tauAdjCost/
                }
-               rebind tauAdjCost {
-                  tauMom1 -> TexUnit14
-                  tauMom2 -> TexUnit15
-                  tauNMXiFRead -> TexUnit4
-                  tauNMXiSRead -> TexUnit5
-                  tauNMMetaRead -> TexUnit6
-                  tauAdjFields -> TexUnit28
-                  tauSteadyFP -> TexUnit27
-                  tauAdjExp -> TexUnit31
-               }
-               framebuffer tauNMCostFBO [tauNMCost]
-               viewport [tauAdjX0,0,tauAdjCount,tauMaxVeces*9]
-               drawTriangles
 
                tauAdjX0+={tauAdjCount}
             }
@@ -628,119 +673,157 @@ tick {
             let tauAdjCount1={Math.min(Math.max(1,~~tauAdjTauBatch), tauMaxVeces-tauAdjX1)}
 
             use tauAdjFields
-            uniforms tauAdjFields {
-               tauMax = {tauMaxVeces}i
-               tauMin = {tauMinVeces}i
-               {nBins}i
-               tauBatchOffset = {tauAdjX1}i
-               tauBatchCount = {tauAdjCount1}i
+            drawTriangles -> [tauAdjFieldsTex] size [nBins,tauAdjCount1*tauMaxVeces*9] {
+               uniforms {
+                  tauMax = {tauMaxVeces}i
+                  tauMin = {tauMinVeces}i
+                  {nBins}i
+                  tauBatchOffset = {tauAdjX1}i
+                  tauBatchCount = {tauAdjCount1}i
+               }
+               rebind {
+                  tauMom1 -> TexUnit14
+                  tauNMXiFRead -> TexUnit4
+                  tauNMXiSRead -> TexUnit5
+                  tauNMMetaRead -> TexUnit6
+               }
+               framebuffer: tauAdjFieldsFBO
+               backUp: /parseTextC23/tauAdjFields/
             }
-            rebind tauAdjFields {
-               tauMom1 -> TexUnit14
-               tauNMXiFRead -> TexUnit4
-               tauNMXiSRead -> TexUnit5
-               tauNMMetaRead -> TexUnit6
-            }
-            framebuffer tauAdjFieldsFBO [tauAdjFieldsTex]
-            viewport [0,0,nBins,tauAdjCount1*tauMaxVeces*9]
-            drawTriangles
 
             use tauAdjDiffOps
-            uniforms tauAdjDiffOps {
-               tauMax = {tauMaxVeces}i
-               tauMin = {tauMinVeces}i
-               {nBins}i
-               tauBatchOffset = {tauAdjX1}i
-               tauBatchCount = {tauAdjCount1}i
+            drawTriangles -> [tauAdjDiffOpsTex] size [nBins*nBins,tauAdjCount1*tauMaxVeces*9] {
+               uniforms {
+                  tauMax = {tauMaxVeces}i
+                  tauMin = {tauMinVeces}i
+                  {nBins}i
+                  tauBatchOffset = {tauAdjX1}i
+                  tauBatchCount = {tauAdjCount1}i
+               }
+               rebind {
+                  tauMom1 -> TexUnit14
+               }
+               framebuffer: tauAdjDiffOpsFBO
+               backUp: /parseTextC23/tauAdjDiffOps/
             }
-            rebind tauAdjDiffOps {
-               tauMom1 -> TexUnit14
-            }
-            framebuffer tauAdjDiffOpsFBO [tauAdjDiffOpsTex]
-            viewport [0,0,nBins*nBins,tauAdjCount1*tauMaxVeces*9]
-            drawTriangles
 
             use tauAdjOperator
-            uniforms tauAdjOperator {
-               tauMax = {tauMaxVeces}i
-               tauMin = {tauMinVeces}i
-               {nBins}i
-               tauBatchOffset = {tauAdjX1}i
-               tauBatchCount = {tauAdjCount1}i
+            drawTriangles -> [tauAdjOperatorTex] size [nBins*nBins,tauAdjCount1*tauMaxVeces*9] {
+               uniforms {
+                  tauMax = {tauMaxVeces}i
+                  tauMin = {tauMinVeces}i
+                  {nBins}i
+                  tauBatchOffset = {tauAdjX1}i
+                  tauBatchCount = {tauAdjCount1}i
+               }
+               rebind {
+                  tauAdjFields -> TexUnit28
+                  tauAdjDiffOps -> TexUnit29
+               }
+               framebuffer: tauAdjOperatorFBO
+               backUp: /parseTextC23/tauAdjOperator/
             }
-            rebind tauAdjOperator {
-               tauAdjFields -> TexUnit28
-               tauAdjDiffOps -> TexUnit29
-            }
-            framebuffer tauAdjOperatorFBO [tauAdjOperatorTex]
-            viewport [0,0,nBins*nBins,tauAdjCount1*tauMaxVeces*9]
-            lastUsedProgram?.drawArrays("TRIANGLES", 0, 6)
 
             use tauKrylovInit
-               uniforms tauKrylovInit {
+            drawTriangles -> [tauKrylov0Tex] size [nBins,tauAdjCount1*tauMaxVeces*9] {
+               uniforms {
                   tauMax = {tauMaxVeces}i
                   tauMin = {tauMinVeces}i
                   {nBins}i
                   tauBatchOffset = {tauAdjX1}i
                   tauBatchCount = {tauAdjCount1}i
                }
-               rebind tauKrylovInit {
+               rebind {
                   tauAdjFields -> TexUnit28
                }
-               framebuffer tauKrylov0FBO [tauKrylov0Tex]
-               viewport [0,0,nBins,tauAdjCount1*tauMaxVeces*9]
-               drawTriangles
+               framebuffer: tauKrylov0FBO
+               backUp: /parseTextC23/tauKrylovInit/
+            }
 
-               use tauKrylovStep
-               uniforms tauKrylovStep {
+            use tauKrylovStep
+            drawTriangles -> [tauKrylov1Tex] size [nBins,tauAdjCount1*tauMaxVeces*9] {
+               uniforms {
                   tauMax = {tauMaxVeces}i
                   tauMin = {tauMinVeces}i
                   {nBins}i
                   tauBatchOffset = {tauAdjX1}i
                   tauBatchCount = {tauAdjCount1}i
                }
-               rebind tauKrylovStep {
+               rebind {
                   tauAdjOperator -> TexUnit30
                   tauKrylovPrev -> TexUnit23
                }
-               framebuffer tauKrylov1FBO [tauKrylov1Tex]
-               viewport [0,0,nBins,tauAdjCount1*tauMaxVeces*9]
-               drawTriangles
+               framebuffer: tauKrylov1FBO
+               backUp: /parseTextC23/tauKrylovStep/
+            }
 
-               rebind tauKrylovStep {
+            drawTriangles -> [tauKrylov2Tex] size [nBins,tauAdjCount1*tauMaxVeces*9] {
+               uniforms {
+                  tauMax = {tauMaxVeces}i
+                  tauMin = {tauMinVeces}i
+                  {nBins}i
+                  tauBatchOffset = {tauAdjX1}i
+                  tauBatchCount = {tauAdjCount1}i
+               }
+               rebind {
                   tauAdjOperator -> TexUnit30
                   tauKrylovPrev -> TexUnit24
                }
-               framebuffer tauKrylov2FBO [tauKrylov2Tex]
-               viewport [0,0,nBins,tauAdjCount1*tauMaxVeces*9]
-               drawTriangles
+               framebuffer: tauKrylov2FBO
+               backUp: /parseTextC23/tauKrylovStep/
+            }
 
-               rebind tauKrylovStep {
+            drawTriangles -> [tauKrylov3Tex] size [nBins,tauAdjCount1*tauMaxVeces*9] {
+               uniforms {
+                  tauMax = {tauMaxVeces}i
+                  tauMin = {tauMinVeces}i
+                  {nBins}i
+                  tauBatchOffset = {tauAdjX1}i
+                  tauBatchCount = {tauAdjCount1}i
+               }
+               rebind {
                   tauAdjOperator -> TexUnit30
                   tauKrylovPrev -> TexUnit25
                }
-               framebuffer tauKrylov3FBO [tauKrylov3Tex]
-               viewport [0,0,nBins,tauAdjCount1*tauMaxVeces*9]
-               drawTriangles
+               framebuffer: tauKrylov3FBO
+               backUp: /parseTextC23/tauKrylovStep/
+            }
 
-               rebind tauKrylovStep {
+            drawTriangles -> [tauKrylov4Tex] size [nBins,tauAdjCount1*tauMaxVeces*9] {
+               uniforms {
+                  tauMax = {tauMaxVeces}i
+                  tauMin = {tauMinVeces}i
+                  {nBins}i
+                  tauBatchOffset = {tauAdjX1}i
+                  tauBatchCount = {tauAdjCount1}i
+               }
+               rebind {
                   tauAdjOperator -> TexUnit30
                   tauKrylovPrev -> TexUnit26
                }
-               framebuffer tauKrylov4FBO [tauKrylov4Tex]
-               viewport [0,0,nBins,tauAdjCount1*tauMaxVeces*9]
-               drawTriangles
+               framebuffer: tauKrylov4FBO
+               backUp: /parseTextC23/tauKrylovStep/
+            }
 
-               rebind tauKrylovStep {
+            drawTriangles -> [tauKrylov5Tex] size [nBins,tauAdjCount1*tauMaxVeces*9] {
+               uniforms {
+                  tauMax = {tauMaxVeces}i
+                  tauMin = {tauMinVeces}i
+                  {nBins}i
+                  tauBatchOffset = {tauAdjX1}i
+                  tauBatchCount = {tauAdjCount1}i
+               }
+               rebind {
                   tauAdjOperator -> TexUnit30
                   tauKrylovPrev -> TexUnit2
                }
-               framebuffer tauKrylov5FBO [tauKrylov5Tex]
-               viewport [0,0,nBins,tauAdjCount1*tauMaxVeces*9]
-               drawTriangles
+               framebuffer: tauKrylov5FBO
+               backUp: /parseTextC23/tauKrylovStep/
+            }
 
-               use tauArnoldiCoeff
-               uniforms tauArnoldiCoeff {
+            use tauArnoldiCoeff
+            drawTriangles -> [tauArnoldiCoeffTex] size [14,tauAdjCount1*tauMaxVeces*9] {
+               uniforms {
                   tauMax = {tauMaxVeces}i
                   tauMin = {tauMinVeces}i
                   {nBins}i
@@ -749,7 +832,7 @@ tick {
                   tauArnoldiReorth = {Math.max(1, Math.min(4, ~~tauArnoldiReorth))}i
                   tauArnoldiResidTol = {Math.max(1e-4, Math.min(0.9, tauArnoldiResidTol))}f
                }
-               rebind tauArnoldiCoeff {
+               rebind {
                   tauKrylov0 -> TexUnit23
                   tauKrylov1 -> TexUnit24
                   tauKrylov2 -> TexUnit25
@@ -757,12 +840,13 @@ tick {
                   tauKrylov4 -> TexUnit2
                   tauKrylov5 -> TexUnit3
                }
-               framebuffer tauArnoldiCoeffFBO [tauArnoldiCoeffTex]
-               viewport [0,0,14,tauAdjCount1*tauMaxVeces*9]
-               drawTriangles
+               framebuffer: tauArnoldiCoeffFBO
+               backUp: /parseTextC23/tauArnoldiCoeff/
+            }
 
-               use tauAdjExp
-               uniforms tauAdjExp {
+            use tauAdjExp
+            drawTriangles -> [tauAdjExpTex] size [nBins,tauAdjCount1*tauMaxVeces*9] {
+               uniforms {
                   tauMax = {tauMaxVeces}i
                   tauMin = {tauMinVeces}i
                   {nBins}i
@@ -771,7 +855,7 @@ tick {
                   adjointTauScale = {tauEStar * dtSample}f
                   tauExpTerms = {Math.max(1, Math.min(4, ~~tauExpTerms))}i
                }
-               rebind tauAdjExp {
+               rebind {
                   tauKrylov0 -> TexUnit23
                   tauKrylov1 -> TexUnit24
                   tauKrylov2 -> TexUnit25
@@ -780,12 +864,13 @@ tick {
                   tauKrylov5 -> TexUnit3
                   tauArnoldiCoeff -> TexUnit22
                }
-               framebuffer tauAdjExpFBO [tauAdjExpTex]
-               viewport [0,0,nBins,tauAdjCount1*tauMaxVeces*9]
-               drawTriangles
+               framebuffer: tauAdjExpFBO
+               backUp: /parseTextC23/tauAdjExp/
+            }
 
-               use tauSteadyFP
-               uniforms tauSteadyFP {
+            use tauSteadyFP
+            drawTriangles -> [tauSteadyFPTex] size [nBins,tauAdjCount1*tauMaxVeces*9] {
+               uniforms {
                   tauMax = {tauMaxVeces}i
                   tauMin = {tauMinVeces}i
                   {nBins}i
@@ -794,16 +879,17 @@ tick {
                   {fpLogSpanMax}f
                   steadyFPGaugeMode = {(steadyFPSolverMode==="fourier_zero_mode_like")?1:0}i
                }
-               rebind tauSteadyFP {
+               rebind {
                   tauMom1 -> TexUnit14
                   tauAdjFields -> TexUnit28
                }
-               framebuffer tauSteadyFPFBO [tauSteadyFPTex]
-               viewport [0,0,nBins,tauAdjCount1*tauMaxVeces*9]
-               drawTriangles
+               framebuffer: tauSteadyFPFBO
+               backUp: /parseTextC23/tauSteadyFP/
+            }
 
-               use tauAdjCost
-               uniforms tauAdjCost {
+            use tauAdjCost
+            drawTriangles -> [tauNMCost] size [tauAdjCount1,tauMaxVeces*9] {
+               uniforms {
                   tauMax = {tauMaxVeces}i
                   tauMin = {tauMinVeces}i
                   {nBins}i
@@ -815,7 +901,7 @@ tick {
                   useAdjointAFP = {!!useAdjointAFP?1:0}i
                   klReg = {tauKLReg}f
                }
-               rebind tauAdjCost {
+               rebind {
                   tauMom1 -> TexUnit14
                   tauMom2 -> TexUnit15
                   tauNMXiFRead -> TexUnit4
@@ -825,29 +911,30 @@ tick {
                   tauSteadyFP -> TexUnit27
                   tauAdjExp -> TexUnit31
                }
-               framebuffer tauNMCostFBO [tauNMCost]
-               viewport [tauAdjX1,0,tauAdjCount1,tauMaxVeces*9]
-               drawTriangles
+               framebuffer: tauNMCostFBO
+               backUp: /parseTextC23/tauAdjCost/
+            }
 
             tauAdjX1+={tauAdjCount1}
          }
 
          use tauNMFinalize
-         uniforms tauNMFinalize {
-            tauMax = {tauMaxVeces}i
-            tauMin = {tauMinVeces}i
+         drawTriangles -> [tauXiFFinal, tauXiSFinal, tauXiMetaFinal] size [tauMaxVeces,tauMaxVeces] {
+            uniforms {
+               tauMax = {tauMaxVeces}i
+               tauMin = {tauMinVeces}i
+            }
+            rebind {
+               tauNMXiFRead -> TexUnit4
+               tauNMXiSRead -> TexUnit5
+               tauNMCost -> TexUnit11
+               tauXiFOpt -> TexUnit18
+               tauXiSOpt -> TexUnit19
+               tauXiMetaOpt -> TexUnit20
+            }
+            framebuffer: tauAFPOptFBO
+            backUp: /parseTextC23/tauNMFinalize/
          }
-         rebind tauNMFinalize {
-            tauNMXiFRead -> TexUnit4
-            tauNMXiSRead -> TexUnit5
-            tauNMCost -> TexUnit11
-            tauXiFOpt -> TexUnit18
-            tauXiSOpt -> TexUnit19
-            tauXiMetaOpt -> TexUnit20
-         }
-         framebuffer tauAFPOptFBO [tauXiFFinal, tauXiSFinal, tauXiMetaFinal]
-         viewport [0,0,tauMaxVeces,tauMaxVeces]
-         drawTriangles
 
          gl.finish()
          let tauAFPOptFlags={Array.from(tauAFPOptFBO.readColorAttachment(2,0,0,tauMaxVeces,tauMaxVeces,TexExamples.RGBAFloat16,4))}
@@ -858,149 +945,148 @@ tick {
       //? phase 04_stats_mask - tauStats - file://./glsl/tau/04_stats_mask/1_tauModelStats.frag
       // Entrada: tauXiMetaFinal.
       // Salida: tauStats = [bestCost,threshold,maxValidCost,targetK].
-      // Llamadas: 1 por cada recomputeTau.
       // Efecto de variables: keepTopPercent fija el top-K global que luego usa la mÃ¡scara.
       log "-> phase 04 tauStats" {Array.from(tauAFPFBO.readColorAttachment(2,0,0,4,1,TexExamples.RGBAFloat16,4))}
       use tauStats
-      uniforms tauStats {
-         tauMax = {tauMaxVeces}i
-         tauMin = {tauMinVeces}i
-         keepPercent = {keepTopPercent}f
+      drawTriangles -> [tauStatsTex] size [1,1] {
+         uniforms {
+            tauMax = {tauMaxVeces}i
+            tauMin = {tauMinVeces}i
+            keepPercent = {keepTopPercent}f
+         }
+         rebind {
+            tauXiMetaFinal -> TexUnit27
+         }
+         framebuffer: tauStatsFBO
+         backUp: /parseTextC23/tauStats/
       }
-      rebind tauStats {
-         tauXiMetaFinal -> TexUnit27
-      }
-      framebuffer tauStatsFBO [tauStatsTex]
-      viewport [0,0,1,1]
-      drawTriangles
 
 
       //? phase 04_stats_mask - tauMask - file://./glsl/tau/04_stats_mask/2_tauModelMask.frag
       // Entrada: tauXiMetaFinal y tauStats.
       // Salida: tauModelMask = [selected,cost,valid,scoreN].
-      // Llamadas: 1 por cada recomputeTau.
       // Efecto de variables: tauMinVeces / tauMaxVeces recortan modelos vÃ¡lidos; el umbral real viene de tauStats.
       use tauMask
-      uniforms tauMask {
-         tauMax = {tauMaxVeces}i
-         tauMin = {tauMinVeces}i
+      drawTriangles -> [tauMaskTex] size [tauMaxVeces,tauMaxVeces] {
+         uniforms {
+            tauMax = {tauMaxVeces}i
+            tauMin = {tauMinVeces}i
+         }
+         rebind {
+            tauXiMetaFinal -> TexUnit27
+            tauStats -> TexUnit21
+         }
+         framebuffer: tauMaskFBO
+         backUp: /parseTextC23/tauMask/
       }
-      rebind tauMask {
-         tauXiMetaFinal -> TexUnit27
-         tauStats -> TexUnit21
-      }
-      framebuffer tauMaskFBO [tauMaskTex]
-      viewport [0,0,tauMaxVeces,tauMaxVeces]
-      drawTriangles
 
 
       //? phase 05_filters - tauFP - file://./glsl/tau/05_filters/1_tauFPProxy.frag
       // Entrada: tauMom1, tauXiFFinal, tauXiSFinal, tauXiMetaFinal, tauModelMask.
       // Salida: tauFPProxy = [selectedFP,cost,validFP,spanN].
-      // Llamadas: 1 por cada recomputeTau.
       // Efecto de variables: fpLogSpanMax fija el span mÃ¡ximo admisible del proxy estacionario.
       log "-> phase 05 tauFP" {Array.from(tauMaskFBO.readColorAttachment(0,0,0,4,1,TexExamples.RGBAFloat16,4))}
       use tauFP
-      uniforms tauFP {
-         tauMax = {tauMaxVeces}i
-         tauMin = {tauMinVeces}i
-         {nBins}i
-         logSpanMax = {fpLogSpanMax}f
+      drawTriangles -> [tauFPTex] size [tauMaxVeces,tauMaxVeces] {
+         uniforms {
+            tauMax = {tauMaxVeces}i
+            tauMin = {tauMinVeces}i
+            {nBins}i
+            logSpanMax = {fpLogSpanMax}f
+         }
+         rebind {
+            tauMom1 -> TexUnit14
+            tauXiFFinal -> TexUnit25
+            tauXiSFinal -> TexUnit26
+            tauXiMetaFinal -> TexUnit27
+            tauModelMask -> TexUnit22
+         }
+         framebuffer: tauFPFBO
+         backUp: /parseTextC23/tauFP/
       }
-      rebind tauFP {
-         tauMom1 -> TexUnit14
-         tauXiFFinal -> TexUnit25
-         tauXiSFinal -> TexUnit26
-         tauXiMetaFinal -> TexUnit27
-         tauModelMask -> TexUnit22
-      }
-      framebuffer tauFPFBO [tauFPTex]
-      viewport [0,0,tauMaxVeces,tauMaxVeces]
-      drawTriangles
 
 
       //? phase 05_filters - tauKL - file://./glsl/tau/05_filters/2_tauModelKL.frag
       // Entrada: histograma/momentos (tauMom1) y modelo final (tauXiFFinal,tauXiSFinal,tauXiMetaFinal).
       // Salida: tauModelKL = [kl,valid,spanN,sumH].
-      // Llamadas: 1 por cada recomputeTau.
       // Efecto de variables: modelKLSpanMax limita el rango logarÃ­tmico aceptado en la pdf estacionaria.
       log "-> phase 05 tauKL" {Array.from(tauFPFBO.readColorAttachment(0,0,0,4,1,TexExamples.RGBAFloat16,4))}
       use tauKL
-      uniforms tauKL {
-         tauMax = {tauMaxVeces}i
-         tauMin = {tauMinVeces}i
-         {nBins}i
-         spanMax = {modelKLSpanMax}f
+      drawTriangles -> [tauKLTex] size [tauMaxVeces,tauMaxVeces] {
+         uniforms {
+            tauMax = {tauMaxVeces}i
+            tauMin = {tauMinVeces}i
+            {nBins}i
+            spanMax = {modelKLSpanMax}f
+         }
+         rebind {
+            tauMom1 -> TexUnit14
+            tauXiFFinal -> TexUnit25
+            tauXiSFinal -> TexUnit26
+            tauXiMetaFinal -> TexUnit27
+         }
+         framebuffer: tauKLFBO
+         backUp: /parseTextC23/tauKL/
       }
-      rebind tauKL {
-         tauMom1 -> TexUnit14
-         tauXiFFinal -> TexUnit25
-         tauXiSFinal -> TexUnit26
-         tauXiMetaFinal -> TexUnit27
-      }
-      framebuffer tauKLFBO [tauKLTex]
-      viewport [0,0,tauMaxVeces,tauMaxVeces]
-      drawTriangles
 
 
       //? phase 05_filters - tauScore - file://./glsl/tau/05_filters/3_tauModelScore.frag
       // Entrada: tauXiMetaFinal, tauModelMask, tauFPProxy, tauModelKL, tauStats.
       // Salida: tauModelScore = [selected,score,valid,costRaw].
-      // Llamadas: 1 por cada recomputeTau.
       // Efecto de variables: scoreWCost, scoreWKL, scoreWSpan, scoreKLMax y scoreMaxCut
       // cambian la mezcla final con la que se ordenan y recortan los modelos.
       log "-> phase 05 tauScore" {Array.from(tauKLFBO.readColorAttachment(0,0,0,4,1,TexExamples.RGBAFloat16,4))}
       use tauScore
-      uniforms tauScore {
-         tauMax = {tauMaxVeces}i
-         tauMin = {tauMinVeces}i
-         wCost = {scoreWCost}f
-         wKL = {scoreWKL}f
-         wSpan = {scoreWSpan}f
-         klMax = {scoreKLMax}f
-         scoreMax = {scoreMaxCut}f
+      drawTriangles -> [tauScoreTex] size [tauMaxVeces,tauMaxVeces] {
+         uniforms {
+            tauMax = {tauMaxVeces}i
+            tauMin = {tauMinVeces}i
+            wCost = {scoreWCost}f
+            wKL = {scoreWKL}f
+            wSpan = {scoreWSpan}f
+            klMax = {scoreKLMax}f
+            scoreMax = {scoreMaxCut}f
+         }
+         rebind {
+            tauXiMetaFinal -> TexUnit27
+            tauModelMask -> TexUnit22
+            tauFPProxy -> TexUnit23
+            tauModelKL -> TexUnit4
+            tauStats -> TexUnit21
+         }
+         framebuffer: tauScoreFBO
+         backUp: /parseTextC23/tauScore/
       }
-      rebind tauScore {
-         tauXiMetaFinal -> TexUnit27
-         tauModelMask -> TexUnit22
-         tauFPProxy -> TexUnit23
-         tauModelKL -> TexUnit4
-         tauStats -> TexUnit21
-      }
-      framebuffer tauScoreFBO [tauScoreTex]
-      viewport [0,0,tauMaxVeces,tauMaxVeces]
-      drawTriangles
 
 
       //? phase 06_select - tauBest - file://./glsl/tau/06_select/1_tauBestModel.frag
       // Entrada: tauXiMetaFinal, tauModelMask, tauFPProxy, tauModelScore.
       // Salida: tauBest = [bestTau,bestSubseq,bestCost,found].
-      // Llamadas: 1 por cada recomputeTau.
       // Efecto de variables: useFPFilter y useScoreSelection hacen mÃ¡s o menos estricta la bÃºsqueda
       // del mejor candidato; tauMinVeces y tauMaxVeces siguen acotando la rejilla.
       log "-> phase 06 tauBest" {Array.from(tauScoreFBO.readColorAttachment(0,0,0,4,1,TexExamples.RGBAFloat16,4))}
       use tauBest
-      uniforms tauBest {
-         setTauBounds_u
-         useMask = 1i
-         useFP = {!!useFPFilter?1:0}i
-         useScore = {!!useScoreSelection?1:0}i
+      drawTriangles -> [tauBestTex] size [1,1] {
+         uniforms {
+            setTauBounds_u
+            useMask = 1i
+            useFP = {!!useFPFilter?1:0}i
+            useScore = {!!useScoreSelection?1:0}i
+         }
+         rebind {
+            tauXiMetaFinal -> TexUnit27
+            tauModelMask -> TexUnit22
+            tauFPProxy -> TexUnit23
+            tauModelScore -> TexUnit5
+         }
+         framebuffer: tauBestFBO
+         backUp: /parseTextC23/tauBest/
       }
-      rebind tauBest {
-         tauXiMetaFinal -> TexUnit27
-         tauModelMask -> TexUnit22
-         tauFPProxy -> TexUnit23
-         tauModelScore -> TexUnit5
-      }
-      framebuffer tauBestFBO [tauBestTex]
-      viewport [0,0,1,1]
-      drawTriangles
 
 
       //? phase 07_fields - tauSindy (init) - file://./glsl/tau/07_fields/1_tauSindyFields.frag
       // Entrada: tauMom1, tauXiF, tauXiS, tauBest.
       // Salida: tauSindyInit = [x,f,s,a] evaluado sobre la soluciÃ³n inicial.
-      // Llamadas: 1 por cada recomputeTau.
       // Efecto de variables: bestTau y bestSubseq seleccionan el modelo a proyectar; nBins cambia la
       // resoluciÃ³n de las curvas en x.
       log "-> phase 07 tauSindy" {Array.from(tauBestFBO.readColorAttachment(0,0,0,1,1,TexExamples.RGBAFloat16,4))}
@@ -1013,66 +1099,66 @@ tick {
       if(bestSubseq>=bestTau){
          bestSubseq={Math.max(0,bestTau-1)}
       }
-      uniforms tauSindy {
-         tauMax = {tauMaxVeces}i
-         {nBins}i
-         selectedTau = {bestTau}i
-         selectedSubseq = {bestSubseq}i
-         useSelected = 1i
+      drawTriangles -> [tauSindyInitTex] size [nBins,1] {
+         uniforms {
+            tauMax = {tauMaxVeces}i
+            {nBins}i
+            selectedTau = {bestTau}i
+            selectedSubseq = {bestSubseq}i
+            useSelected = 1i
+         }
+         rebind {
+            tauMom1 -> TexUnit14
+            tauXiF -> TexUnit18
+            tauXiS -> TexUnit19
+            tauBest -> TexUnit17
+         }
+         framebuffer: tauSindyInitFBO
+         backUp: /parseTextC23/tauSindy/
       }
-      rebind tauSindy {
-         tauMom1 -> TexUnit14
-         tauXiF -> TexUnit18
-         tauXiS -> TexUnit19
-         tauBest -> TexUnit17
-      }
-      framebuffer tauSindyInitFBO [tauSindyInitTex]
-      viewport [0,0,nBins,1]
-      drawTriangles
 
 
       //? phase 07_fields - tauSindy (tau=1 ref) - file://./glsl/tau/07_fields/1_tauSindyFields.frag
       // Entrada: mismo shader tauSindy, pero forzando selectedTau=1 y selectedSubseq=0.
       // Salida: tauSindyTau1Ref = [x,f,s,a] para usarlo como referencia LS fija en overlays.
-      // Llamadas: 1 por cada recomputeTau.
       // Efecto de variables: sÃ³lo nBins; el modelo queda fijado manualmente a tau=1,sub=0.
-      uniforms tauSindy {
-         tauMax = {tauMaxVeces}i
-         {nBins}i
-         selectedTau = 1i
-         selectedSubseq = 0i
-         useSelected = 1i
+      drawTriangles -> [tauSindyTau1RefTex] size [nBins,1] {
+         uniforms {
+            tauMax = {tauMaxVeces}i
+            {nBins}i
+            selectedTau = 1i
+            selectedSubseq = 0i
+            useSelected = 1i
+         }
+         framebuffer: tauSindyTau1RefFBO
+         backUp: /parseTextC23/tauSindy/
       }
-      framebuffer tauSindyTau1RefFBO [tauSindyTau1RefTex]
-      viewport [0,0,nBins,1]
-      drawTriangles
 
 
       //? phase 07_fields - tauSindy (final) - file://./glsl/tau/07_fields/1_tauSindyFields.frag
       // Entrada: tauMom1, tauXiFFinal, tauXiSFinal, tauBest.
       // Salida: tauSindy = [x,f,s,a] con el modelo final seleccionado.
-      // Llamadas: 1 por cada recomputeTau.
       // Efecto de variables: bestTau, bestSubseq y nBins.
-      uniforms tauSindy {
-         tauMax = {tauMaxVeces}i
-         {nBins}i
-         selectedTau = {bestTau}i
-         selectedSubseq = {bestSubseq}i
-         useSelected = 1i
+      drawTriangles -> [tauSindyTex] size [nBins,1] {
+         uniforms {
+            tauMax = {tauMaxVeces}i
+            {nBins}i
+            selectedTau = {bestTau}i
+            selectedSubseq = {bestSubseq}i
+            useSelected = 1i
+         }
+         rebind {
+            tauXiF -> TexUnit25
+            tauXiS -> TexUnit26
+         }
+         framebuffer: tauSindyFBO
+         backUp: /parseTextC23/tauSindy/
       }
-      rebind tauSindy {
-         tauXiF -> TexUnit25
-         tauXiS -> TexUnit26
-      }
-      framebuffer tauSindyFBO [tauSindyTex]
-      viewport [0,0,nBins,1]
-      drawTriangles
 
 
       //? phase 07_fields - tauFPStat - file://./glsl/tau/07_fields/2_tauFPStationary.frag
       // Entrada: tauMom1, coeficientes init/final y tauBest.
       // Salida: tauFPStationary = [pHist,pInit,pFinal,valid].
-      // Llamadas: 1 por cada recomputeTau.
       // Efecto de variables: bestTau, bestSubseq, tauMinVeces, tauMaxVeces y nBins.
       // AquÃ­ se comparan directamente las distribuciones estacionarias inicial y final frente al histograma real.
       log "-> phase 05 tauFP" {Array.from(tauMaskFBO.readColorAttachment(0,0,0,4,1,TexExamples.RGBAFloat16,4))}
@@ -1086,27 +1172,28 @@ tick {
       if(bestSubseq>=bestTau){
          bestSubseq={Math.max(0,bestTau-1)}
       }
-      uniforms tauFPStat {
-         tauMax = {tauMaxVeces}i
-         tauMin = {tauMinVeces}i
-         {nBins}i
-         selectedTau = {bestTau}i
-         selectedSubseq = {bestSubseq}i
-         useSelected = 1i
+      drawTriangles -> [tauFPStatTex] size [nBins,1] {
+         uniforms {
+            tauMax = {tauMaxVeces}i
+            tauMin = {tauMinVeces}i
+            {nBins}i
+            selectedTau = {bestTau}i
+            selectedSubseq = {bestSubseq}i
+            useSelected = 1i
+         }
+         rebind {
+            tauMom1 -> TexUnit14
+            tauXiFOpt -> TexUnit18
+            tauXiSOpt -> TexUnit19
+            tauXiMetaOpt -> TexUnit20
+            tauXiFFinal -> TexUnit25
+            tauXiSFinal -> TexUnit26
+            tauXiMetaFinal -> TexUnit27
+            tauBest -> TexUnit17
+         }
+         framebuffer: tauFPStatFBO
+         backUp: /parseTextC23/tauFPStat/
       }
-      rebind tauFPStat {
-         tauMom1 -> TexUnit14
-         tauXiFOpt -> TexUnit18
-         tauXiSOpt -> TexUnit19
-         tauXiMetaOpt -> TexUnit20
-         tauXiFFinal -> TexUnit25
-         tauXiSFinal -> TexUnit26
-         tauXiMetaFinal -> TexUnit27
-         tauBest -> TexUnit17
-      }
-      framebuffer tauFPStatFBO [tauFPStatTex]
-      viewport [0,0,nBins,1]
-      drawTriangles
 
 
       //? phase 09_debug - reads / logs
@@ -1167,7 +1254,6 @@ tick {
       //? phase 10_cleanup - unbind / stamps
       // Entrada: todos los programas que han dejado FBO activo en este recomputeTau.
       // Salida: limpia estados de framebuffer y marca tauModelStamp.
-      // Llamadas: 1 por cada recomputeTau.
       // Efecto de variables: tauModelStamp sirve de invalidaciÃ³n para HUD, simulaciÃ³n y mapas derivados.
       unbindFBO {
          tauFPStat, tauSindy, tauBest
@@ -1201,46 +1287,48 @@ drawTauPanel (20) {
    // sin volver a lanzar todo el pipeline de tau.
    use tauSindy
    tauSindy.VAO.bind()
-   viewport tauSindy {[0,0,nBins,1]}
-   uniforms tauSindy {
-      tauMax = {tauMaxVeces}i
-      {nBins}i
-      selectedTau = {bestTau}i
-      selectedSubseq = {bestSubseq}i
-      useSelected = 1i
+   drawTriangles -> [tauSindyTex] size [nBins,1] {
+      uniforms {
+         tauMax = {tauMaxVeces}i
+         {nBins}i
+         selectedTau = {bestTau}i
+         selectedSubseq = {bestSubseq}i
+         useSelected = 1i
+      }
+      rebind {
+         tauMom1 -> TexUnit14
+         tauXiF -> TexUnit25
+         tauXiS -> TexUnit26
+         tauBest -> TexUnit17
+      }
+      framebuffer: tauSindyPreviewFBO
+      backUp: /parseTextC23/tauSindyPreview/
    }
-   rebind tauSindy {
-      tauMom1 -> TexUnit14
-      tauXiF -> TexUnit25
-      tauXiS -> TexUnit26
-      tauBest -> TexUnit17
-   }
-   framebuffer tauSindyPreviewFBO [tauSindyTex]
-   drawTriangles
 
    use tauFPStat
    tauFPStat.VAO.bind()
-   viewport tauFPStat {[0,0,nBins,1]}
-   uniforms tauFPStat {
-      tauMax = {tauMaxVeces}i
-      tauMin = {tauMinVeces}i
-      {nBins}i
-      selectedTau = {bestTau}i
-      selectedSubseq = {bestSubseq}i
-      useSelected = 1i
+   drawTriangles -> [tauFPStatTex] size [nBins,1] {
+      uniforms {
+         tauMax = {tauMaxVeces}i
+         tauMin = {tauMinVeces}i
+         {nBins}i
+         selectedTau = {bestTau}i
+         selectedSubseq = {bestSubseq}i
+         useSelected = 1i
+      }
+      rebind {
+         tauMom1 -> TexUnit14
+         tauXiFOpt -> TexUnit18
+         tauXiSOpt -> TexUnit19
+         tauXiMetaOpt -> TexUnit20
+         tauXiFFinal -> TexUnit25
+         tauXiSFinal -> TexUnit26
+         tauXiMetaFinal -> TexUnit27
+         tauBest -> TexUnit17
+      }
+      framebuffer: tauFPStatPreviewFBO
+      backUp: /parseTextC23/tauFPStatPreview/
    }
-   rebind tauFPStat {
-      tauMom1 -> TexUnit14
-      tauXiFOpt -> TexUnit18
-      tauXiSOpt -> TexUnit19
-      tauXiMetaOpt -> TexUnit20
-      tauXiFFinal -> TexUnit25
-      tauXiSFinal -> TexUnit26
-      tauXiMetaFinal -> TexUnit27
-      tauBest -> TexUnit17
-   }
-   framebuffer tauFPStatPreviewFBO [tauFPStatTex]
-   drawTriangles
 
    gl.bindFramebuffer(gl.FRAMEBUFFER, null)
    gl.disable(gl.DEPTH_TEST)

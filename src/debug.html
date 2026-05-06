@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Shader DSL Debug</title>
+  <script>
+    window.blogDirName = ".";
+    window.dntiDir = ".";
+  </script>
+  <script type="importmap">
+    {
+      "imports": {
+        "/Code/": "./dependencies/Code/",
+        "/DNTI_Templates/": "./dependencies/DNTI_Templates/",
+        "/ExternalCode/": "./dependencies/ExternalCode/"
+      }
+    }
+  </script>
+  <style>
+    :root {
+      color-scheme: dark;
+      font-family: Inter, Segoe UI, Arial, sans-serif;
+      background: #101418;
+      color: #e9eef2;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; background: #101418; }
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 18px 22px;
+      border-bottom: 1px solid #2d3842;
+      background: #151b21;
+    }
+    h1 { margin: 0; font-size: 20px; font-weight: 650; letter-spacing: 0; }
+    main { padding: 18px; display: grid; gap: 18px; }
+    .toolbar, .viewer {
+      border: 1px solid #2d3842;
+      background: #161d23;
+      border-radius: 8px;
+    }
+    .toolbar {
+      display: grid;
+      grid-template-columns: minmax(220px, 1fr) minmax(160px, 260px) minmax(140px, 220px) auto auto;
+      gap: 12px;
+      align-items: end;
+      padding: 14px;
+    }
+    label { display: grid; gap: 6px; color: #a9b7c4; font-size: 12px; min-width: 0; }
+    select, input, button {
+      width: 100%;
+      min-width: 0;
+      min-height: 36px;
+      border: 1px solid #3b4854;
+      border-radius: 6px;
+      background: #0f1419;
+      color: #e9eef2;
+      padding: 0 10px;
+      font: inherit;
+    }
+    button {
+      cursor: pointer;
+      background: #244356;
+      border-color: #3c667c;
+      font-weight: 600;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 18px;
+    }
+    .viewer { overflow: hidden; }
+    .viewer-bar {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 92px;
+      gap: 10px;
+      padding: 10px;
+      border-bottom: 1px solid #2d3842;
+    }
+    .viewer-controls {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+      padding: 10px;
+      border-bottom: 1px solid #2d3842;
+      align-items: end;
+    }
+    .viewer-controls label:first-child {
+      grid-column: 1 / -1;
+    }
+    .viewer-controls label:nth-child(2) {
+      grid-column: 1 / -1;
+    }
+    .viewer-title {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: #dce6ee;
+      font-size: 12px;
+      align-self: center;
+    }
+    input[type="color"] {
+      min-height: 36px;
+      padding: 2px;
+    }
+    canvas {
+      display: block;
+      width: 100%;
+      aspect-ratio: 4 / 3;
+      background: #070a0d;
+    }
+    .status {
+      min-height: 22px;
+      padding: 8px 10px 10px;
+      color: #a9b7c4;
+      font-size: 12px;
+      overflow-wrap: anywhere;
+    }
+    .log {
+      max-height: 160px;
+      overflow: auto;
+      margin: 0;
+      padding: 10px 12px;
+      border: 1px solid #2d3842;
+      border-radius: 8px;
+      background: #0d1217;
+      color: #a9b7c4;
+      font: 12px/1.45 Consolas, Monaco, monospace;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+    @media (max-width: 980px) {
+      .toolbar { grid-template-columns: 1fr; }
+      .grid { grid-template-columns: 1fr; }
+      .viewer-controls { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    }
+    @media (max-width: 560px) {
+      .viewer-controls { grid-template-columns: 1fr 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Shader DSL Debug</h1>
+    <a href="./index.html" style="color:#9bd0ff;">index</a>
+  </header>
+  <main>
+    <section class="toolbar">
+      <label>
+        Backup en disco
+        <select id="backupSelect"></select>
+      </label>
+      <label>
+        Archivo local
+        <input id="localFile" type="file" accept=".txt,.json,.csv">
+        <button type="button" onclick="document.getElementById('localFile').value = ''">
+          Quitar archivo
+        </button>
+      </label>
+      <label>
+        Buscar
+        <input id="backupFilter" type="search" placeholder="tauMom, uniforms...">
+      </label>
+      <button id="refreshBtn" type="button">Actualizar lista</button>
+      <button id="copyLogBtn" type="button">Copiar log</button>
+      <button id="loadBtn" type="button">Cargar en los 3 canvas</button>
+    </section>
+    <pre id="debugLog" class="log">Esperando lista...</pre>
+    <section class="grid">
+      <article class="viewer">
+        <div class="viewer-bar">
+          <div class="viewer-title" id="viewerFile0">Canvas 1</div>
+          <button data-viewer-load="0" type="button">Cargar</button>
+        </div>
+        <div class="viewer-controls">
+          <label>Backup<select data-viewer-backup="0"></select></label>
+          <label>Uniform<select data-viewer-uniform="0"></select></label>
+          <label>W<input data-viewer-width="0" type="number" min="1" step="1" value="1"></label>
+          <label>H<input data-viewer-height="0" type="number" min="1" step="1" value="1"></label>
+          <label>Off X<input data-viewer-offset-x="0" type="number" min="0" step="1" value="0"></label>
+          <label>Off Y<input data-viewer-offset-y="0" type="number" min="0" step="1" value="0"></label>
+          <label>Canales<input data-viewer-channels="0" type="text" value="RGBA" maxlength="4" spellcheck="false"></label>
+          <label>Modo<select data-viewer-render-mode="0"><option value="textureGrid">Tex grid</option><option value="texture">Tex</option><option value="line">Linea</option></select></label>
+          <label>Inicio<input data-viewer-start="0" type="color" value="#1f4fff"></label>
+          <label>Final<input data-viewer-end="0" type="color" value="#fff35a"></label>
+        </div>
+        <canvas id="debugCanvas0" width="768" height="576"></canvas>
+        <div class="status" id="status0">En espera</div>
+      </article>
+      <article class="viewer">
+        <div class="viewer-bar">
+          <div class="viewer-title" id="viewerFile1">Canvas 2</div>
+          <button data-viewer-load="1" type="button">Cargar</button>
+        </div>
+        <div class="viewer-controls">
+          <label>Backup<select data-viewer-backup="1"></select></label>
+          <label>Uniform<select data-viewer-uniform="1"></select></label>
+          <label>W<input data-viewer-width="1" type="number" min="1" step="1" value="1"></label>
+          <label>H<input data-viewer-height="1" type="number" min="1" step="1" value="1"></label>
+          <label>Off X<input data-viewer-offset-x="1" type="number" min="0" step="1" value="0"></label>
+          <label>Off Y<input data-viewer-offset-y="1" type="number" min="0" step="1" value="0"></label>
+          <label>Canales<input data-viewer-channels="1" type="text" value="RG" maxlength="4" spellcheck="false"></label>
+          <label>Modo<select data-viewer-render-mode="1"><option value="textureGrid">Tex grid</option><option value="texture">Tex</option><option value="line">Linea</option></select></label>
+          <label>Inicio<input data-viewer-start="1" type="color" value="#1f4fff"></label>
+          <label>Final<input data-viewer-end="1" type="color" value="#fff35a"></label>
+        </div>
+        <canvas id="debugCanvas1" width="768" height="576"></canvas>
+        <div class="status" id="status1">En espera</div>
+      </article>
+      <article class="viewer">
+        <div class="viewer-bar">
+          <div class="viewer-title" id="viewerFile2">Canvas 3</div>
+          <button data-viewer-load="2" type="button">Cargar</button>
+        </div>
+        <div class="viewer-controls">
+          <label>Backup<select data-viewer-backup="2"></select></label>
+          <label>Uniform<select data-viewer-uniform="2"></select></label>
+          <label>W<input data-viewer-width="2" type="number" min="1" step="1" value="1"></label>
+          <label>H<input data-viewer-height="2" type="number" min="1" step="1" value="1"></label>
+          <label>Off X<input data-viewer-offset-x="2" type="number" min="0" step="1" value="0"></label>
+          <label>Off Y<input data-viewer-offset-y="2" type="number" min="0" step="1" value="0"></label>
+          <label>Canales<input data-viewer-channels="2" type="text" value="A" maxlength="4" spellcheck="false"></label>
+          <label>Modo<select data-viewer-render-mode="2"><option value="textureGrid">Tex grid</option><option value="texture">Tex</option><option value="line">Linea</option></select></label>
+          <label>Inicio<input data-viewer-start="2" type="color" value="#1f4fff"></label>
+          <label>Final<input data-viewer-end="2" type="color" value="#fff35a"></label>
+        </div>
+        <canvas id="debugCanvas2" width="768" height="576"></canvas>
+        <div class="status" id="status2">En espera</div>
+      </article>
+    </section>
+  </main>
+  <script type="module" src="./debug.js"></script>
+</body>
+</html>

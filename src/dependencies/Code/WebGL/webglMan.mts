@@ -405,7 +405,7 @@ export class WebProgram{
         let returnObj={startTextureUnit, lastTexureUnit, maxLength,
             nextTexureUnit:lastTexureUnit+1,
             setLengthUniforms:()=>{
-                this.uInt(basename+"Length").set(maxLength);
+                this.uInt(basename+"Length",true).set(maxLength);
                 // this.uInt(basename+"Count").set(lastTexureUnit-startTextureUnit);
                 return returnObj;
             }
@@ -588,7 +588,7 @@ export class WebProgram{
         (tex as any).format = format;
         
         (tex as any).setLengthUniforms=()=>{
-            this.uInt(name+"Length").set((tex as any).w*(tex as any).h);
+            this.uInt(name+"Length",true).set((tex as any).w*(tex as any).h);
             return tex as any;
         }
 
@@ -715,10 +715,11 @@ export class WebProgram{
         this.uniforms[name]=uniform as any;
         return uniform as any;
     }
-    uNum(name:string, isFloat=true, isUnsignedInt=false):UNUM{
+    uNum(name:string, isFloat=true, isUnsignedInt=false, hide:boolean=false):UNUM{
         const uniform = this.gl.getUniformLocation(this.program, name);
         if(!uniform){
-            console.error("uniform",name,"was undefined"); 
+            if(!hide)
+                console.error("uniform",name,"was undefined"); 
             let undef={set:()=>undef} as any;
             return undef;
         }
@@ -733,8 +734,8 @@ export class WebProgram{
     uFloat(name:string):UNUM{
         return this.uNum(name, true, false);
     }
-    uInt(name:string):UNUM{
-        return this.uNum(name, false, false);
+    uInt(name:string,hide:boolean=false):UNUM{
+        return this.uNum(name, false, false, hide);
     }
     cFrameBuffer(){
         return new FrameBuffer(this.gl, this);

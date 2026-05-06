@@ -32,6 +32,11 @@ const TEX_UNIT_COLORS = [
     "#F58231", "#FFE119", "#BFEF45", "#808080", "#A9A9A9", "#FFFFFF", "#BC8F8F", "#D2691E"
 ];
 
+// Change this if you want a different tone for variables created with `name = uniforms { ... }`.
+const UNIFORMS_BLOCK_VARIABLE_COLOR = "#dcdcaa";
+const UNIFORMS_ASSIGNMENT_NAME_COLOR = "#ce9178";
+// Change this if you want a different style for explicit uniforms that override a value coming from an included uniforms block.
+const UNIFORM_OVERRIDE_TEXT_DECORATION = "underline solid #ffd166";
 
 const SNIPPET_SELECTOR = { language: "ts-snippet", scheme: "*" };
 const SHADERDSL_SELECTOR = { language: "parse-text-ts", scheme: "*" };
@@ -91,10 +96,34 @@ const textureTextLikeDecoration = vscode.window.createTextEditorDecorationType({
     color: "#ce9178",
 });
 
+const uniformsBlockVariableDecoration = vscode.window.createTextEditorDecorationType({
+    color: UNIFORMS_BLOCK_VARIABLE_COLOR,
+    fontWeight: "700",
+});
+
+const shaderDslKeywordDecoration = vscode.window.createTextEditorDecorationType({
+    color: "#569cd6",
+    fontWeight: "700",
+});
+
+const uniformsAssignmentNameDecoration = vscode.window.createTextEditorDecorationType({
+    color: UNIFORMS_ASSIGNMENT_NAME_COLOR,
+});
+
+const uniformOverrideDecoration = vscode.window.createTextEditorDecorationType({
+    textDecoration: UNIFORM_OVERRIDE_TEXT_DECORATION,
+});
+
 const invalidShaderBindingDecoration = vscode.window.createTextEditorDecorationType({
     color: "#ff6b6b",
     fontWeight: "700",
     textDecoration: "underline wavy #ff6b6b",
+});
+
+const warningDecoration = vscode.window.createTextEditorDecorationType({
+    color: "#ffd166",
+    fontWeight: "700",
+    textDecoration: "underline wavy #ffd166",
 });
 
 const dimensionXDecoration = vscode.window.createTextEditorDecorationType({
@@ -122,10 +151,20 @@ const textureBindingDecorations = TEX_UNIT_COLORS.map((color) =>
     }),
 );
 
+const rebindSquareDecorations = TEX_UNIT_COLORS.map((color) =>
+    vscode.window.createTextEditorDecorationType({
+        before: {
+            contentText: "■ ",
+            color,
+        },
+    }),
+);
+
 let runtimeContext = null;
 const dynamicDecorationCache = new Map();
 const SEARCH_EXCLUDE_GLOB = "**/{node_modules,dist,build,out,.git,.next,.turbo,coverage,tmp,.tmp_build}/**";
 const searchUriCache = new Map();
+const TEX2D_DECL_KEYWORD_RE = "(?:new-|in-)?tex2D";
 
 function activate(context) {
     runtimeContext = context;
@@ -142,6 +181,7 @@ function activate(context) {
         ...blockDecorations,
         ...tagDecorationPalette,
         ...textureBindingDecorations,
+        ...rebindSquareDecorations,
         delimiterDecoration,
         branchDecoration,
         derivedKeywordDecoration,
@@ -150,7 +190,12 @@ function activate(context) {
         resourceNameDecoration,
         textureFormatDecoration,
         textureTextLikeDecoration,
+        shaderDslKeywordDecoration,
+        uniformsBlockVariableDecoration,
+        uniformsAssignmentNameDecoration,
+        uniformOverrideDecoration,
         invalidShaderBindingDecoration,
+        warningDecoration,
         dimensionXDecoration,
         emptySquareDecoration,
         texUnitStateDecorations.unused,
@@ -277,6 +322,47 @@ function stripLineComment(line) {
     return commentIndex >= 0 ? line.slice(0, commentIndex) : line;
 }
 
+function stripLineCommentPreserveLength(line) {
+    const commentIndex = line.indexOf("//");
+    if (commentIndex < 0) return line;
+    return line.slice(0, commentIndex) + " ".repeat(line.length - commentIndex);
+}
+
+function stripLineCommentsPreserveOffsets(text) {
+    return text.replace(/[^\r\n]*(?:\r\n|\n|\r|$)/g, (line) => {
+        if (!line) return line;
+        const newline = line.endsWith("\r\n")
+            ? "\r\n"
+            : line.endsWith("\n")
+                ? "\n"
+                : line.endsWith("\r")
+                    ? "\r"
+                    : "";
+        const body = newline ? line.slice(0, -newline.length) : line;
+        return stripLineCommentPreserveLength(body) + newline;
+    });
+}
+
+function parseTex2DDeclarationLine(line) {
+    const code = stripLineComment(line);
+    const match = code.match(new RegExp(`^\\s*(${TEX2D_DECL_KEYWORD_RE})\\s+([A-Za-z_]\\w*)(?:\\s*(\\||~)\\s*([A-Za-z_]\\w*))?([\\s\\S]*)$`));
+    if (!match) return null;
+    return {
+        keyword: match[1],
+        internalName: match[2],
+        aliasOperator: match[3] || "",
+        aliasName: match[4] || "",
+        tail: match[5] || "",
+        isNewTexture: match[1] === "new-tex2D",
+        isInputTexture: match[1] === "in-tex2D",
+    };
+}
+
+function extractTex2DUnitIndex(line) {
+    const match = stripLineComment(line).match(/\b(?:TexUnit|texUnit)(\d+)\b(?:\s*<=|\s*$)/);
+    return match ? Number.parseInt(match[1], 10) : null;
+}
+
 function parseQuotedOrRawValue(value) {
     const trimmed = String(value || "").trim().replace(/;$/, "");
     if (!trimmed) return "";
@@ -343,7 +429,7 @@ function collectTexUnitTokenSpans(code) {
         pushSpan(match.index, match[0], Number.parseInt(match[1], 10));
     }
 
-    const tex2DUnitRegex = /\btex2D\b[\s\S]*?\b(?:TexUnit|texUnit)?(\d+)\b(?:\s*<=|\s*$)/g;
+    const tex2DUnitRegex = /\b(?:new-|in-)?tex2D\b[\s\S]*?\b(?:TexUnit|texUnit)?(\d+)\b(?:\s*<=|\s*$)/g;
     while ((match = tex2DUnitRegex.exec(code)) !== null) {
         const unitToken = match[0].match(/\b(?:TexUnit|texUnit)?(\d+)\b(?:\s*<=|\s*$)/);
         if (!unitToken) continue;
@@ -527,18 +613,77 @@ async function provideShaderDslCompletions(document, position) {
     const glslFiltersContext = findEnclosingNamedBlock(text, position, "glslFilters");
     const rebindBlockProgram = findEnclosingRebindProgram(text, position);
     const programBlock = findEnclosingProgramDefinition(text, position, document.uri.fsPath);
+    const outAliasesContext = findEnclosingOutAliasesContext(text, position, document.uri.fsPath);
+    const currentBoundProgramName = findCurrentBoundProgramName(text, position);
     const texUnitTargetMatch = linePrefix.match(/^\s*([A-Za-z_]\w*)\s*->\s*(?:TexUnit|texUnit)?[A-Za-z0-9_]*$/);
+
+    const drawOutputsMatch = linePrefix.match(/^\s*(?:drawPoints|drawLineStrip|drawLineLoop|drawLines|drawTriangleStrip|drawTriangleFan|drawTriangles)\b[\s\S]*?->\s*\[([^\]]*)$/);
+    if (drawOutputsMatch && currentBoundProgramName) {
+        const programDefs = parseProgramTextureDefinitions(text, document.uri.fsPath);
+        const currentProgramDef = programDefs.get(currentBoundProgramName);
+        const ioInfo = readFragmentShaderIO(currentProgramDef ? { ...currentProgramDef, name: currentBoundProgramName } : null);
+        const textureEntries = currentProgramDef?.textures || [];
+        const textureNames = textureEntries.map((entry) => entry.name);
+        const outputTextureNames = ioInfo.outputs
+            .map((out) => textureEntries.find((entry) => entry.internalName === out.name)?.name || null)
+            .filter(Boolean);
+        const ordered = [
+            ...outputTextureNames,
+            ...textureNames.filter((name) => !outputTextureNames.includes(name)),
+        ];
+        return [...new Set(ordered)].map((name, index) => {
+            const item = new vscode.CompletionItem(name, vscode.CompletionItemKind.Variable);
+            item.detail = index < outputTextureNames.length ? `program output texture ${currentBoundProgramName}` : `texture ${currentBoundProgramName}`;
+            return item;
+        });
+    }
 
     if (rebindBlockProgram && texUnitTargetMatch) {
         return buildTexUnitCompletionItems(text, texUnitTargetMatch[1]);
     }
 
     if (programBlock) {
+        const outAliasesMatch = linePrefix.match(/^\s*out-aliases\s+([A-Za-z_]\w*)\s*:\s*(?:\[.*)?$/);
+        if (outAliasesMatch) {
+            const ioInfo = readFragmentShaderIO(programBlock);
+            const firstOutput = ioInfo.outputs[0] || null;
+            if (firstOutput && outAliasesMatch[1] === firstOutput.name) {
+                const usedOutputs = collectProgramDrawOutputTargets(text).get(programBlock.name) || [];
+                const item = new vscode.CompletionItem("out-aliases list", vscode.CompletionItemKind.Snippet);
+                const indent = " ".repeat((document.lineAt(position.line).firstNonWhitespaceCharacterIndex || 0) + 3);
+                const closeIndent = " ".repeat(document.lineAt(position.line).firstNonWhitespaceCharacterIndex || 0);
+                const chunks = [];
+                for (let i = 0; i < usedOutputs.length; i += 4) {
+                    chunks.push(`${indent}${usedOutputs.slice(i, i + 4).join(" ")}`);
+                }
+                const body = usedOutputs.length
+                    ? `[\n${chunks.join("\n")}\n${closeIndent}]`
+                    : "[\n" + indent + "${1}\n" + closeIndent + "]";
+                item.insertText = new vscode.SnippetString(body);
+                item.detail = `first draw output textures for ${programBlock.name}`;
+                return [item];
+            }
+        }
         const programTexCompletions = buildProgramTex2DCompletions(document, text, position, programBlock, texExampleNames);
         if (programTexCompletions.length) {
             return programTexCompletions;
         }
     }
+
+        if (outAliasesContext?.programDef) {
+            const ioInfo = readFragmentShaderIO(outAliasesContext.programDef);
+            const firstOutput = ioInfo.outputs[0] || null;
+            if (firstOutput && outAliasesContext.aliasName === firstOutput.name) {
+                const usedOutputs = collectProgramDrawOutputTargets(text).get(outAliasesContext.programDef.name) || [];
+                const declaredOutputs = (parseProgramOutAliases(text).get(outAliasesContext.programDef.name)?.get(outAliasesContext.aliasName)) || [];
+                const missingOutputs = usedOutputs.filter((name) => !declaredOutputs.includes(name));
+                return missingOutputs.map((name) => {
+                    const item = new vscode.CompletionItem(name, vscode.CompletionItemKind.Variable);
+                    item.detail = `missing out-alias for ${outAliasesContext.programDef.name}`;
+                    return item;
+                });
+            }
+        }
 
     if (resourceContext || /^\s*resource\s+[A-Za-z_]\w*\s*\{\s*$/.test(linePrefix) || /^\s*(format|filter|wrap)\s*:\s*[A-Za-z_0-9]*$/.test(linePrefix)) {
         if (/format\s*:\s*[A-Za-z_0-9]*$/.test(linePrefix)) {
@@ -586,11 +731,13 @@ function createSnippetCompletion(label, snippet, detail) {
 }
 
 function buildProgramTex2DCompletions(document, text, position, programBlock, texExampleNames) {
+    const lineText = document.lineAt(position.line).text;
     const linePrefix = document.lineAt(position.line).text.slice(0, position.character);
     const ioInfo = readFragmentShaderIO(programBlock);
     const resourceNames = Array.from(parseResourceDefinitions(text).keys());
+    const missingInternalDeclMatch = lineText.match(new RegExp(`^\\s*(${TEX2D_DECL_KEYWORD_RE})(\\s+)(?=(?:~|RES\\b))`));
 
-    if (/^\s*tex2D\s*$/.test(linePrefix)) {
+    if (new RegExp(`^\\s*${TEX2D_DECL_KEYWORD_RE}\\s*$`).test(linePrefix)) {
         return ioInfo.outputs.map((out) => {
             const item = new vscode.CompletionItem(out.name, vscode.CompletionItemKind.Variable);
             item.insertText = new vscode.SnippetString(`${out.name} ~ ${out.name}Tex RES ${out.sizeHint || "[${1:w} x ${2:h}]"} ${out.resourceHint || "${3:TauFloatTex}"} \${4:TexUnit0}`);
@@ -599,10 +746,37 @@ function buildProgramTex2DCompletions(document, text, position, programBlock, te
         });
     }
 
-    const tex2DLine = linePrefix.match(/^\s*tex2D\s+([A-Za-z_]\w*)\s*~\s*([A-Za-z_]\w*)?(?:\s+RES)?(?:\s+(\[[^\]]*\]))?(?:\s+([A-Za-z_]\w*))?(?:\s+(?:TexUnit|texUnit)?[A-Za-z0-9_]*)?$/);
-    if (tex2DLine) {
-        const internalName = tex2DLine[1];
+    if (missingInternalDeclMatch) {
+        const insertionCharacter = lineText.indexOf(missingInternalDeclMatch[1]) + missingInternalDeclMatch[1].length + missingInternalDeclMatch[2].length;
+        return ioInfo.outputs.map((out) => {
+            const item = new vscode.CompletionItem(out.name, vscode.CompletionItemKind.Variable);
+            item.insertText = out.name;
+            item.range = new vscode.Range(position.line, insertionCharacter, position.line, insertionCharacter);
+            item.detail = "fragment output";
+            return item;
+        });
+    }
+
+    const texDecl = parseTex2DDeclarationLine(lineText);
+    if (texDecl) {
+        const internalName = texDecl.internalName;
         const output = ioInfo.outputByName.get(internalName);
+        const keywordStart = lineText.search(new RegExp(TEX2D_DECL_KEYWORD_RE));
+        const nameStart = keywordStart + texDecl.keyword.length + 1;
+        const nameEnd = nameStart + texDecl.internalName.length;
+        const hasExistingStructure = /\bRES\b/.test(texDecl.tail) || /\b(?:TexUnit|texUnit)\d+\b/.test(texDecl.tail);
+        const shouldOnlyReplaceInternalName = hasExistingStructure && position.character >= nameStart && position.character <= nameEnd + 1;
+
+        if (shouldOnlyReplaceInternalName) {
+            return ioInfo.outputs.map((out) => {
+                const item = new vscode.CompletionItem(out.name, vscode.CompletionItemKind.Variable);
+                item.insertText = out.name;
+                item.range = new vscode.Range(position.line, nameStart, position.line, nameEnd);
+                item.detail = "fragment output";
+                return item;
+            });
+        }
+
         if (!/\sRES\b/.test(linePrefix)) {
             const item = new vscode.CompletionItem("RES", vscode.CompletionItemKind.Keyword);
             item.insertText = "RES";
@@ -671,14 +845,18 @@ function parseProgramTextureDefinitions(text, sourcePath = "") {
         const fragPath = match[2] || "";
         const body = match[3] || "";
         const textures = [];
-        const texRegex = /^\s*tex2D\s+([A-Za-z_]\w*)(?:\s*\|\s*([A-Za-z_]\w*)|\s*~\s*([A-Za-z_]\w*))?/gm;
+        const texRegex = new RegExp(`^\\s*(${TEX2D_DECL_KEYWORD_RE})\\s+([A-Za-z_]\\w*)(?:\\s*\\|\\s*([A-Za-z_]\\w*)|\\s*~\\s*([A-Za-z_]\\w*))?`, "gm");
         let texMatch;
         while ((texMatch = texRegex.exec(body)) !== null) {
-            if (texMatch[3]) {
-                textures.push({ name: texMatch[3], isTexture: true });
+            const keyword = texMatch[1];
+            const internalName = texMatch[2];
+            const aliasPipe = texMatch[3];
+            const aliasTilde = texMatch[4];
+            if (aliasTilde) {
+                textures.push({ name: aliasTilde, isTexture: true, internalName, keyword });
             } else {
-                textures.push({ name: texMatch[1], isTexture: true });
-                if (texMatch[2]) textures.push({ name: texMatch[2], isTexture: true });
+                textures.push({ name: internalName, isTexture: true, internalName, keyword });
+                if (aliasPipe) textures.push({ name: aliasPipe, isTexture: true, internalName, keyword });
             }
         }
         defs.set(programName, { textures, fragPath, sourcePath });
@@ -737,17 +915,23 @@ function readFragmentShaderIO(programDef) {
         const fragText = fs.readFileSync(resolved, "utf8");
         const outputs = [];
         const regexes = [
-            /^\s*layout\s*\([^\)]*\)\s*out\s+([A-Za-z_][A-Za-z0-9_]*)\s+([A-Za-z_]\w*)\s*;\s*(?:\/\/|\/\*!?|\/\/\!|\*\/)?\s*(.*)$/gm,
-            /^\s*out\s+([A-Za-z_][A-Za-z0-9_]*)\s+([A-Za-z_]\w*)\s*;\s*(?:\/\/|\/\*!?|\/\/\!|\*\/)?\s*(.*)$/gm,
+            /^[ \t]*layout[ \t]*\([^\)]*\)[ \t]*out\s+([A-Za-z_][A-Za-z0-9_]*)\s+([A-Za-z_]\w*)[ \t]*;[ \t]*(?:\/\/|\/\*!?|\/\/\!|\*\/)?[ \t]*(.*)$/gm,
+            /^[ \t]*out\s+([A-Za-z_][A-Za-z0-9_]*)\s+([A-Za-z_]\w*)[ \t]*;[ \t]*(?:\/\/|\/\*!?|\/\/\!|\*\/)?[ \t]*(.*)$/gm,
         ];
+        const seenNames = new Set();
         for (const regex of regexes) {
             let match;
             while ((match = regex.exec(fragText)) !== null) {
                 const comment = match[3] || "";
                 const sizeMatch = comment.match(/size\s*:\s*(\[[^\]]+\])/i);
+                const outputName = match[2];
+                if (seenNames.has(outputName)) {
+                    continue;
+                }
+                seenNames.add(outputName);
                 outputs.push({
                     type: match[1],
-                    name: match[2],
+                    name: outputName,
                     sizeHint: sizeMatch ? sizeMatch[1] : "",
                     resourceHint: "",
                 });
@@ -757,6 +941,362 @@ function readFragmentShaderIO(programDef) {
     } catch {
         return empty;
     }
+}
+
+function parseDrawHeaderOutputs(code) {
+    const match = code.match(/^\s*(?:drawPoints|drawLineStrip|drawLineLoop|drawLines|drawTriangleStrip|drawTriangleFan|drawTriangles)\b[\s\S]*?->\s*\[([^\]]*)\]/);
+    if (!match) return [];
+    return match[1].split(",").map((item) => item.trim()).filter(Boolean);
+}
+
+function analyzeDrawBlock(lines, startLine) {
+    const rebinds = new Map();
+    let hasFramebuffer = false;
+    let depth = countNetBraces(stripLineComment(lines[startLine] || ""));
+    let endLine = startLine;
+    for (let lineNo = startLine + 1; lineNo < lines.length; lineNo++) {
+        const code = stripLineComment(lines[lineNo] || "");
+        if (/^\s*framebuffer\s*:/.test(code) || /^\s*framebuffer\b/.test(code)) {
+            hasFramebuffer = true;
+        }
+        const pairRegex = /([A-Za-z_]\w*)\s*->\s*(?:TexUnit|texUnit)?(\d+)/g;
+        let pair;
+        while ((pair = pairRegex.exec(code)) !== null) {
+            rebinds.set(pair[1], Number.parseInt(pair[2], 10));
+        }
+        depth += countNetBraces(code);
+        endLine = lineNo;
+        if (depth <= 0) {
+            break;
+        }
+    }
+    return { endLine, rebinds, hasFramebuffer };
+}
+
+function collectProgramDrawOutputTargets(text) {
+    const lines = text.split(/\r?\n/);
+    const byProgram = new Map();
+    let currentProgram = null;
+    let pendingFramebufferOutputs = null;
+    for (let lineNo = 0; lineNo < lines.length; lineNo++) {
+        const code = stripLineComment(lines[lineNo]);
+        const useMatch = code.match(/^\s*(?:lduse|use)\s+([A-Za-z_]\w*)\b/);
+        if (useMatch) {
+            currentProgram = useMatch[1];
+        }
+        const framebufferInlineMatch = code.match(/^\s*framebuffer\s+[A-Za-z_]\w*\s*\[([^\]]*)\]/);
+        if (currentProgram && framebufferInlineMatch) {
+            pendingFramebufferOutputs = framebufferInlineMatch[1]
+                .split(",")
+                .map((item) => item.trim())
+                .filter(Boolean);
+        }
+        const outputs = parseDrawHeaderOutputs(code);
+        if (!currentProgram || outputs.length === 0) continue;
+        const blockInfo = analyzeDrawBlock(lines, lineNo);
+        if (pendingFramebufferOutputs?.length) {
+            if (!byProgram.has(currentProgram)) {
+                byProgram.set(currentProgram, []);
+            }
+            byProgram.get(currentProgram).push(pendingFramebufferOutputs[0]);
+            pendingFramebufferOutputs = null;
+        } else if (blockInfo.hasFramebuffer) {
+            if (!byProgram.has(currentProgram)) {
+                byProgram.set(currentProgram, []);
+            }
+            byProgram.get(currentProgram).push(outputs[0]);
+        }
+        lineNo = Math.max(lineNo, blockInfo.endLine);
+    }
+    for (const [program, values] of byProgram.entries()) {
+        byProgram.set(program, [...new Set(values)]);
+    }
+    return byProgram;
+}
+
+function findCurrentBoundProgramName(text, position) {
+    const lines = text.split(/\r?\n/);
+    let currentProgram = null;
+    for (let lineNo = 0; lineNo <= position.line && lineNo < lines.length; lineNo++) {
+        const code = stripLineComment(lines[lineNo]);
+        const useMatch = code.match(/^\s*(?:lduse|use)\s+([A-Za-z_]\w*)\b/);
+        if (useMatch) {
+            currentProgram = useMatch[1];
+        }
+    }
+    return currentProgram;
+}
+
+function parseProgramOutAliases(text) {
+    const byProgram = new Map();
+    const lines = text.split(/\r?\n/);
+    let currentProgram = null;
+    for (let lineNo = 0; lineNo < lines.length; lineNo++) {
+        const code = stripLineComment(lines[lineNo]);
+        const programMatch = code.match(/^\s*program\s+([A-Za-z_]\w*)(?:\s*\|\s*[A-Za-z_]\w*)?\s+"([^"]+)"\s*\{/);
+        if (programMatch) {
+            currentProgram = programMatch[1];
+            if (!byProgram.has(currentProgram)) byProgram.set(currentProgram, new Map());
+            continue;
+        }
+        const aliasMatch = code.match(/^\s*out-aliases\s+([A-Za-z_]\w*)\s*:\s*(.*)$/);
+        if (!currentProgram || !aliasMatch) continue;
+        const aliasName = aliasMatch[1];
+        const values = [];
+        let tail = (aliasMatch[2] || "").trim();
+        if (tail.startsWith("[")) {
+            tail = tail.slice(1).trim();
+        }
+        if (tail && tail !== "]") {
+            values.push(...tail.replace(/\]$/, "").split(/\s+/).filter(Boolean));
+        }
+        while (!/\]\s*$/.test(lines[lineNo] || "")) {
+            lineNo++;
+            if (lineNo >= lines.length) break;
+            const more = stripLineComment(lines[lineNo]).trim();
+            if (!more || more === "]") continue;
+            values.push(...more.replace(/\]$/, "").split(/\s+/).filter(Boolean));
+        }
+        byProgram.get(currentProgram).set(aliasName, values);
+    }
+    return byProgram;
+}
+
+function findEnclosingOutAliasesContext(text, position, sourcePath = "") {
+    const lines = text.split(/\r?\n/);
+    const currentProgram = findEnclosingProgramDefinition(text, position, sourcePath);
+    for (let lineNo = position.line; lineNo >= 0; lineNo--) {
+        const code = stripLineComment(lines[lineNo]);
+        const match = code.match(/^\s*out-aliases\s+([A-Za-z_]\w*)\s*:\s*(.*)$/);
+        if (!match) continue;
+        let endLine = lineNo;
+        while (endLine < lines.length && !/\]\s*$/.test(lines[endLine])) {
+            endLine++;
+        }
+        if (position.line < lineNo || position.line > endLine) continue;
+        return {
+            programDef: currentProgram,
+            aliasName: match[1],
+            startLine: lineNo,
+            endLine,
+        };
+    }
+    return null;
+}
+
+function countNetBraces(code) {
+    const opens = (code.match(/\{/g) || []).length;
+    const closes = (code.match(/\}/g) || []).length;
+    return opens - closes;
+}
+
+function isSpecialDrawBlockType(type) {
+    return /^draw(?:Triangles|POINTS|LINE_STRIP|LINE_LOOP|LINES|TRIANGLE_STRIP|TRIANGLE_FAN|TRIANGLES)?$/i.test(String(type || ""));
+}
+
+function parseNamedAssignedBlocks(text, document) {
+    const lines = text.split(/\r?\n/);
+    const blocks = new Map();
+    const stack = [];
+    let depth = 0;
+
+    for (let lineNo = 0; lineNo < lines.length; lineNo++) {
+        const line = lines[lineNo];
+        const code = stripLineComment(line);
+        const headerMatch = code.match(/^\s*([A-Za-z_]\w*)\s*=\s*([A-Za-z_]\w*)\b[^{]*\{/);
+        if (headerMatch) {
+            const name = headerMatch[1];
+            const type = headerMatch[2];
+            stack.push({
+                name,
+                type,
+                startLine: lineNo,
+                startDepth: depth + 1,
+                startOffset: document.offsetAt(new vscode.Position(lineNo, 0)),
+                nameStart: line.indexOf(name),
+            });
+        }
+
+        depth += countNetBraces(code);
+        while (stack.length && depth < stack[stack.length - 1].startDepth) {
+            const block = stack.pop();
+            const nameStart = block.startOffset + Math.max(0, block.nameStart);
+            blocks.set(block.name, {
+                name: block.name,
+                type: block.type,
+                startLine: block.startLine,
+                endLine: lineNo,
+                nameRange: rangeFromOffsets(document, nameStart, nameStart + block.name.length),
+            });
+        }
+    }
+
+    return blocks;
+}
+
+function extractUniformEntriesFromLines(lines, startLine, endLine) {
+    const assignments = [];
+    const includes = [];
+    for (let lineNo = startLine; lineNo <= endLine; lineNo++) {
+        const rawLine = lines[lineNo] || "";
+        const code = stripLineComment(rawLine);
+        if (!code.trim()) continue;
+
+        const assignmentRegex = /\b([A-Za-z_]\w*)\s*=/g;
+        let assignmentMatch;
+        while ((assignmentMatch = assignmentRegex.exec(code)) !== null) {
+            assignments.push({
+                name: assignmentMatch[1],
+                lineNo,
+                start: assignmentMatch.index,
+                end: assignmentMatch.index + assignmentMatch[1].length,
+            });
+        }
+
+        const includeMatch = code.match(/^\s*([A-Za-z_]\w*)\s*[;,]?\s*$/);
+        if (includeMatch) {
+            includes.push({
+                name: includeMatch[1],
+                lineNo,
+                start: includeMatch.index + includeMatch[0].indexOf(includeMatch[1]),
+                end: includeMatch.index + includeMatch[0].indexOf(includeMatch[1]) + includeMatch[1].length,
+            });
+        }
+    }
+    return { assignments, includes };
+}
+
+function resolveUniformNamesFromNamedBlock(blockName, namedBlocks, lines, cache, visiting = new Set()) {
+    if (cache.has(blockName)) return cache.get(blockName);
+    if (visiting.has(blockName)) return new Set();
+    visiting.add(blockName);
+
+    const block = namedBlocks.get(blockName);
+    if (!block || block.type !== "uniforms") {
+        const empty = new Set();
+        cache.set(blockName, empty);
+        visiting.delete(blockName);
+        return empty;
+    }
+
+    const resolved = new Set();
+    const entries = extractUniformEntriesFromLines(lines, block.startLine + 1, Math.max(block.startLine + 1, block.endLine - 1));
+    for (const assignment of entries.assignments) {
+        resolved.add(assignment.name);
+    }
+    for (const include of entries.includes) {
+        const nested = resolveUniformNamesFromNamedBlock(include.name, namedBlocks, lines, cache, visiting);
+        for (const uniformName of nested) {
+            resolved.add(uniformName);
+        }
+    }
+
+    cache.set(blockName, resolved);
+    visiting.delete(blockName);
+    return resolved;
+}
+
+function buildUniformBlockDiagnostics(document, text, namedBlocks) {
+    const lines = text.split(/\r?\n/);
+    const uniformNameCache = new Map();
+    const overrideOptions = [];
+    const duplicateErrorOptions = [];
+    let depth = 0;
+    const uniformsStack = [];
+
+    const pushUniformContext = (lineNo, kind, blockName = "") => {
+        uniformsStack.push({
+            kind,
+            blockName,
+            startDepth: depth + 1,
+            occurrences: [],
+            startLine: lineNo,
+        });
+    };
+
+    const pushRangeMessage = (target, range, message) => {
+        target.push({
+            range,
+            hoverMessage: new vscode.MarkdownString(message),
+        });
+    };
+
+    const analyzeUniformContext = (ctx) => {
+        const seen = new Map();
+        for (const occurrence of ctx.occurrences) {
+            const previous = seen.get(occurrence.uniformName);
+            if (!previous) {
+                seen.set(occurrence.uniformName, occurrence);
+                continue;
+            }
+
+            if (occurrence.source === "explicit" && previous.source === "include") {
+                pushRangeMessage(
+                    overrideOptions,
+                    occurrence.range,
+                    `\`${occurrence.uniformName}\` sobrescribe el valor heredado desde \`${previous.blockName}\`. La asignacion explicita gana.`,
+                );
+                seen.set(occurrence.uniformName, occurrence);
+                continue;
+            }
+
+            const previousLabel = previous.source === "include"
+                ? `ya llega desde \`${previous.blockName}\``
+                : "ya estaba asignado antes en este mismo bloque";
+            pushRangeMessage(
+                duplicateErrorOptions,
+                occurrence.range,
+                `Uniform duplicado: \`${occurrence.uniformName}\` ${previousLabel}.`,
+            );
+            seen.set(occurrence.uniformName, occurrence);
+        }
+    };
+
+    for (let lineNo = 0; lineNo < lines.length; lineNo++) {
+        const line = lines[lineNo];
+        const code = stripLineComment(line);
+        const lineStart = document.offsetAt(new vscode.Position(lineNo, 0));
+        const namedUniformHeaderMatch = code.match(/^\s*([A-Za-z_]\w*)\s*=\s*uniforms\b[^{]*\{/);
+        const plainUniformHeaderMatch = code.match(/^\s*uniforms\b(?:\s+([A-Za-z_]\w*))?\b[^{]*\{/);
+        const opensUniformBlock = Boolean(namedUniformHeaderMatch || plainUniformHeaderMatch);
+
+        if (opensUniformBlock) {
+            pushUniformContext(lineNo, namedUniformHeaderMatch ? "named" : "inline", namedUniformHeaderMatch?.[1] || plainUniformHeaderMatch?.[1] || "");
+        } else if (uniformsStack.length) {
+            const current = uniformsStack[uniformsStack.length - 1];
+            const entries = extractUniformEntriesFromLines(lines, lineNo, lineNo);
+            for (const assignment of entries.assignments) {
+                current.occurrences.push({
+                    uniformName: assignment.name,
+                    source: "explicit",
+                    blockName: current.blockName,
+                    range: rangeFromOffsets(document, lineStart + assignment.start, lineStart + assignment.end),
+                });
+            }
+            for (const include of entries.includes) {
+                const includedNames = resolveUniformNamesFromNamedBlock(include.name, namedBlocks, lines, uniformNameCache);
+                for (const includedName of includedNames) {
+                    current.occurrences.push({
+                        uniformName: includedName,
+                        source: "include",
+                        blockName: include.name,
+                        range: rangeFromOffsets(document, lineStart + include.start, lineStart + include.end),
+                    });
+                }
+            }
+        }
+
+        depth += countNetBraces(code);
+        while (uniformsStack.length && depth < uniformsStack[uniformsStack.length - 1].startDepth) {
+            analyzeUniformContext(uniformsStack.pop());
+        }
+    }
+
+    while (uniformsStack.length) {
+        analyzeUniformContext(uniformsStack.pop());
+    }
+
+    return { overrideOptions, duplicateErrorOptions };
 }
 
 function buildTexUnitCompletionItems(text, targetName) {
@@ -788,11 +1328,11 @@ function collectTextureUnitUsage(text) {
     for (const line of lines) {
         const code = stripLineComment(line);
         if (!code.trim()) continue;
-        const texDecl = code.match(/\btex2D\b[\s\S]*?\b([A-Za-z_]\w*)(?:\s*\|\s*([A-Za-z_]\w*)|\s*~\s*([A-Za-z_]\w*))?[\s\S]*?\b(?:TexUnit|texUnit)(\d+)\b/);
-        if (texDecl) {
-            const unit = Number.parseInt(texDecl[4], 10);
+        const texDecl = parseTex2DDeclarationLine(code);
+        const unit = extractTex2DUnitIndex(code);
+        if (texDecl && unit !== null) {
             unitUseCount.set(unit, (unitUseCount.get(unit) || 0) + 1);
-            const names = [texDecl[1], texDecl[2], texDecl[3]].filter(Boolean);
+            const names = [texDecl.internalName, texDecl.aliasName].filter(Boolean);
             for (const name of names) {
                 nameToUnit.set(name, unit);
                 textureDeclaredUnit.set(name, unit);
@@ -859,11 +1399,40 @@ function rankTexUnitsForTarget(usage, targetName) {
 
 function findEnclosingRebindProgram(text, position) {
     const lines = text.split(/\r?\n/);
+    let insideAnonymousRebind = false;
     for (let lineNo = position.line; lineNo >= 0; lineNo--) {
-        const line = lines[lineNo];
+        const line = stripLineComment(lines[lineNo]);
         const match = line.match(/^\s*rebind\s+([A-Za-z_]\w*)\s*\{/);
         if (match) return match[1];
-        if (/^\s*}\s*$/.test(line) && lineNo !== position.line) break;
+        if (/^\s*rebind\s*\{/.test(line)) {
+            insideAnonymousRebind = true;
+            continue;
+        }
+        if (insideAnonymousRebind) {
+            const useMatch = line.match(/^\s*(?:lduse|use)\s+([A-Za-z_]\w*)\b/);
+            if (useMatch) return useMatch[1];
+        }
+        if (/^\s*}\s*$/.test(line) && lineNo !== position.line && !insideAnonymousRebind) break;
+    }
+    return null;
+}
+
+function findEnclosingUniformsProgram(text, position) {
+    const lines = text.split(/\r?\n/);
+    let insideAnonymousUniforms = false;
+    for (let lineNo = position.line; lineNo >= 0; lineNo--) {
+        const line = stripLineComment(lines[lineNo]);
+        const namedMatch = line.match(/^\s*uniforms\s+([A-Za-z_]\w*)\s*\{/);
+        if (namedMatch) return namedMatch[1];
+        if (/^\s*uniforms\s*\{/.test(line)) {
+            insideAnonymousUniforms = true;
+            continue;
+        }
+        if (insideAnonymousUniforms) {
+            const useMatch = line.match(/^\s*(?:lduse|use)\s+([A-Za-z_]\w*)\b/);
+            if (useMatch) return useMatch[1];
+        }
+        if (/^\s*}\s*$/.test(line) && lineNo !== position.line && !insideAnonymousUniforms) break;
     }
     return null;
 }
@@ -981,12 +1550,27 @@ function refreshEditorDecorations(editor) {
     const resourceNameRanges = [];
     const textureFormatRanges = [];
     const textureTextLikeRanges = [];
-    const invalidShaderBindingRanges = [];
+    const shaderDslKeywordRanges = [];
+    const namedBlockVariableRanges = [];
+    const namedBlockUsageRanges = [];
+    const uniformsAssignmentNameRanges = [];
+    const invalidShaderBindingOptions = [];
+    const warningOptions = [];
+    const duplicateUniformErrorOptions = [];
+    const uniformOverrideOptions = [];
     const dimensionXRanges = [];
     const rebindSquareRangesByUnit = TEX_UNIT_COLORS.map(() => []);
     const rebindEmptySquareRanges = [];
     const text = editor.document.getText();
     const tagDefinitions = isShaderDsl ? parseDefineTagBlocks(text) : null;
+    const namedBlocks = isShaderDsl ? parseNamedAssignedBlocks(text, editor.document) : new Map();
+
+    for (const [key, decoration] of dynamicDecorationCache.entries()) {
+        if (key.includes("\"contentText\"")) {
+            continue;
+        }
+        editor.setDecorations(decoration, []);
+    }
 
     if (isSnippet) {
         collectPlaceholderDecorations(editor.document, text, optionRanges, delimiterRanges);
@@ -1013,11 +1597,20 @@ function refreshEditorDecorations(editor) {
             resourceNameRanges,
             textureFormatRanges,
             textureTextLikeRanges,
-            invalidShaderBindingRanges,
+            shaderDslKeywordRanges,
+            namedBlockVariableRanges,
+            namedBlockUsageRanges,
+            uniformsAssignmentNameRanges,
+            invalidShaderBindingOptions,
+            warningOptions,
             dimensionXRanges,
             rebindSquareRangesByUnit,
             rebindEmptySquareRanges,
+            namedBlocks,
         );
+        const uniformDiagnostics = buildUniformBlockDiagnostics(editor.document, text, namedBlocks);
+        duplicateUniformErrorOptions.push(...uniformDiagnostics.duplicateErrorOptions);
+        uniformOverrideOptions.push(...uniformDiagnostics.overrideOptions);
     }
 
     optionDecorations.forEach((decoration, index) => {
@@ -1042,7 +1635,12 @@ function refreshEditorDecorations(editor) {
     editor.setDecorations(resourceNameDecoration, resourceNameRanges);
     editor.setDecorations(textureFormatDecoration, textureFormatRanges);
     editor.setDecorations(textureTextLikeDecoration, textureTextLikeRanges);
-    editor.setDecorations(invalidShaderBindingDecoration, invalidShaderBindingRanges);
+    editor.setDecorations(shaderDslKeywordDecoration, shaderDslKeywordRanges);
+    editor.setDecorations(uniformsBlockVariableDecoration, namedBlockVariableRanges.concat(namedBlockUsageRanges));
+    editor.setDecorations(uniformsAssignmentNameDecoration, uniformsAssignmentNameRanges);
+    editor.setDecorations(uniformOverrideDecoration, uniformOverrideOptions);
+    editor.setDecorations(invalidShaderBindingDecoration, invalidShaderBindingOptions.concat(duplicateUniformErrorOptions));
+    editor.setDecorations(warningDecoration, warningOptions);
     editor.setDecorations(dimensionXDecoration, dimensionXRanges);
     textureBindingDecorations.forEach((d, i) => {
         const squareDecoration = getOrCreateDecoration({
@@ -1246,6 +1844,7 @@ function collectTexUnitAndTextureDecorations(document, text, texUnitRanges, text
     const programNames = new Set();
     const nonTextureNames = new Set();
     const isTextureArrowContext = (line) => /\brebind\b/.test(line) || /^\s*[A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)*\s*->/.test(line);
+    let currentBoundProgram = null;
 
     const findAliasRoot = (name) => {
         let current = name;
@@ -1273,18 +1872,18 @@ function collectTexUnitAndTextureDecorations(document, text, texUnitRanges, text
     };
 
     const parseTextureDecl = (line) => {
-        const tex2DMatch = line.match(/\btex2D\s+([A-Za-z_]\w*)(?:\s*\|\s*([A-Za-z_]\w*)|\s*~\s*([A-Za-z_]\w*))?(?:[\s\S]*?)\b(?:TexUnit|texUnit)(\d+)\b(?:\s*<=|\s*$)/);
-        if (tex2DMatch) {
-            const unitIndex = Number.parseInt(tex2DMatch[4], 10);
-            if (tex2DMatch[3]) {
-                nonTextureNames.add(tex2DMatch[1]);
-                registerAssociation(tex2DMatch[3], unitIndex);
+        const texDecl = parseTex2DDeclarationLine(line);
+        const unitIndex = extractTex2DUnitIndex(line);
+        if (texDecl && unitIndex !== null) {
+            if (texDecl.aliasOperator === "~" && texDecl.aliasName) {
+                nonTextureNames.add(texDecl.internalName);
+                registerAssociation(texDecl.aliasName, unitIndex);
             } else {
-                if (tex2DMatch[2]) {
-                    registerAssociation(tex2DMatch[1], unitIndex);
-                    registerAssociation(tex2DMatch[2], unitIndex);
+                if (texDecl.aliasOperator === "|" && texDecl.aliasName) {
+                    registerAssociation(texDecl.internalName, unitIndex);
+                    registerAssociation(texDecl.aliasName, unitIndex);
                 } else {
-                    registerAssociation(tex2DMatch[1], unitIndex);
+                    registerAssociation(texDecl.internalName, unitIndex);
                 }
             }
             return;
@@ -1356,7 +1955,7 @@ function collectTexUnitAndTextureDecorations(document, text, texUnitRanges, text
             pushExplicitRange(match.index, match[0], Number.parseInt(match[1], 10));
         }
 
-        const tex2DUnitRegex = /\btex2D\b[\s\S]*?\]\s+[A-Za-z_]\w*\s+((?:TexUnit|texUnit)\d+|\d+)\b(?:\s*<=|\s*$)/g;
+        const tex2DUnitRegex = /\b(?:new-|in-)?tex2D\b[\s\S]*?\]\s+[A-Za-z_]\w*\s+((?:TexUnit|texUnit)\d+|\d+)\b(?:\s*<=|\s*$)/g;
         while ((match = tex2DUnitRegex.exec(code)) !== null) {
             const token = match[1];
             const unitIndex = normalizeUnitToken(token);
@@ -1430,6 +2029,11 @@ function collectTexUnitAndTextureDecorations(document, text, texUnitRanges, text
         const code = stripLineComment(line);
         if (!code.trim()) continue;
         const lineStart = document.offsetAt(new vscode.Position(lineNo, 0));
+        const useMatch = code.match(/^\s*(?:lduse|use)\s+([A-Za-z_]\w*)\b/);
+        if (useMatch) {
+            currentBoundProgram = useMatch[1];
+            programNames.add(currentBoundProgram);
+        }
 
         parseTextureDecl(code);
         parseAliasAssignments(code);
@@ -1442,6 +2046,20 @@ function collectTexUnitAndTextureDecorations(document, text, texUnitRanges, text
             for (const part of parts) {
                 for (const [name, unit] of parseRebindSegments(part)) {
                     registerAssociation(name, unit);
+                }
+            }
+        }
+
+        const drawOutputs = parseDrawHeaderOutputs(code);
+        const drawHeaderEffectiveUnits = new Map();
+        if (currentBoundProgram && drawOutputs.length) {
+            const blockInfo = analyzeDrawBlock(lines, lineNo);
+            for (const outputName of drawOutputs) {
+                const reboundUnit = blockInfo.rebinds.get(outputName);
+                const effectiveUnit = reboundUnit ?? currentTextureByName.get(outputName);
+                if (effectiveUnit !== undefined) {
+                    drawHeaderEffectiveUnits.set(outputName, effectiveUnit);
+                    registerAssociation(outputName, effectiveUnit);
                 }
             }
         }
@@ -1470,6 +2088,12 @@ function collectTexUnitAndTextureDecorations(document, text, texUnitRanges, text
                 continue;
             }
 
+            const overriddenUnit = drawHeaderEffectiveUnits.get(token);
+            if (overriddenUnit !== undefined) {
+                textureRanges[overriddenUnit].push(rangeFromOffsets(document, absStart, absEnd));
+                continue;
+            }
+
             const mappedUnit = currentTextureByName.get(token);
             if (mappedUnit !== undefined) {
                 textureRanges[mappedUnit].push(rangeFromOffsets(document, absStart, absEnd));
@@ -1484,18 +2108,46 @@ function collectResourceAndDslVisuals(
     resourceNameRanges,
     textureFormatRanges,
     textureTextLikeRanges,
-    invalidShaderBindingRanges,
+    shaderDslKeywordRanges,
+    namedBlockVariableRanges,
+    namedBlockUsageRanges,
+    uniformsAssignmentNameRanges,
+    invalidShaderBindingOptions,
+    warningOptions,
     dimensionXRanges,
     rebindSquareRangesByUnit,
     rebindEmptySquareRanges,
+    namedBlocks,
 ) {
     const lines = text.split(/\r?\n/);
     const resourceDefs = parseResourceDefinitions(text);
     const texExampleNames = getTexExampleNames();
     const programTextureDefs = parseProgramTextureDefinitions(text);
+    const allKnownTextureNames = new Set(
+        Array.from(programTextureDefs.values()).flatMap((programDef) => (programDef?.textures || []).map((entry) => entry.name))
+    );
+    const programOutAliases = parseProgramOutAliases(text);
+    const drawOutputTargetsByProgram = collectProgramDrawOutputTargets(text);
     const currentTextureByName = new Map();
     let currentRebindProgram = null;
+    let currentBoundProgram = null;
     let currentProgram = null;
+    let depth = 0;
+    let insideUniformsBlock = false;
+    const pendingTextureUpdates = [];
+
+    const pushErrorOption = (range, message) => {
+        invalidShaderBindingOptions.push({
+            range,
+            hoverMessage: new vscode.MarkdownString(message),
+        });
+    };
+    const pushWarningOption = (range, message) => {
+        warningOptions.push({
+            range,
+            hoverMessage: new vscode.MarkdownString(message),
+        });
+    };
 
     const registerTextureName = (name, unitIndex) => {
         if (!name || unitIndex < 0 || unitIndex >= TEX_UNIT_COLORS.length) return;
@@ -1519,6 +2171,43 @@ function collectResourceAndDslVisuals(
             currentProgram = null;
         }
 
+        const useMatch = code.match(/^\s*(?:lduse|use)\s+([A-Za-z_]\w*)\b/);
+        if (useMatch) {
+            currentBoundProgram = useMatch[1];
+        }
+
+        const outAliasesMatch = code.match(/^\s*(out-aliases)\s+([A-Za-z_]\w*)\s*:/);
+        if (outAliasesMatch) {
+            const keywordStart = line.indexOf(outAliasesMatch[1]);
+            shaderDslKeywordRanges.push(rangeFromOffsets(document, lineStart + keywordStart, lineStart + keywordStart + outAliasesMatch[1].length));
+            const aliasName = outAliasesMatch[2];
+            const aliasStart = line.indexOf(aliasName, keywordStart + outAliasesMatch[1].length);
+            if (aliasStart >= 0) {
+                textureTextLikeRanges.push(rangeFromOffsets(document, lineStart + aliasStart, lineStart + aliasStart + aliasName.length));
+                const shaderIO = readFragmentShaderIO(currentProgram);
+                if (!shaderIO.outputByName.has(aliasName)) {
+                    pushErrorOption(
+                        rangeFromOffsets(document, lineStart + aliasStart, lineStart + aliasStart + aliasName.length),
+                        `\`${aliasName}\` no existe como salida del fragment shader del programa \`${currentProgram?.name || "desconocido"}\`.`,
+                    );
+                } else {
+                    const expected = drawOutputTargetsByProgram.get(currentProgram?.name || "") || [];
+                    const declared = programOutAliases.get(currentProgram?.name || "")?.get(aliasName) || [];
+                    const missing = expected.filter((name) => !declared.includes(name));
+                    const extras = declared.filter((name) => !expected.includes(name));
+                    if (missing.length || extras.length || expected.length !== declared.length) {
+                        const details = [];
+                        if (missing.length) details.push(`faltan: \`${missing.join(" ")}\``);
+                        if (extras.length) details.push(`sobran: \`${extras.join(" ")}\``);
+                        pushWarningOption(
+                            rangeFromOffsets(document, lineStart + aliasStart, lineStart + aliasStart + aliasName.length),
+                            `\`out-aliases ${aliasName}\` no coincide con las primeras salidas usadas por \`${currentProgram?.name || "desconocido"}\`. Esperado: \`${expected.join(" ")}\`${details.length ? `. ${details.join(". ")}.` : "."}`,
+                        );
+                    }
+                }
+            }
+        }
+
         const resourceMatch = code.match(/^\s*resource\s+([A-Za-z_]\w*)(?:\s*-\s*([^{}]*?)\s*-)?\s*\{/);
         if (resourceMatch) {
             const name = resourceMatch[1];
@@ -1526,21 +2215,77 @@ function collectResourceAndDslVisuals(
             resourceNameRanges.push(rangeFromOffsets(document, lineStart + start, lineStart + start + name.length));
         }
 
-        const texDeclMatch = code.match(/\btex2D\s+([A-Za-z_]\w*)(?:\s*\|\s*([A-Za-z_]\w*)|\s*~\s*([A-Za-z_]\w*))?[\s\S]*?\b([A-Za-z_]\w*|"(?:[^"]*)")\s+(?:TexUnit|texUnit)(\d+)\b/);
-        if (texDeclMatch) {
-            if (texDeclMatch[3]) {
-                const textLikeStart = line.indexOf(texDeclMatch[1]);
-                textureTextLikeRanges.push(rangeFromOffsets(document, lineStart + textLikeStart, lineStart + textLikeStart + texDeclMatch[1].length));
-                const shaderIO = readFragmentShaderIO(currentProgram);
-                if (!shaderIO.outputByName.has(texDeclMatch[1]) && !readFragmentSamplerUniformNames(currentProgram).includes(texDeclMatch[1])) {
-                    invalidShaderBindingRanges.push(rangeFromOffsets(document, lineStart + textLikeStart, lineStart + textLikeStart + texDeclMatch[1].length));
+        const namedBlockAssignmentMatch = code.match(/^\s*([A-Za-z_]\w*)\s*=\s*([A-Za-z_]\w*)\b[^{]*\{/);
+        if (namedBlockAssignmentMatch && !isSpecialDrawBlockType(namedBlockAssignmentMatch[2])) {
+            const name = namedBlockAssignmentMatch[1];
+            const start = line.indexOf(name);
+            namedBlockVariableRanges.push(rangeFromOffsets(document, lineStart + start, lineStart + start + name.length));
+        }
+
+        if (depth > 0) {
+            const namedBlockUsageMatch = code.match(/^\s*([A-Za-z_]\w*)\s*[;,]?\s*$/);
+            if (namedBlockUsageMatch) {
+                const blockName = namedBlockUsageMatch[1];
+                const blockDef = namedBlocks.get(blockName);
+                if (blockDef && !isSpecialDrawBlockType(blockDef.type)) {
+                    const start = line.indexOf(blockName);
+                    namedBlockUsageRanges.push(rangeFromOffsets(document, lineStart + start, lineStart + start + blockName.length));
                 }
             }
-            if (texDeclMatch[3]) {
-                registerTextureName(texDeclMatch[3], Number.parseInt(texDeclMatch[5], 10));
+        }
+
+        const uniformsAssignmentBlockMatch = code.match(/^\s*([A-Za-z_]\w*)\s*=\s*uniforms\b[^{]*\{/);
+        if (uniformsAssignmentBlockMatch) {
+            insideUniformsBlock = true;
+        } else if (/^\s*uniforms\b[^{]*\{/.test(code)) {
+            insideUniformsBlock = true;
+        }
+
+        if (insideUniformsBlock) {
+            const assignmentNameRegex = /\b([A-Za-z_]\w*)\s*=\s*(?!\s*uniforms\b)/g;
+            let assignmentMatch;
+            while ((assignmentMatch = assignmentNameRegex.exec(code)) !== null) {
+                const name = assignmentMatch[1];
+                const start = lineStart + assignmentMatch.index;
+                uniformsAssignmentNameRanges.push(rangeFromOffsets(document, start, start + name.length));
+            }
+        }
+
+        const texDecl = parseTex2DDeclarationLine(code);
+        const texUnitIndex = extractTex2DUnitIndex(code);
+        if (texDecl && texUnitIndex !== null) {
+            if (texDecl.aliasOperator === "~" && texDecl.aliasName) {
+                const textLikeStart = line.indexOf(texDecl.internalName);
+                textureTextLikeRanges.push(rangeFromOffsets(document, lineStart + textLikeStart, lineStart + textLikeStart + texDecl.internalName.length));
+                if (!texDecl.isNewTexture) {
+                    const shaderIO = readFragmentShaderIO(currentProgram);
+                    if (!shaderIO.outputByName.has(texDecl.internalName) && !readFragmentSamplerUniformNames(currentProgram).includes(texDecl.internalName)) {
+                        pushErrorOption(
+                            rangeFromOffsets(document, lineStart + textLikeStart, lineStart + textLikeStart + texDecl.internalName.length),
+                            `\`${texDecl.internalName}\` no existe en el fragment shader del programa \`${currentProgram?.name || "desconocido"}\` como salida ni como sampler uniform.`,
+                        );
+                    }
+                }
+            } else if (!texDecl.isNewTexture && texDecl.aliasOperator !== "|") {
+                const shaderIO = readFragmentShaderIO(currentProgram);
+                const internalStart = line.indexOf(texDecl.internalName);
+                if (
+                    texDecl.internalName
+                    && internalStart >= 0
+                    && !shaderIO.outputByName.has(texDecl.internalName)
+                    && !readFragmentSamplerUniformNames(currentProgram).includes(texDecl.internalName)
+                ) {
+                    pushErrorOption(
+                        rangeFromOffsets(document, lineStart + internalStart, lineStart + internalStart + texDecl.internalName.length),
+                        `\`${texDecl.internalName}\` no existe en el fragment shader del programa \`${currentProgram?.name || "desconocido"}\` como salida ni como sampler uniform.`,
+                    );
+                }
+            }
+            if (texDecl.aliasOperator === "~" && texDecl.aliasName) {
+                registerTextureName(texDecl.aliasName, texUnitIndex);
             } else {
-                registerTextureName(texDeclMatch[1], Number.parseInt(texDeclMatch[5], 10));
-                if (texDeclMatch[2]) registerTextureName(texDeclMatch[2], Number.parseInt(texDeclMatch[5], 10));
+                registerTextureName(texDecl.internalName, texUnitIndex);
+                if (texDecl.aliasOperator === "|" && texDecl.aliasName) registerTextureName(texDecl.aliasName, texUnitIndex);
             }
         }
 
@@ -1552,6 +2297,25 @@ function collectResourceAndDslVisuals(
             const quoted = texArrMatch[4];
             const quotedStart = line.indexOf(quoted);
             textureTextLikeRanges.push(rangeFromOffsets(document, lineStart + quotedStart, lineStart + quotedStart + quoted.length));
+        }
+
+        const framebufferInlineMatch = code.match(/^\s*framebuffer\s+[A-Za-z_]\w*\s*\[([^\]]*)\]/);
+        if (framebufferInlineMatch) {
+            const outputs = framebufferInlineMatch[1].split(",").map((item) => item.trim()).filter(Boolean);
+            for (const outputName of outputs) {
+                const tokenIndex = line.indexOf(outputName);
+                if (tokenIndex < 0) continue;
+                if (!currentTextureByName.has(outputName)) {
+                    const isKnownTexture = allKnownTextureNames.has(outputName);
+                    if (isKnownTexture) {
+                        continue;
+                    }
+                    pushErrorOption(
+                        rangeFromOffsets(document, lineStart + tokenIndex, lineStart + tokenIndex + outputName.length),
+                        `\`${outputName}\` no existe o no es una textura/copía de textura válida para framebuffer.`,
+                    );
+                }
+            }
         }
 
         const dimRegex = /\[([^\]]+)\]/g;
@@ -1579,8 +2343,11 @@ function collectResourceAndDslVisuals(
         const rebindHeaderMatch = code.match(/^\s*rebind\s+([A-Za-z_]\w*)\s*\{/);
         if (rebindHeaderMatch) {
             currentRebindProgram = rebindHeaderMatch[1];
+        } else if (/^\s*rebind\s*\{/.test(code)) {
+            currentRebindProgram = currentBoundProgram;
         } else if (/^\s*}\s*$/.test(code)) {
             currentRebindProgram = null;
+            insideUniformsBlock = false;
         }
 
         if (/^\s*rebind\b/.test(code) || /^\s*[A-Za-z_]\w*\s*->/.test(code)) {
@@ -1600,11 +2367,19 @@ function collectResourceAndDslVisuals(
                         ...readFragmentSamplerUniformNames(currentProgramDef ? { ...currentProgramDef, sourcePath: document.uri.fsPath } : null),
                     ]);
                     if (!validNames.has(lhs)) {
-                        invalidShaderBindingRanges.push(rangeFromOffsets(document, lhsStart, lhsStart + lhs.length));
+                        pushErrorOption(
+                            rangeFromOffsets(document, lhsStart, lhsStart + lhs.length),
+                            `\`${lhs}\` no pertenece al programa \`${currentRebindProgram || "desconocido"}\`: no existe como textura declarada, salida del fragment shader ni sampler uniform.`,
+                        );
                     }
                     continue;
                 }
-                const prevUnit = currentTextureByName.get(lhs);
+                let prevUnit = currentTextureByName.get(lhs);
+                for (const pending of pendingTextureUpdates) {
+                    if (lineNo <= pending.endLine && pending.prevUnits.has(lhs)) {
+                        prevUnit = pending.prevUnits.get(lhs);
+                    }
+                }
                 if (prevUnit === undefined) {
                     rebindEmptySquareRanges.push(rangeFromOffsets(document, lhsStart, lhsStart));
                 } else {
@@ -1612,6 +2387,47 @@ function collectResourceAndDslVisuals(
                 }
             }
         }
+
+        const drawOutputs = parseDrawHeaderOutputs(code);
+        if (currentBoundProgram && drawOutputs.length) {
+            const blockInfo = analyzeDrawBlock(lines, lineNo);
+            const prevUnits = new Map();
+            const newUnits = new Map();
+            for (const outputName of drawOutputs) {
+                const tokenIndex = line.indexOf(outputName);
+                if (tokenIndex < 0) continue;
+                if (!currentTextureByName.has(outputName) && !allKnownTextureNames.has(outputName)) {
+                    pushErrorOption(
+                        rangeFromOffsets(document, lineStart + tokenIndex, lineStart + tokenIndex + outputName.length),
+                        `\`${outputName}\` no existe o no es una textura/copía de textura válida para \`drawTriangles -> []\`.`,
+                    );
+                }
+                const prevUnit = currentTextureByName.get(outputName);
+                const effectiveUnit = blockInfo.rebinds.get(outputName) ?? prevUnit;
+                prevUnits.set(outputName, prevUnit);
+                newUnits.set(outputName, effectiveUnit);
+                if (prevUnit === undefined) {
+                    rebindEmptySquareRanges.push(rangeFromOffsets(document, lineStart + tokenIndex, lineStart + tokenIndex));
+                } else {
+                    rebindSquareRangesByUnit[prevUnit].push(rangeFromOffsets(document, lineStart + tokenIndex, lineStart + tokenIndex));
+                }
+            }
+            pendingTextureUpdates.push({ endLine: blockInfo.endLine, prevUnits, newUnits });
+        }
+
+        for (let pendingIndex = pendingTextureUpdates.length - 1; pendingIndex >= 0; pendingIndex--) {
+            const pending = pendingTextureUpdates[pendingIndex];
+            if (pending.endLine === lineNo) {
+                for (const [outputName, unitIndex] of pending.newUnits.entries()) {
+                    if (unitIndex !== undefined) {
+                        registerTextureName(outputName, unitIndex);
+                    }
+                }
+                pendingTextureUpdates.splice(pendingIndex, 1);
+            }
+        }
+
+        depth += countNetBraces(code);
     }
 }
 
@@ -1736,6 +2552,18 @@ async function provideSnippetDefinition(document, position) {
         return rebindSymbolLoc;
     }
 
+    const uniformsSymbolLoc = resolveUniformsSymbolDefinition(document, position, symbol);
+    if (uniformsSymbolLoc) {
+        return uniformsSymbolLoc;
+    }
+
+    if (symbol.kind === "shaderIOName" && symbol.programName) {
+        const refs = await findContextualSymbolReferences(document, symbol);
+        if (refs && refs.length > 1) {
+            return refs;
+        }
+    }
+
     if (symbol.kind === "parseTextImportPath" || symbol.kind === "parseTextImportMarker") {
         return resolveParseTextImportLocation(document, symbol);
     }
@@ -1771,8 +2599,9 @@ async function provideSnippetDefinition(document, position) {
         }
         const dslLoc = findDslDefinition(doc, symbol.text);
         if (dslLoc) return dslLoc;
+        const searchableText = stripLineCommentsPreserveOffsets(doc.getText());
         for (const matcher of declarationMatchers) {
-            const match = matcher.exec(doc.getText());
+            const match = matcher.exec(searchableText);
             if (!match) {
                 continue;
             }
@@ -1927,9 +2756,26 @@ function findDslContextualSymbolAtPosition(document, position) {
         }
     }
 
-    const texDeclMatch = code.match(/^\s*tex2D\s+([A-Za-z_]\w*)\s*(?:\||~)\s*([A-Za-z_]\w*)?/);
+    const outAliasesMatch = code.match(/^\s*out-aliases\s+([A-Za-z_]\w*)\s*:/);
+    if (outAliasesMatch) {
+        const aliasName = outAliasesMatch[1];
+        const aliasStart = lineStart + code.indexOf(aliasName);
+        const aliasEnd = aliasStart + aliasName.length;
+        if (absoluteOffset >= aliasStart && absoluteOffset <= aliasEnd) {
+            const programDef = findEnclosingProgramDefinition(document.getText(), position, document.uri.fsPath);
+            return {
+                text: aliasName,
+                range: new vscode.Range(document.positionAt(aliasStart), document.positionAt(aliasEnd)),
+                kind: "shaderIOName",
+                programName: programDef?.name || null,
+                programDef,
+            };
+        }
+    }
+
+    const texDeclMatch = parseTex2DDeclarationLine(code);
     if (texDeclMatch) {
-        const internalName = texDeclMatch[1];
+        const internalName = texDeclMatch.internalName;
         const internalStart = lineStart + code.indexOf(internalName);
         const internalEnd = internalStart + internalName.length;
         if (absoluteOffset >= internalStart && absoluteOffset <= internalEnd) {
@@ -2026,23 +2872,18 @@ function findProgramNameReferences(document, programName) {
 
 function findProgramScopedShaderIOReferences(document, programName, symbolName) {
     const references = [];
-    const programBlock = findProgramBlockRangeByName(document, programName);
-    const rebindBlocks = findRebindBlockRangesByProgram(document, programName);
-
-    if (programBlock) {
-        references.push(...findNamedTokenReferencesInRange(document, symbolName, programBlock.start, programBlock.end, (line) => {
-            const code = stripLineComment(line);
-            return /^\s*tex2D\b/.test(code);
-        }));
+    const regex = new RegExp(`\\b${escapeRegExp(symbolName)}\\b`, "g");
+    const lines = document.getText().split(/\r?\n/);
+    for (let lineNo = 0; lineNo < lines.length; lineNo++) {
+        const code = stripLineComment(lines[lineNo]);
+        let match;
+        while ((match = regex.exec(code)) !== null) {
+            const lineStart = document.offsetAt(new vscode.Position(lineNo, 0));
+            const start = lineStart + match.index;
+            const end = start + symbolName.length;
+            references.push(new vscode.Location(document.uri, rangeFromOffsets(document, start, end)));
+        }
     }
-
-    for (const block of rebindBlocks) {
-        references.push(...findNamedTokenReferencesInRange(document, symbolName, block.start, block.end, (line) => {
-            const code = stripLineComment(line);
-            return code.includes("->");
-        }));
-    }
-
     return references;
 }
 
@@ -2289,6 +3130,41 @@ function resolveRebindSymbolDefinition(document, position, symbol) {
     }
 }
 
+function resolveUniformsSymbolDefinition(document, position, symbol) {
+    if (symbol.kind !== "text" && symbol.kind !== "shaderIOName") return null;
+    const text = document.getText();
+    const programName = findEnclosingUniformsProgram(text, position);
+    if (!programName) return null;
+
+    const line = document.lineAt(position.line).text;
+    const code = stripLineComment(line);
+    if (!isUniformNameAtPosition(code, position.character, symbol.text)) return null;
+
+    const defs = parseProgramTextureDefinitions(text, document.uri.fsPath);
+    const programDef = defs.get(programName);
+    if (!programDef?.fragPath) return null;
+
+    return resolveUniformInFragment({
+        name: programName,
+        fragPath: programDef.fragPath,
+        sourcePath: programDef.sourcePath || document.uri.fsPath,
+    }, symbol.text);
+}
+
+function isUniformNameAtPosition(code, character, symbolName) {
+    if (!symbolName) return false;
+    const assignmentRegex = /\b([A-Za-z_]\w*)\s*=\s*(?!uniforms\b)/g;
+    let match;
+    while ((match = assignmentRegex.exec(code)) !== null) {
+        if (match[1] !== symbolName) continue;
+        const start = match.index + match[0].indexOf(match[1]);
+        const end = start + match[1].length;
+        if (character >= start && character <= end) return true;
+    }
+
+    return false;
+}
+
 function resolveLocalShaderDslContextDefinition(document, position, symbol) {
     if (symbol.kind !== "text" && symbol.kind !== "shaderIOName" && symbol.kind !== "programName") return null;
     const line = document.lineAt(position.line).text;
@@ -2318,10 +3194,10 @@ function resolveLocalShaderDslContextDefinition(document, position, symbol) {
         }
     }
 
-    const texDeclMatch = code.match(/^\s*tex2D\s+([A-Za-z_]\w*)(?:\s*\|\s*([A-Za-z_]\w*)|\s*~\s*([A-Za-z_]\w*))?/);
-    if (texDeclMatch && symbol.text === texDeclMatch[1]) {
-        const tokenStart = code.indexOf(texDeclMatch[1]);
-        const tokenEnd = tokenStart + texDeclMatch[1].length;
+    const texDeclMatch = parseTex2DDeclarationLine(code);
+    if (texDeclMatch && symbol.text === texDeclMatch.internalName) {
+        const tokenStart = code.indexOf(texDeclMatch.internalName);
+        const tokenEnd = tokenStart + texDeclMatch.internalName.length;
         if (position.character >= tokenStart && position.character <= tokenEnd) {
             const programDef = findEnclosingProgramDefinition(document.getText(), position, document.uri.fsPath);
             const shaderIOLoc = resolveShaderIOInFragment(programDef, symbol.text);
@@ -2394,6 +3270,32 @@ function resolveShaderIOInFragment(programDef, symbolName) {
     }
 }
 
+function resolveUniformInFragment(programDef, symbolName) {
+    if (!programDef?.fragPath || !symbolName) return null;
+    try {
+        const path = require("path");
+        const fs = require("node:fs");
+        const normalized = programDef.fragPath.endsWith(".frag") ? programDef.fragPath : `${programDef.fragPath}.frag`;
+        const baseDir = path.dirname(programDef.sourcePath || "");
+        const resolved = path.resolve(baseDir, "glsl", normalized);
+        const fragText = fs.readFileSync(resolved, "utf8");
+        const pattern = new RegExp(`^\\s*uniform\\s+(?:[A-Za-z_][A-Za-z0-9_]*\\s+){1,4}${escapeRegExp(symbolName)}\\s*(?:\\[[^\\]]*\\])?\\s*;`, "m");
+        const match = pattern.exec(fragText);
+        if (!match) return null;
+        const start = match.index + match[0].indexOf(symbolName);
+        const end = start + symbolName.length;
+        const pseudoDoc = {
+            positionAt(offset) {
+                const lines = fragText.slice(0, offset).split(/\r?\n/);
+                return new vscode.Position(lines.length - 1, lines[lines.length - 1].length);
+            },
+        };
+        return new vscode.Location(vscode.Uri.file(resolved), rangeFromOffsets(pseudoDoc, start, end));
+    } catch {
+        return null;
+    }
+}
+
 function findTexUnitReferences(document, unitIndex) {
     const references = [];
     const lines = document.getText().split(/\r?\n/);
@@ -2424,12 +3326,13 @@ function buildDeclarationMatchers(symbol) {
         new RegExp(`^\\s*${name}\\s*=\\s*\\(`, "m"),
         new RegExp(`^\\s*${name}\\s*:\\s*\\(`, "m"),
         new RegExp(`^\\s*program\\s+[^\\n{]*\\b${name}\\b`, "m"),
-        new RegExp(`^\\s*tex2D\\s+[^\\n]*\\b${name}\\b`, "m"),
+        new RegExp(`^\\s*(?:new-|in-)?tex2D\\s+[^\\n]*\\b${name}\\b`, "m"),
     ];
 }
 
 function findDslDefinition(document, symbol) {
     const escaped = escapeRegExp(symbol);
+    const text = stripLineCommentsPreserveOffsets(document.getText());
     const checks = [
         new RegExp(`^\\s*(?:const|let|var)\\s+${escaped}\\b`, "m"),
         new RegExp(`^\\s*(?:let|var)\\s*\\{[\\s\\S]*?\\b${escaped}\\s*=`, "m"),
@@ -2437,14 +3340,13 @@ function findDslDefinition(document, symbol) {
         new RegExp(`^\\s*class\\s+${escaped}\\b`, "m"),
         new RegExp(`^\\s*(?:interface|type|enum)\\s+${escaped}\\b`, "m"),
         new RegExp(`^\\s*program\\s+${escaped}\\b`, "m"),
-        new RegExp(`^\\s*tex2D\\s+${escaped}(?:\\s*(?:\\||~|\\[|\\b))`, "m"),
-        new RegExp(`^\\s*tex2D\\s+[A-Za-z_$][A-Za-z0-9_$]*\\s*(?:\\||~)\\s*${escaped}\\b`, "m"),
+        new RegExp(`^\\s*(?:new-|in-)?tex2D\\s+${escaped}(?:\\s*(?:\\||~|\\[|\\b))`, "m"),
+        new RegExp(`^\\s*(?:new-|in-)?tex2D\\s+[A-Za-z_$][A-Za-z0-9_$]*\\s*(?:\\||~)\\s*${escaped}\\b`, "m"),
         new RegExp(`^\\s*texture2DArray\\s+[A-Za-z_][A-Za-z0-9_$]*\\s+${escaped}\\s+"`, "m"),
         new RegExp(`^\\s*resource\\s+${escaped}\\b`, "m"),
         new RegExp(`^\\s*texturePreset\\s+${escaped}\\b`, "m"),
     ];
     for (const re of checks) {
-        const text = document.getText();
         const m = re.exec(text);
         if (!m) continue;
         const start = m.index + m[0].lastIndexOf(symbol);
