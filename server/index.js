@@ -104,6 +104,39 @@ const listBackupFiles = async (dir = backupRoot, prefix = '') => {
   return out;
 };
 
+const removeDirectoryContents = async (dir) => {
+  let entries;
+  try {
+    entries = await fs.readdir(dir, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  await Promise.all(entries.map(async (entry) => {
+    const fullPath = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      await removeDirectoryContents(fullPath);
+      await fs.rmdir(fullPath).catch(() => {});
+      return;
+    }
+    await fs.unlink(fullPath).catch(() => {});
+  }));
+};
+
+const removeNumericGenerationDirectories = async (dir) => {
+  let entries;
+  try {
+    entries = await fs.readdir(dir, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  const numericDirectories = entries.filter((entry) => entry.isDirectory() && /^[2-9]\d*$/.test(entry.name));
+  await Promise.all(numericDirectories.map(async (entry) => {
+    const fullPath = path.join(dir, entry.name);
+    await removeDirectoryContents(fullPath);
+    await fs.rmdir(fullPath).catch(() => {});
+  }));
+};
+
 const removePreviousDatedBackup = async (target) => {
   const dir = path.dirname(target);
   const fileName = path.basename(target);
@@ -117,9 +150,13 @@ const removePreviousDatedBackup = async (target) => {
     return;
   }
   const previousName = new RegExp(`^${stem.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}_\\d{12}(?:\\d{2})?${ext.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`);
-  await Promise.all(entries
+  const previousFiles = entries
     .filter((entry) => entry.isFile() && previousName.test(entry.name) && entry.name !== fileName)
-    .map((entry) => fs.unlink(path.join(dir, entry.name)).catch(() => {})));
+    .map((entry) => entry.name)
+    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  const latestPrevious = previousFiles[previousFiles.length - 1];
+  if (!latestPrevious) return;
+  await fs.unlink(path.join(dir, latestPrevious)).catch(() => {});
 };
 
 const handleBackupApi = async (req, res, base) => {
@@ -161,6 +198,22 @@ const handleBackupApi = async (req, res, base) => {
       'Access-Control-Allow-Headers': 'Content-Type',
     });
     res.end(file);
+    return true;
+  }
+
+  if (req.method === 'PUT' && route === '/clear-generations') {
+    const body = JSON.parse(await readRequestBody(req) || '{}');
+    const target = resolveBackupPath(body.path);
+    if (!target) {
+      sendError(res, 403, 'Forbidden');
+      return true;
+    }
+    await fs.mkdir(target, { recursive: true });
+    await removeNumericGenerationDirectories(target);
+    sendJson(res, 200, {
+      ok: true,
+      path: path.relative(backupRoot, target).replace(/\\/g, '/'),
+    });
     return true;
   }
 

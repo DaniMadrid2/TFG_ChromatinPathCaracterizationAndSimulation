@@ -1,5 +1,5 @@
 let {
-  tauMaxVeces=3, tauMinVeces=1
+  tauMaxVeces=6, tauMinVeces=5
   nBins=64
   tauEStar=1.0, dtSample=1.0
   recomputeTau=false, tauDebugFrames=4, c2DrawLogFrames=3
@@ -111,13 +111,13 @@ program tauAdjCost "tau/03_afp/3_tauAdjointCost" {
 
 // file://./glsl/tau/03_afp/4_tauNMSimplexInit.frag
 program tauNMSimplexInit "tau/03_afp/4_tauNMSimplexInit" {
-   tex2D tauNMXiF0 RES [tauMaxVeces x tauMaxVeces*9] TauFloatTex TexUnit4
-   tex2D tauNMXiS0 RES [tauMaxVeces x tauMaxVeces*9] TauFloatTex TexUnit5
-   tex2D tauNMMeta0 RES [tauMaxVeces x tauMaxVeces*9] TauFloatTex TexUnit6
-   tex2D tauNMXiF1 RES [tauMaxVeces x tauMaxVeces*9] TauFloatTex TexUnit7
-   tex2D tauNMXiS1 RES [tauMaxVeces x tauMaxVeces*9] TauFloatTex TexUnit8
-   tex2D tauNMMeta1 RES [tauMaxVeces x tauMaxVeces*9] TauFloatTex TexUnit9
-   tex2D tauNMCost RES [tauMaxVeces x tauMaxVeces*9] TauFloatTex TexUnit11
+   new-tex2D tauNMXiF0 RES [tauMaxVeces x tauMaxVeces*9] TauFloatTex TexUnit4
+   new-tex2D tauNMXiS0 RES [tauMaxVeces x tauMaxVeces*9] TauFloatTex TexUnit5
+   new-tex2D tauNMMeta0 RES [tauMaxVeces x tauMaxVeces*9] TauFloatTex TexUnit6
+   new-tex2D tauNMXiF1 RES [tauMaxVeces x tauMaxVeces*9] TauFloatTex TexUnit7
+   new-tex2D tauNMXiS1 RES [tauMaxVeces x tauMaxVeces*9] TauFloatTex TexUnit8
+   new-tex2D tauNMMeta1 RES [tauMaxVeces x tauMaxVeces*9] TauFloatTex TexUnit9
+   new-tex2D tauNMCost RES [tauMaxVeces x tauMaxVeces*9] TauFloatTex TexUnit11
 }
 
 
@@ -304,7 +304,7 @@ tick {
       //? phase 02_ls - tauXi - file://./glsl/tau/02_ls/1_tauXiLS.frag
       // Entrada: tauMom1 y tauMom2.
       // Salida: tauXiF y tauXiS con los coeficientes empaquetados, tauXiMeta = [cost,valid,nUsed,reserved]. Recorre toda la rejilla (tau,subseq).
-      // Efecto de variables: tauFDegrees y tauSDegrees cambian la librerÃ­a polinÃ³mica; tauMaxVeces,
+      // Efecto de variables: tauFDegrees y tauSDegrees cambian la librerÃ­a polinómica; tauMaxVeces,
       // tauMinVeces y nBins cambian el tamaÃ±o del ajuste y cuÃ¡ntos bins usa el LS.
       log "-> phase 02 tauXi" {Array.from(tauMomFBO.readColorAttachment(1,0,0,4,1,TexExamples.RGBAFloat16,4))}
       use tauXi
@@ -325,7 +325,7 @@ tick {
       // Entrada: momentos (tauMom1,tauMom2) y semilla LS (tauXiF,tauXiS,tauXiMeta).
       // Salida: tauXiFOpt, tauXiSOpt, tauXiMetaOpt.
       // Efecto de variables: afpLrF, afpLrS, afpL1F, afpL1S y afpIters controlan el descenso inicial
-      // con regularizaciÃ³n L1; subir iteraciones o learning rates cambia cuÃ¡nto se aparta de la soluciÃ³n LS.
+      // con regularización L1; subir iteraciones o learning rates cambia cuÃ¡nto se aparta de la solución LS.
       log "-> phase 03 tauAFP" {Array.from(tauXiFBO.readColorAttachment(2,0,0,4,1,TexExamples.RGBAFloat16,4))}
       use tauAFP
       drawTriangles -> [tauXiFOpt, tauXiSOpt, tauXiMetaOpt] size [tauMaxVeces,tauMaxVeces] {
@@ -1086,9 +1086,9 @@ tick {
 
       //? phase 07_fields - tauSindy (init) - file://./glsl/tau/07_fields/1_tauSindyFields.frag
       // Entrada: tauMom1, tauXiF, tauXiS, tauBest.
-      // Salida: tauSindyInit = [x,f,s,a] evaluado sobre la soluciÃ³n inicial.
+      // Salida: tauSindyInit = [x,f,s,a] evaluado sobre la solución inicial.
       // Efecto de variables: bestTau y bestSubseq seleccionan el modelo a proyectar; nBins cambia la
-      // resoluciÃ³n de las curvas en x.
+      // resolución de las curvas en x.
       log "-> phase 07 tauSindy" {Array.from(tauBestFBO.readColorAttachment(0,0,0,1,1,TexExamples.RGBAFloat16,4))}
       use tauSindy
       tauMinVeces={Math.max(1,~~tauMinVeces)}
@@ -1121,7 +1121,7 @@ tick {
       //? phase 07_fields - tauSindy (tau=1 ref) - file://./glsl/tau/07_fields/1_tauSindyFields.frag
       // Entrada: mismo shader tauSindy, pero forzando selectedTau=1 y selectedSubseq=0.
       // Salida: tauSindyTau1Ref = [x,f,s,a] para usarlo como referencia LS fija en overlays.
-      // Efecto de variables: sÃ³lo nBins; el modelo queda fijado manualmente a tau=1,sub=0.
+      // Efecto de variables: sólo nBins; el modelo queda fijado manualmente a tau=1,sub=0.
       drawTriangles -> [tauSindyTau1RefTex] size [nBins,1] {
          uniforms {
             tauMax = {tauMaxVeces}i
@@ -1198,7 +1198,7 @@ tick {
 
       //? phase 09_debug - reads / logs
       // Entrada: varias FBOs ya calculadas en esta misma pasada.
-      // Salida: sÃ³lo consola; no escribe texturas nuevas.
+      // Salida: sólo consola; no escribe texturas nuevas.
       // Llamadas: hasta tauDebugFrames veces tras un recomputeTau.
       // Efecto de variables: tauDebugFrames limita cuÃ¡ntas veces se imprime; autoPickBest puede actualizar
       // bestTau y bestSubseq a partir de tauBest mientras el debug estÃ¡ activo.
@@ -1254,7 +1254,7 @@ tick {
       //? phase 10_cleanup - unbind / stamps
       // Entrada: todos los programas que han dejado FBO activo en este recomputeTau.
       // Salida: limpia estados de framebuffer y marca tauModelStamp.
-      // Efecto de variables: tauModelStamp sirve de invalidaciÃ³n para HUD, simulaciÃ³n y mapas derivados.
+      // Efecto de variables: tauModelStamp sirve de invalidación para HUD, simulación y mapas derivados.
       unbindFBO {
          tauFPStat, tauSindy, tauBest
          tauScore

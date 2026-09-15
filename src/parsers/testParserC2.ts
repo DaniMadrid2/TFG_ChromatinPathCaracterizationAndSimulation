@@ -67,7 +67,36 @@ function inferBackupScope(parseTextPath: string, sourceText: string) {
     return path.basename(parseTextPath).replace(/\.shaderdsl\.ts$/i, "");
 }
 
-async function resolveShaderDslImports(filePath: string, seen = new Set<string>()) {
+type BackupPathReplaceDirective = {
+    pattern: RegExp;
+    replacement: string;
+};
+
+function parseBackupPathReplaceDirective(line: string): BackupPathReplaceDirective | null {
+    const match = line.match(/^\s*backUpPathReplace\s+\/((?:\\.|[^/])+)\/([dgimsuvy]*)\s*->\s*(.+?)\s*$/);
+    if (!match) return null;
+    const patternSource = match[1];
+    const flags = match[2] || "";
+    const rawReplacement = match[3].trim();
+    const replacement = ((rawReplacement.startsWith("\"") && rawReplacement.endsWith("\"")) || (rawReplacement.startsWith("'") && rawReplacement.endsWith("'")))
+        ? rawReplacement.slice(1, -1)
+        : rawReplacement;
+    try {
+        return {
+            pattern: new RegExp(patternSource, flags),
+            replacement,
+        };
+    } catch {
+        return null;
+    }
+}
+
+function applyBackupPathReplaceDirectives(line: string, directives: BackupPathReplaceDirective[]) {
+    if (!/^\s*backUp\s*:/.test(line)) return line;
+    return directives.reduce((next, directive) => next.replace(directive.pattern, directive.replacement), line);
+}
+
+async function resolveShaderDslImports(filePath: string, seen = new Set<string>(), inheritedDirectives: BackupPathReplaceDirective[] = []) {
     const resolvedPath = path.resolve(filePath);
     if (seen.has(resolvedPath)) {
         throw new Error(`Import circular en shaderdsl: ${resolvedPath}`);
@@ -76,11 +105,18 @@ async function resolveShaderDslImports(filePath: string, seen = new Set<string>(
     const source = (await fs.readFile(resolvedPath, "utf8")).replace(/^\uFEFF/, "");
     const dir = path.dirname(resolvedPath);
     const lines = source.split(/\r?\n/);
+    const localDirectives = lines
+        .map(parseBackupPathReplaceDirective)
+        .filter((entry): entry is BackupPathReplaceDirective => !!entry);
+    const activeDirectives = [...inheritedDirectives, ...localDirectives];
     const out: string[] = [];
     for (const line of lines) {
+        if (parseBackupPathReplaceDirective(line)) {
+            continue;
+        }
         const match = line.match(/^\s*import\s*<([A-Za-z]+)>\s*from\s+(.+)\s*$/);
         if (!match) {
-            out.push(line);
+            out.push(applyBackupPathReplaceDirectives(line, activeDirectives));
             continue;
         }
         let importPath = match[2].trim();
@@ -88,7 +124,7 @@ async function resolveShaderDslImports(filePath: string, seen = new Set<string>(
             importPath = importPath.slice(1, -1);
         }
         const childPath = path.resolve(dir, importPath);
-        out.push(await resolveShaderDslImports(childPath, new Set(seen)));
+        out.push(await resolveShaderDslImports(childPath, new Set(seen), activeDirectives));
     }
     return out.join("\n");
 }

@@ -160,15 +160,38 @@ const rebindSquareDecorations = TEX_UNIT_COLORS.map((color) =>
     }),
 );
 
+const drawBackupPreviewDecoration = vscode.window.createTextEditorDecorationType({
+    after: {
+        color: "#6a9955",
+        margin: "0 0 0 2ch",
+    },
+    rangeBehavior: vscode.DecorationRangeBehavior.ClosedClosed,
+});
+
 let runtimeContext = null;
 const dynamicDecorationCache = new Map();
+const backupPreviewStateByDocument = new Map();
+const drawBackupInlayHintsEmitter = new vscode.EventEmitter();
+const drawBackupPreviewDocumentEmitter = new vscode.EventEmitter();
+const drawBackupCodeLensEmitter = new vscode.EventEmitter();
 const SEARCH_EXCLUDE_GLOB = "**/{node_modules,dist,build,out,.git,.next,.turbo,coverage,tmp,.tmp_build}/**";
+const SHADERDSL_GLOB = "**/*.shaderdsl.ts";
+const BACKUP_PATH_RESCAN_MIN_INTERVAL_MS = 5 * 60 * 1000;
 const searchUriCache = new Map();
 const TEX2D_DECL_KEYWORD_RE = "(?:new-|in-)?tex2D";
+const DRAW_BACKUP_PREVIEW_SCHEME = "shaderdsl-backup-preview";
+const drawBackupBlockCacheByDocument = new Map();
+const backupDirectoryEntryCache = new Map();
+const backupPathReplaceRegistry = {
+    scannedAt: 0,
+    directives: [],
+    timer: null,
+};
 
 function activate(context) {
     runtimeContext = context;
     console.log("[vs_tssnippets_ext] activate");
+    void refreshWorkspaceBackupPathReplaceRegistry(false);
 
     const refreshAllEditors = () => {
         for (const editor of vscode.window.visibleTextEditors) {
@@ -198,6 +221,10 @@ function activate(context) {
         warningDecoration,
         dimensionXDecoration,
         emptySquareDecoration,
+        drawBackupPreviewDecoration,
+        drawBackupInlayHintsEmitter,
+        drawBackupPreviewDocumentEmitter,
+        drawBackupCodeLensEmitter,
         texUnitStateDecorations.unused,
         texUnitStateDecorations.single,
         texUnitStateDecorations.double,
@@ -217,6 +244,133 @@ function activate(context) {
             }
             await vscode.languages.setTextDocumentLanguage(editor.document, "parse-text-ts");
             refreshEditorDecorations(editor);
+        }),
+        vscode.commands.registerCommand("vsTSSnippets.toggleDrawBackupPreview", async () => {
+            const editor = vscode.window.activeTextEditor;
+            if (!editor || !isParseTextC23Document(editor.document)) {
+                vscode.window.showInformationMessage("Open parseTextC23.shaderdsl.ts to toggle draw backUp preview.");
+                return;
+            }
+            const text = editor.document.getText();
+            const block = findDrawBackupBlockAtPosition(text, editor.selection.active);
+            if (block) {
+                const blockState = getDrawBackupBlockState(editor.document, block);
+                updateDrawBackupBlockState(editor.document, block.key, {
+                    visible: !blockState.visible,
+                    generation: blockState.generation,
+                });
+            } else {
+                const state = getBackupPreviewState(editor.document);
+                state.defaultVisible = !state.defaultVisible;
+                setBackupPreviewState(editor.document, state);
+            }
+            refreshDrawBackupUi(editor);
+        }),
+        vscode.commands.registerCommand("vsTSSnippets.toggleDrawBackupPreviewAtBlock", async (documentUriString, blockKey) => {
+            const editor = findVisibleEditorByUri(documentUriString);
+            if (!editor || !isParseTextC23Document(editor.document)) {
+                return;
+            }
+            const block = getCachedDrawBackupBlocks(editor.document).find((item) => item.key === blockKey);
+            if (!block) {
+                return;
+            }
+            const blockState = getDrawBackupBlockState(editor.document, block);
+            updateDrawBackupBlockState(editor.document, block.key, {
+                visible: !blockState.visible,
+                generation: blockState.generation,
+            });
+            refreshDrawBackupUi(editor);
+        }),
+        vscode.commands.registerCommand("vsTSSnippets.showDrawBackupOptionsAtBlock", async (documentUriString, blockKey) => {
+            const editor = findVisibleEditorByUri(documentUriString);
+            if (!editor || !isParseTextC23Document(editor.document)) {
+                return;
+            }
+            const block = getCachedDrawBackupBlocks(editor.document).find((item) => item.key === blockKey);
+            if (!block) {
+                return;
+            }
+            await showDrawBackupOptionsPicker(editor, block);
+        }),
+        vscode.commands.registerCommand("vsTSSnippets.selectDrawBackupGenerationAtBlock", async (documentUriString, blockKey) => {
+            const editor = findVisibleEditorByUri(documentUriString);
+            if (!editor || !isParseTextC23Document(editor.document)) {
+                return;
+            }
+            const block = getCachedDrawBackupBlocks(editor.document).find((item) => item.key === blockKey);
+            if (!block) {
+                return;
+            }
+            await showDrawBackupGenerationPicker(editor, block);
+        }),
+        vscode.commands.registerCommand("vsTSSnippets.selectDrawBackupVariantAtBlock", async (documentUriString, blockKey) => {
+            const editor = findVisibleEditorByUri(documentUriString);
+            if (!editor || !isParseTextC23Document(editor.document)) {
+                return;
+            }
+            const block = getCachedDrawBackupBlocks(editor.document).find((item) => item.key === blockKey);
+            if (!block) {
+                return;
+            }
+            await showDrawBackupVariantPicker(editor, block);
+        }),
+        vscode.commands.registerCommand("vsTSSnippets.openDrawBackupPreviewAtBlock", async (documentUriString, blockKey) => {
+            const editor = findVisibleEditorByUri(documentUriString);
+            if (!editor || !isParseTextC23Document(editor.document)) {
+                return;
+            }
+            const block = getCachedDrawBackupBlocks(editor.document).find((item) => item.key === blockKey);
+            if (!block) {
+                return;
+            }
+            updateDrawBackupBlockState(editor.document, block.key, { visible: true });
+            refreshDrawBackupUi(editor);
+            await openDrawBackupPreviewDocument(editor, block);
+        }),
+        vscode.commands.registerCommand("vsTSSnippets.openDrawBackupFileAtBlock", async (documentUriString, blockKey) => {
+            const editor = findVisibleEditorByUri(documentUriString);
+            if (!editor || !isParseTextC23Document(editor.document)) {
+                return;
+            }
+            const block = getCachedDrawBackupBlocks(editor.document).find((item) => item.key === blockKey);
+            if (!block) {
+                return;
+            }
+            await openDrawBackupBackingFile(editor, block);
+        }),
+        vscode.commands.registerCommand("vsTSSnippets.toggleDrawBackupScopeAtBlock", async (documentUriString, blockKey) => {
+            const editor = findVisibleEditorByUri(documentUriString);
+            if (!editor || !isParseTextC23Document(editor.document)) {
+                return;
+            }
+            const block = getCachedDrawBackupBlocks(editor.document).find((item) => item.key === blockKey);
+            if (!block) {
+                return;
+            }
+            const currentState = getDrawBackupBlockState(editor.document, block);
+            updateDrawBackupBlockState(editor.document, block.key, {
+                visible: true,
+                variantOpenMode: currentState.variantOpenMode === "all" ? "single" : "all",
+            });
+            refreshDrawBackupUi(editor);
+        }),
+        vscode.commands.registerCommand("vsTSSnippets.noop", async () => {}),
+        vscode.commands.registerCommand("vsTSSnippets.exportShaderDslMermaid", async () => {
+            const editor = vscode.window.activeTextEditor;
+            if (!editor || !isParseTextC23Document(editor.document)) {
+                vscode.window.showInformationMessage("Open parseTextC23.shaderdsl.ts to export Mermaid lineage.");
+                return;
+            }
+            const selectedToken = getSelectedTokenOrSymbol(editor);
+            const exportPath = exportParseTextC23Mermaid(editor.document, selectedToken);
+            const mermaidDoc = await vscode.workspace.openTextDocument(exportPath);
+            await vscode.window.showTextDocument(mermaidDoc, { preview: false });
+        }),
+        vscode.commands.registerCommand("vsTSSnippets.rescanShaderDslBackupPathReplacements", async () => {
+            await refreshWorkspaceBackupPathReplaceRegistry(true);
+            refreshAllEditors();
+            vscode.window.showInformationMessage("Shader DSL backUp path replacements rescanned.");
         }),
         vscode.languages.registerDefinitionProvider(SNIPPET_SELECTOR, {
             provideDefinition(document, position) {
@@ -259,6 +413,30 @@ function activate(context) {
                 return provideShaderDslTagHover(document, position);
             },
         }),
+        vscode.languages.registerInlayHintsProvider(SHADERDSL_SELECTOR, {
+            onDidChangeInlayHints: drawBackupInlayHintsEmitter.event,
+            provideInlayHints(document) {
+                if (!isParseTextC23Document(document)) {
+                    return [];
+                }
+                return buildDrawBackupInlayHints(document, document.getText());
+            },
+        }),
+        vscode.languages.registerCodeLensProvider(SHADERDSL_SELECTOR, {
+            onDidChangeCodeLenses: drawBackupCodeLensEmitter.event,
+            provideCodeLenses(document) {
+                if (!isParseTextC23Document(document)) {
+                    return [];
+                }
+                return buildDrawBackupCodeLenses(document, document.getText());
+            },
+        }),
+        vscode.workspace.registerTextDocumentContentProvider(DRAW_BACKUP_PREVIEW_SCHEME, {
+            onDidChange: drawBackupPreviewDocumentEmitter.event,
+            provideTextDocumentContent(uri) {
+                return provideDrawBackupPreviewDocumentContent(uri);
+            },
+        }),
         vscode.languages.registerCompletionItemProvider(
             SHADERDSL_SELECTOR,
             {
@@ -275,12 +453,24 @@ function activate(context) {
         vscode.window.onDidChangeActiveTextEditor((editor) => refreshEditorDecorations(editor)),
         vscode.window.onDidChangeVisibleTextEditors(refreshAllEditors),
         vscode.workspace.onDidChangeTextDocument((event) => {
+            handleShaderDslBackupPathReplaceEdit(event);
+            drawBackupBlockCacheByDocument.delete(event.document.uri.toString());
             const editor = vscode.window.visibleTextEditors.find(
                 (candidate) => candidate.document.uri.toString() === event.document.uri.toString(),
             );
             if (editor) {
                 refreshEditorDecorations(editor);
             }
+            for (const document of vscode.workspace.textDocuments) {
+                if (document.uri.scheme === DRAW_BACKUP_PREVIEW_SCHEME) {
+                    drawBackupPreviewDocumentEmitter.fire(document.uri);
+                }
+            }
+            drawBackupCodeLensEmitter.fire();
+        }),
+        vscode.workspace.onDidCloseTextDocument((document) => {
+            drawBackupBlockCacheByDocument.delete(document.uri.toString());
+            drawBackupCodeLensEmitter.fire();
         }),
         vscode.workspace.onDidCreateFiles(invalidateSearchCache),
         vscode.workspace.onDidDeleteFiles(invalidateSearchCache),
@@ -315,6 +505,7 @@ async function getCachedWorkspaceUris(document, family, includeGlob) {
 
 function invalidateSearchCache() {
     searchUriCache.clear();
+    backupDirectoryEntryCache.clear();
 }
 
 function stripLineComment(line) {
@@ -944,9 +1135,17 @@ function readFragmentShaderIO(programDef) {
 }
 
 function parseDrawHeaderOutputs(code) {
-    const match = code.match(/^\s*(?:drawPoints|drawLineStrip|drawLineLoop|drawLines|drawTriangleStrip|drawTriangleFan|drawTriangles)\b[\s\S]*?->\s*\[([^\]]*)\]/);
-    if (!match) return [];
-    return match[1].split(",").map((item) => item.trim()).filter(Boolean);
+    return parseDrawHeaderInfo(code)?.outputs || [];
+}
+
+function parseDrawHeaderInfo(code) {
+    const match = code.match(/^\s*(drawPoints|drawLineStrip|drawLineLoop|drawLines|drawTriangleStrip|drawTriangleFan|drawTriangles)\b([\s\S]*)$/);
+    if (!match) return null;
+    const outputsMatch = match[0].match(/->\s*\[([^\]]*)\]/);
+    return {
+        drawKind: match[1],
+        outputs: outputsMatch ? outputsMatch[1].split(",").map((item) => item.trim()).filter(Boolean) : [],
+    };
 }
 
 function analyzeDrawBlock(lines, startLine) {
@@ -971,6 +1170,1058 @@ function analyzeDrawBlock(lines, startLine) {
         }
     }
     return { endLine, rebinds, hasFramebuffer };
+}
+
+function isParseTextC23Document(document) {
+    const fileName = document?.uri?.fsPath || document?.fileName || "";
+    return document?.languageId === "parse-text-ts" && /(?:^|[\\/])parseTextC23\.shaderdsl\.ts$/i.test(fileName);
+}
+
+function parseBackupPathReplaceDirective(line) {
+    const match = (line || "").match(/^\s*backUpPathReplace\s+\/((?:\\.|[^/])+)\/([dgimsuvy]*)\s*->\s*(.+?)\s*$/);
+    if (!match) {
+        return null;
+    }
+    const [, patternSource, flagsRaw, replacementRaw] = match;
+    const replacementTrimmed = replacementRaw.trim();
+    const replacement = ((replacementTrimmed.startsWith("\"") && replacementTrimmed.endsWith("\"")) || (replacementTrimmed.startsWith("'") && replacementTrimmed.endsWith("'")))
+        ? replacementTrimmed.slice(1, -1)
+        : replacementTrimmed;
+    try {
+        return {
+            patternSource,
+            flags: flagsRaw || "",
+            replacement,
+            regex: new RegExp(patternSource, flagsRaw || ""),
+        };
+    } catch {
+        return null;
+    }
+}
+
+async function refreshWorkspaceBackupPathReplaceRegistry(force = false) {
+    const now = Date.now();
+    if (!force && backupPathReplaceRegistry.directives.length && (now - backupPathReplaceRegistry.scannedAt) < BACKUP_PATH_RESCAN_MIN_INTERVAL_MS) {
+        return backupPathReplaceRegistry.directives;
+    }
+    const directives = [];
+    const uris = await vscode.workspace.findFiles(SHADERDSL_GLOB, SEARCH_EXCLUDE_GLOB);
+    for (const uri of uris) {
+        try {
+            const bytes = await vscode.workspace.fs.readFile(uri);
+            const text = Buffer.from(bytes).toString("utf8");
+            const lines = text.split(/\r?\n/);
+            for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+                const directive = parseBackupPathReplaceDirective(lines[lineIndex]);
+                if (!directive) {
+                    continue;
+                }
+                directives.push({
+                    ...directive,
+                    filePath: uri.fsPath,
+                    uri: uri.toString(),
+                    line: lineIndex,
+                });
+            }
+        } catch {}
+    }
+    backupPathReplaceRegistry.scannedAt = now;
+    backupPathReplaceRegistry.directives = directives;
+    return directives;
+}
+
+function scheduleWorkspaceBackupPathReplaceRegistryRefresh(force = false, delayMs = 300) {
+    if (backupPathReplaceRegistry.timer) {
+        clearTimeout(backupPathReplaceRegistry.timer);
+    }
+    backupPathReplaceRegistry.timer = setTimeout(async () => {
+        backupPathReplaceRegistry.timer = null;
+        await refreshWorkspaceBackupPathReplaceRegistry(force);
+        for (const editor of vscode.window.visibleTextEditors) {
+            refreshEditorDecorations(editor);
+        }
+    }, delayMs);
+}
+
+function ensureWorkspaceBackupPathReplaceRegistryFresh() {
+    const now = Date.now();
+    if ((now - backupPathReplaceRegistry.scannedAt) >= BACKUP_PATH_RESCAN_MIN_INTERVAL_MS) {
+        scheduleWorkspaceBackupPathReplaceRegistryRefresh(false, 50);
+    }
+}
+
+function handleShaderDslBackupPathReplaceEdit(event) {
+    const document = event?.document;
+    if (!document || document.languageId !== "parse-text-ts" || !/\.shaderdsl\.ts$/i.test(document.fileName || "")) {
+        return;
+    }
+    const touchedDirective = event.contentChanges.some((change) => /backUpPathReplace|parseTextC23|parseTextC2|parseTextC3/.test(change.text || ""));
+    if (touchedDirective) {
+        scheduleWorkspaceBackupPathReplaceRegistryRefresh(true, 150);
+    }
+}
+
+function applyRegisteredBackupPathReplacements(relativeDir) {
+    const normalized = normalizeBackupHintToRelativeDirectory(relativeDir, "parseTextC23");
+    const variants = new Map();
+    const [rootSegment, ...restSegments] = normalized.split("/").filter(Boolean);
+    const restPath = restSegments.join("/");
+    variants.set(normalized, {
+        label: rootSegment || normalized,
+        relativeDir: normalized,
+    });
+    for (const directive of backupPathReplaceRegistry.directives) {
+        let replaced = normalized;
+        try {
+            replaced = normalized.replace(directive.regex, directive.replacement);
+        } catch {
+            replaced = normalized;
+        }
+        const normalizedReplaced = normalizeBackupHintToRelativeDirectory(replaced, normalized);
+        if (normalizedReplaced && normalizedReplaced !== normalized) {
+            const replacedSegments = normalizedReplaced.split("/").filter(Boolean);
+            const replacedRoot = replacedSegments[0] || normalizedReplaced;
+            const nestedRelativeDir = [rootSegment, replacedRoot, restPath].filter(Boolean).join("/");
+            variants.set(nestedRelativeDir, {
+                label: replacedRoot,
+                relativeDir: nestedRelativeDir,
+            });
+        }
+    }
+    if (rootSegment === "parseTextC23") {
+        for (const child of ["parseTextC2", "parseTextC3"]) {
+            const nestedRelativeDir = ["parseTextC23", child, restPath].filter(Boolean).join("/");
+            if (!variants.has(nestedRelativeDir)) {
+                variants.set(nestedRelativeDir, {
+                    label: child,
+                    relativeDir: nestedRelativeDir,
+                });
+            }
+        }
+    }
+    return Array.from(variants.values());
+}
+
+function createBackupPreviewState() {
+    return { defaultVisible: false, blocks: {} };
+}
+
+function getBackupPreviewState(document) {
+    const key = document.uri.toString();
+    if (!backupPreviewStateByDocument.has(key)) {
+        backupPreviewStateByDocument.set(key, createBackupPreviewState());
+    }
+    const state = backupPreviewStateByDocument.get(key) || createBackupPreviewState();
+    return {
+        defaultVisible: !!state.defaultVisible,
+        blocks: { ...(state.blocks || {}) },
+    };
+}
+
+function setBackupPreviewState(document, nextState) {
+    const normalizedBlocks = {};
+    for (const [blockKey, blockState] of Object.entries(nextState?.blocks || {})) {
+        normalizedBlocks[blockKey] = {
+            visible: !!blockState?.visible,
+            generation: Math.max(1, Number.parseInt(blockState?.generation, 10) || 1),
+            variantDirectory: typeof blockState?.variantDirectory === "string" ? blockState.variantDirectory : "",
+            variantOpenMode: blockState?.variantOpenMode === "all" ? "all" : "single",
+        };
+    }
+    backupPreviewStateByDocument.set(document.uri.toString(), {
+        defaultVisible: !!nextState?.defaultVisible,
+        blocks: normalizedBlocks,
+    });
+}
+
+function getDrawBackupBlockState(document, block) {
+    const state = getBackupPreviewState(document);
+    const blockState = state.blocks?.[block.key] || {};
+    const defaultVariantDirectory = resolveEffectiveBackupVariantDirectory(
+        document,
+        block,
+        typeof blockState.variantDirectory === "string" && blockState.variantDirectory
+            ? blockState.variantDirectory
+            : normalizeBackupHintToRelativeDirectory(block.backUpPathHint, `parseTextC23/${block.programName}`),
+        Math.max(1, Number.parseInt(blockState.generation, 10) || 1),
+    );
+    return {
+        visible: Object.prototype.hasOwnProperty.call(blockState, "visible") ? !!blockState.visible : !!state.defaultVisible,
+        generation: Math.max(1, Number.parseInt(blockState.generation, 10) || 1),
+        variantDirectory: defaultVariantDirectory,
+        variantOpenMode: blockState.variantOpenMode === "all" ? "all" : "single",
+    };
+}
+
+function updateDrawBackupBlockState(document, blockKey, patch) {
+    const state = getBackupPreviewState(document);
+    const previous = state.blocks?.[blockKey] || {};
+    state.blocks[blockKey] = {
+        visible: Object.prototype.hasOwnProperty.call(patch || {}, "visible")
+            ? !!patch.visible
+            : Object.prototype.hasOwnProperty.call(previous, "visible")
+                ? !!previous.visible
+                : !!state.defaultVisible,
+        generation: Math.max(1, Number.parseInt(
+            Object.prototype.hasOwnProperty.call(patch || {}, "generation") ? patch.generation : previous.generation,
+            10,
+        ) || 1),
+        variantDirectory: typeof patch?.variantDirectory === "string"
+            ? patch.variantDirectory
+            : (typeof previous.variantDirectory === "string" ? previous.variantDirectory : ""),
+        variantOpenMode: Object.prototype.hasOwnProperty.call(patch || {}, "variantOpenMode")
+            ? (patch.variantOpenMode === "all" ? "all" : "single")
+            : (previous.variantOpenMode === "all" ? "all" : "single"),
+    };
+    setBackupPreviewState(document, state);
+}
+
+function getWorkspaceRootPath(document) {
+    const folder = vscode.workspace.getWorkspaceFolder(document.uri);
+    if (folder?.uri?.fsPath) {
+        return folder.uri.fsPath;
+    }
+    return vscode.workspace.workspaceFolders?.[0]?.uri?.fsPath || require("path").dirname(document.uri.fsPath);
+}
+
+function normalizeBackupHintToRelativeDirectory(pathHint, fallback = "parseTextC23") {
+    let raw = (pathHint || "").toString().trim();
+    raw = raw.replace(/^["'`]|["'`]$/g, "");
+    raw = raw.replace(/\\/g, "/");
+    if (!raw) {
+        return fallback.replace(/^\/+|\/+$/g, "");
+    }
+    if (/\.txt$/i.test(raw)) {
+        raw = raw.replace(/\/?[^/]*\.txt$/i, "");
+    }
+    raw = raw.replace(/^\.\//, "");
+    raw = raw.replace(/^\/+/, "");
+    raw = raw.replace(/\/+$/, "");
+    return raw || fallback.replace(/^\/+|\/+$/g, "");
+}
+
+function getCachedDrawBackupBlocks(document, text = null) {
+    const key = document.uri.toString();
+    const cached = drawBackupBlockCacheByDocument.get(key);
+    if (cached && cached.version === document.version) {
+        return cached.blocks;
+    }
+    const blocks = collectDrawBackupBlocks(text ?? document.getText());
+    drawBackupBlockCacheByDocument.set(key, {
+        version: document.version,
+        blocks,
+    });
+    return blocks;
+}
+
+function collectDrawBackupBlocks(text) {
+    const lines = text.split(/\r?\n/);
+    const blocks = [];
+    let currentProgram = null;
+    for (let lineNo = 0; lineNo < lines.length; lineNo++) {
+        const code = stripLineComment(lines[lineNo] || "");
+        const useMatch = code.match(/^\s*(?:lduse|use)\s+([A-Za-z_]\w*)\b/);
+        if (useMatch) {
+            currentProgram = useMatch[1];
+        }
+        const drawInfo = parseDrawHeaderInfo(code);
+        if (!currentProgram || !drawInfo?.outputs?.length) {
+            continue;
+        }
+        const blockInfo = analyzeDrawBlock(lines, lineNo);
+        let backupPathHint = "";
+        for (let innerLine = lineNo + 1; innerLine <= blockInfo.endLine; innerLine++) {
+            const innerCode = stripLineComment(lines[innerLine] || "");
+            const backupMatch = innerCode.match(/^\s*backUp\s*:\s*(.+?)\s*$/);
+            if (backupMatch) {
+                backupPathHint = backupMatch[1].trim();
+                break;
+            }
+        }
+        blocks.push({
+            key: "",
+            drawKind: drawInfo.drawKind,
+            programName: currentProgram,
+            outputs: drawInfo.outputs,
+            startLine: lineNo,
+            endLine: blockInfo.endLine,
+            backUpPathHint: backupPathHint,
+        });
+        blocks[blocks.length - 1].key = getDrawBackupBlockKey(blocks[blocks.length - 1]);
+        lineNo = Math.max(lineNo, blockInfo.endLine);
+    }
+    return blocks;
+}
+
+function getDrawBackupBlockKey(block) {
+    return [
+        block.startLine,
+        block.endLine,
+        block.drawKind,
+        block.programName,
+        normalizeBackupHintToRelativeDirectory(block.backUpPathHint, `parseTextC23/${block.programName}`),
+        block.outputs.join(","),
+    ].join("|");
+}
+
+function findDrawBackupBlockAtPosition(text, position) {
+    return collectDrawBackupBlocks(text).find((block) => position.line >= block.startLine && position.line <= block.endLine) || null;
+}
+
+function findDrawBackupBlockByKey(text, blockKey) {
+    return collectDrawBackupBlocks(text).find((block) => block.key === blockKey) || null;
+}
+
+function getBackupVariantOptionsForBlock(block) {
+    const baseRelativeDir = normalizeBackupHintToRelativeDirectory(block.backUpPathHint, `parseTextC23/${block.programName}`);
+    const baseOptions = applyRegisteredBackupPathReplacements(baseRelativeDir);
+    const expanded = [];
+    for (const option of baseOptions) {
+        expanded.push({
+            label: option.label,
+            relativeDir: option.relativeDir,
+            openMode: "single",
+        });
+        expanded.push({
+            label: `${option.label} open in all`,
+            relativeDir: option.relativeDir,
+            openMode: "all",
+        });
+    }
+    return expanded;
+}
+
+function getBackupDirectoryForBlock(document, block, generation = 1, variantDirectory) {
+    const path = require("path");
+    const root = getWorkspaceRootPath(document);
+    const relativeDir = normalizeBackupHintToRelativeDirectory(
+        variantDirectory || block.backUpPathHint,
+        `parseTextC23/${block.programName}`,
+    );
+    const segments = relativeDir.split("/").filter(Boolean);
+    const dir = path.join(root, "backups", ...segments);
+    return generation > 1 ? path.join(dir, String(generation)) : dir;
+}
+
+function backupDirectoryHasDrawFiles(document, block, generation, variantDirectory) {
+    return findLatestBackupFilesByDrawKind(
+        getBackupDirectoryForBlock(document, block, generation, variantDirectory),
+        block.drawKind,
+    ).length > 0;
+}
+
+function getFallbackBackupVariantDirectories(relativeDir) {
+    const normalized = normalizeBackupHintToRelativeDirectory(relativeDir, "parseTextC23");
+    const parts = normalized.split("/").filter(Boolean);
+    if (parts[0] !== "parseTextC23") {
+        return [normalized];
+    }
+    const rest = parts.slice(1).join("/");
+    const variants = [normalized];
+    for (const child of ["parseTextC2", "parseTextC3"]) {
+        if (parts[1] !== child) {
+            variants.push(["parseTextC23", child, rest].filter(Boolean).join("/"));
+        }
+    }
+    return [...new Set(variants)];
+}
+
+function resolveEffectiveBackupVariantDirectory(document, block, preferredVariantDirectory, generation = 1) {
+    const preferred = normalizeBackupHintToRelativeDirectory(preferredVariantDirectory || block.backUpPathHint, `parseTextC23/${block.programName}`);
+    for (const candidate of getFallbackBackupVariantDirectories(preferred)) {
+        if (backupDirectoryHasDrawFiles(document, block, generation, candidate)) {
+            return candidate;
+        }
+    }
+    return preferred;
+}
+
+function listAvailableBackupGenerations(document, text = document.getText()) {
+    const fs = require("node:fs");
+    const generations = new Set([1]);
+    for (const block of getCachedDrawBackupBlocks(document, text)) {
+        const baseDir = getBackupDirectoryForBlock(document, block, 1);
+        if (!fs.existsSync(baseDir)) {
+            continue;
+        }
+        generations.add(1);
+        for (const entry of fs.readdirSync(baseDir, { withFileTypes: true })) {
+            if (entry.isDirectory() && /^[2-9]\d*$/.test(entry.name)) {
+                generations.add(Number.parseInt(entry.name, 10));
+            }
+        }
+    }
+    return Array.from(generations).sort((a, b) => a - b);
+}
+
+function listAvailableBackupGenerationsForBlock(document, block, variantDirectory) {
+    const fs = require("node:fs");
+    const generations = new Set([1]);
+    const baseDir = getBackupDirectoryForBlock(document, block, 1, variantDirectory);
+    if (!fs.existsSync(baseDir)) {
+        return [1];
+    }
+    for (const entry of fs.readdirSync(baseDir, { withFileTypes: true })) {
+        if (entry.isDirectory() && /^[2-9]\d*$/.test(entry.name)) {
+            generations.add(Number.parseInt(entry.name, 10));
+        }
+    }
+    return Array.from(generations).sort((a, b) => a - b);
+}
+
+function findLatestBackupFile(directory, drawKind, suffix) {
+    const fs = require("node:fs");
+    if (!fs.existsSync(directory)) {
+        return null;
+    }
+    const matcher = new RegExp(`^${escapeRegExp(drawKind)}_${escapeRegExp(suffix)}_\\d{12,14}\\.txt$`, "i");
+    const files = fs.readdirSync(directory)
+        .filter((name) => matcher.test(name))
+        .sort((a, b) => a.localeCompare(b));
+    if (!files.length) {
+        return null;
+    }
+    return require("path").join(directory, files[files.length - 1]);
+}
+
+function findLatestBackupFilesByDrawKind(directory, drawKind) {
+    const fs = require("node:fs");
+    const path = require("path");
+    if (!fs.existsSync(directory)) {
+        return [];
+    }
+    const directoryKey = `${directory}::${drawKind}`;
+    const directoryStat = fs.statSync(directory);
+    const cached = backupDirectoryEntryCache.get(directoryKey);
+    if (cached && cached.mtimeMs === directoryStat.mtimeMs) {
+        return cached.entries;
+    }
+    const matcher = new RegExp(`^${escapeRegExp(drawKind)}_(.+?)_(\\d{12,14})\\.txt$`, "i");
+    const latestBySuffix = new Map();
+    for (const fileName of fs.readdirSync(directory)) {
+        const match = fileName.match(matcher);
+        if (!match) {
+            continue;
+        }
+        const suffix = match[1];
+        const timestamp = match[2];
+        const previous = latestBySuffix.get(suffix);
+        if (!previous || timestamp.localeCompare(previous.timestamp) >= 0) {
+            latestBySuffix.set(suffix, {
+                suffix,
+                timestamp,
+                filePath: path.join(directory, fileName),
+            });
+        }
+    }
+    const entries = Array.from(latestBySuffix.values()).sort((a, b) => a.suffix.localeCompare(b.suffix));
+    backupDirectoryEntryCache.set(directoryKey, {
+        mtimeMs: directoryStat.mtimeMs,
+        entries,
+    });
+    return entries;
+}
+
+function tryReadBackupJsonPayload(filePath) {
+    const fs = require("node:fs");
+    try {
+        const rawLines = fs.readFileSync(filePath, "utf8").split(/\r?\n/);
+        for (let index = rawLines.length - 1; index >= 0; index--) {
+            const line = rawLines[index].trim();
+            if (!line) {
+                continue;
+            }
+            const payload = JSON.parse(line);
+            return { payload, jsonLineIndex: index, lines: rawLines };
+        }
+    } catch {
+        return null;
+    }
+}
+
+function parseBackupEntries(filePath) {
+    const parsed = tryReadBackupJsonPayload(filePath);
+    if (!parsed?.payload) {
+        return [];
+    }
+    return Array.isArray(parsed.payload.entries) ? parsed.payload.entries : [];
+}
+
+function formatBackupValueForComment(value) {
+    if (value?.__backupType === "texture2D") {
+        const dim = Number(value.dim ?? 1) || 1;
+        const unit = value.unit ?? "NA";
+        const program = value.program ?? "programNA";
+        return `texture2D[${value.w} x ${value.h} x ${dim}] unit=${unit} program=${program}`;
+    }
+    if (value?.__backupType && Array.isArray(value.data)) {
+        return `${value.__backupType}[${value.data.join(", ")}]`;
+    }
+    if (typeof value === "string") {
+        return value;
+    }
+    if (typeof value === "number" || typeof value === "boolean" || value === null) {
+        return String(value);
+    }
+    if (Array.isArray(value)) {
+        return JSON.stringify(value);
+    }
+    try {
+        return JSON.stringify(value);
+    } catch {
+        return String(value);
+    }
+}
+
+function findUniformSectionRange(document, block) {
+    const lines = document.getText().split(/\r?\n/);
+    for (let lineNo = block.startLine; lineNo <= block.endLine; lineNo++) {
+        const code = stripLineComment(lines[lineNo] || "");
+        if (!/^\s*uniforms\b[^{]*\{/.test(code)) {
+            continue;
+        }
+        let depth = countNetBraces(code);
+        let endLine = lineNo;
+        for (let innerLine = lineNo + 1; innerLine <= block.endLine; innerLine++) {
+            depth += countNetBraces(stripLineComment(lines[innerLine] || ""));
+            endLine = innerLine;
+            if (depth <= 0) {
+                break;
+            }
+        }
+        return { startLine: lineNo, endLine };
+    }
+    return null;
+}
+
+function buildUniformBackupCommentLines(document, block, filePath) {
+    const entries = parseBackupEntries(filePath);
+    if (!entries.length) {
+        return ["uniforms: missing"];
+    }
+
+    const entryMap = new Map(entries.map((entry) => [entry.name, entry]));
+    const inputEntries = entries.filter((entry) => entry.kind === "programTexture");
+    const lines = document.getText().split(/\r?\n/);
+    const namedBlocks = parseNamedAssignedBlocks(document.getText(), document);
+    const uniformNameCache = new Map();
+    const section = findUniformSectionRange(document, block);
+    const commentLines = [];
+
+    if (inputEntries.length) {
+        commentLines.push(`inputs: ${inputEntries.map((entry) => `${entry.name}=${formatBackupValueForComment(entry.value)}`).join(", ")}`);
+    }
+
+    if (!section) {
+        const uniformEntries = entries.filter((entry) => entry.kind !== "programTexture");
+        commentLines.push(`uniforms: ${uniformEntries.map((entry) => `${entry.name}=${formatBackupValueForComment(entry.value)}`).join(", ") || "(empty)"}`);
+        return commentLines;
+    }
+
+    commentLines.push("uniforms {");
+    for (let lineNo = section.startLine + 1; lineNo < section.endLine; lineNo++) {
+        const code = stripLineComment(lines[lineNo] || "").trim();
+        if (!code || code === "}") {
+            continue;
+        }
+        const assignmentMatch = code.match(/^([A-Za-z_]\w*)\s*=/);
+        if (assignmentMatch) {
+            const uniformName = assignmentMatch[1];
+            const entry = entryMap.get(uniformName);
+            commentLines.push(`  ${uniformName} = ${entry ? formatBackupValueForComment(entry.value) : "missing"}`);
+            continue;
+        }
+        const includeMatch = code.match(/^([A-Za-z_]\w*)\s*[;,]?\s*$/);
+        if (includeMatch) {
+            const includeName = includeMatch[1];
+            const resolved = Array.from(resolveUniformNamesFromNamedBlock(includeName, namedBlocks, lines, uniformNameCache)).sort((a, b) => a.localeCompare(b));
+            if (!resolved.length) {
+                commentLines.push(`  ${includeName}`);
+                continue;
+            }
+            const parts = resolved.map((uniformName) => {
+                const entry = entryMap.get(uniformName);
+                return `${uniformName}=${entry ? formatBackupValueForComment(entry.value) : "missing"}`;
+            });
+            commentLines.push(`  ${includeName} { ${parts.join(", ")} }`);
+        }
+    }
+    commentLines.push("}");
+    return commentLines;
+}
+
+function clampNumber(value, min, max) {
+    return Math.max(min, Math.min(max, value));
+}
+
+function sampleTexturePixelValue(textureValue, x, y) {
+    const width = Math.max(1, Number.parseInt(textureValue?.w, 10) || 1);
+    const height = Math.max(1, Number.parseInt(textureValue?.h, 10) || 1);
+    const dim = Math.max(1, Number.parseInt(textureValue?.dim, 10) || 1);
+    const data = Array.isArray(textureValue?.data) ? textureValue.data : [];
+    const clampedX = clampNumber(x, 0, width - 1);
+    const clampedY = clampNumber(y, 0, height - 1);
+    const baseIndex = (clampedY * width + clampedX) * dim;
+    const r = Number(data[baseIndex] ?? 0);
+    const g = Number(data[baseIndex + 1] ?? r);
+    const b = Number(data[baseIndex + 2] ?? g);
+    const a = dim >= 4 ? Number(data[baseIndex + 3] ?? 1) : 1;
+    if (dim === 1) {
+        return r;
+    }
+    if (dim === 2) {
+        return (r + g) * 0.5;
+    }
+    const luminance = (0.2126 * r) + (0.7152 * g) + (0.0722 * b);
+    return dim >= 4 ? luminance * a : luminance;
+}
+
+function buildTextureAsciiPreviewLines(textureValue) {
+    const width = Math.max(1, Number.parseInt(textureValue?.w, 10) || 1);
+    const height = Math.max(1, Number.parseInt(textureValue?.h, 10) || 1);
+    const data = Array.isArray(textureValue?.data) ? textureValue.data : null;
+    if (!data?.length) {
+        return [];
+    }
+    const maxPreviewHeight = 12;
+    const maxPreviewWidth = 48;
+    const previewHeight = Math.max(1, Math.min(height, maxPreviewHeight));
+    const previewWidth = Math.max(1, Math.min(width, maxPreviewWidth));
+    const chars = " .:-=+*#%@";
+    const samples = [];
+    let minValue = Number.POSITIVE_INFINITY;
+    let maxValue = Number.NEGATIVE_INFINITY;
+    for (let py = 0; py < previewHeight; py++) {
+        const row = [];
+        const sourceY = Math.min(height - 1, Math.floor(((py + 0.5) / previewHeight) * height));
+        for (let px = 0; px < previewWidth; px++) {
+            const sourceX = Math.min(width - 1, Math.floor(((px + 0.5) / previewWidth) * width));
+            const value = sampleTexturePixelValue(textureValue, sourceX, sourceY);
+            row.push(value);
+            if (Number.isFinite(value)) {
+                minValue = Math.min(minValue, value);
+                maxValue = Math.max(maxValue, value);
+            }
+        }
+        samples.push(row);
+    }
+    const valueSpan = Number.isFinite(minValue) && Number.isFinite(maxValue)
+        ? Math.max(1e-9, maxValue - minValue)
+        : 1;
+    const lines = [];
+    for (let py = 0; py < previewHeight; py++) {
+        let line = "";
+        for (let px = 0; px < previewWidth; px++) {
+            const value = samples[py][px];
+            const normalized = Number.isFinite(value)
+                ? clampNumber((value - minValue) / valueSpan, 0, 1)
+                : 0;
+            const charIndex = Math.min(chars.length - 1, Math.floor(normalized * (chars.length - 1)));
+            line += chars[charIndex];
+        }
+        lines.push(`preview ${line}`);
+    }
+    return lines;
+}
+
+function buildTextureBackupCommentLines(filePath, outputName, outputIndex, totalOutputs) {
+    const parsed = tryReadBackupJsonPayload(filePath);
+    if (!parsed) {
+        if (Number.isFinite(outputIndex) && Number.isFinite(totalOutputs)) {
+            return [`${outputName}(${outputIndex}/${totalOutputs}) missing`];
+        }
+        return [`${outputName} missing`];
+    }
+    const previewLines = parsed.lines
+        .slice(0, parsed.jsonLineIndex >= 0 ? parsed.jsonLineIndex : parsed.lines.length)
+        .filter((line) => line.length > 0);
+    const headerLine = previewLines[0] || "";
+    const payloadValue = parsed.payload?.value || {};
+    let headerTail = headerLine.trim();
+    if (headerTail.startsWith(`${outputName} `)) {
+        headerTail = headerTail.slice(outputName.length).trim();
+    }
+    if (!headerTail) {
+        const w = payloadValue.w ?? "?";
+        const h = payloadValue.h ?? "?";
+        const program = payloadValue.program ?? "programNA";
+        headerTail = `[${w} x ${h}] ${program}`;
+    }
+    const labelPrefix = Number.isFinite(outputIndex) && Number.isFinite(totalOutputs)
+        ? `${outputName}(${outputIndex}/${totalOutputs})`
+        : outputName;
+    const header = `${labelPrefix} ${headerTail}`.replace(/\s+/g, " ").trim();
+    const commentLines = [header.endsWith(":") ? header : `${header}:`];
+    commentLines.push(...buildTextureAsciiPreviewLines(payloadValue));
+    commentLines.push(...previewLines.slice(1));
+    return commentLines;
+}
+
+function buildDrawBackupVariantBaseLabel(state, block) {
+    const relativeDir = normalizeBackupHintToRelativeDirectory(
+        state?.variantDirectory || block.backUpPathHint,
+        `parseTextC23/${block.programName}`,
+    );
+    const parts = relativeDir.split("/").filter(Boolean);
+    if (parts[0] === "parseTextC23" && /^parseTextC[23]$/i.test(parts[1] || "")) {
+        return parts[1];
+    }
+    return parts[0] || "path?";
+}
+
+function buildDrawBackupSummaryText(document, block, generation, variantDirectory, variantOpenMode = "single") {
+    const directory = getBackupDirectoryForBlock(document, block, generation, variantDirectory);
+    const generationLabel = generation === 1 ? "main" : `/${generation}`;
+    const files = findLatestBackupFilesByDrawKind(directory, block.drawKind);
+    const textureCount = files.filter((entry) => entry.suffix !== "uniforms").length;
+    const hasUniforms = files.some((entry) => entry.suffix === "uniforms");
+    const variantLabel = normalizeBackupHintToRelativeDirectory(variantDirectory || block.backUpPathHint, `parseTextC23/${block.programName}`);
+    const modeLabel = variantOpenMode === "all" ? "all" : "selected";
+    return `// [backup ${generationLabel} @ ${variantLabel}] mode=${modeLabel} uniforms=${hasUniforms ? "yes" : "no"} textures=${textureCount}`;
+}
+
+function buildDrawBackupCommentText(document, block, generation, variantDirectory, variantOpenMode = "single") {
+    const directory = getBackupDirectoryForBlock(document, block, generation, variantDirectory);
+    const commentLines = [];
+    const uniformFile = findLatestBackupFile(directory, block.drawKind, "uniforms");
+    if (uniformFile) {
+        commentLines.push(...buildUniformBackupCommentLines(document, block, uniformFile));
+    } else {
+        commentLines.push("uniforms: missing");
+    }
+    if (variantOpenMode === "all") {
+        const files = findLatestBackupFilesByDrawKind(directory, block.drawKind)
+            .filter((entry) => entry.suffix !== "uniforms");
+        if (!files.length) {
+            commentLines.push("textures: missing");
+        } else {
+            for (const [index, entry] of files.entries()) {
+                commentLines.push(...buildTextureBackupCommentLines(entry.filePath, entry.suffix, index + 1, files.length));
+            }
+        }
+    } else {
+        for (const [index, outputName] of block.outputs.entries()) {
+            const textureFile = findLatestBackupFile(directory, block.drawKind, outputName);
+            if (textureFile) {
+                commentLines.push(...buildTextureBackupCommentLines(textureFile, outputName, index + 1, block.outputs.length));
+            } else {
+                commentLines.push(`${outputName}(${index + 1}/${block.outputs.length}) missing`);
+            }
+        }
+    }
+    return commentLines.map((line) => `// ${line}`).join("\n");
+}
+
+function buildDrawBackupPreviewDocumentText(document, block, state) {
+    return buildDrawBackupCommentText(document, block, state.generation, state.variantDirectory, state.variantOpenMode);
+}
+
+function buildDrawBackupPreviewDocumentUri(document, block) {
+    const state = getDrawBackupBlockState(document, block);
+    const shortLabel = [
+        buildDrawBackupVariantBaseLabel(state, block),
+        block.programName,
+        state.generation === 1 ? "main" : `g${state.generation}`,
+        state.variantOpenMode,
+    ].join("_").replace(/[^A-Za-z0-9_.-]/g, "_");
+    const payload = {
+        sourceUri: document.uri.toString(),
+        blockKey: block.key,
+    };
+    return vscode.Uri.from({
+        scheme: DRAW_BACKUP_PREVIEW_SCHEME,
+        path: `/${shortLabel}.txt`,
+        query: encodeURIComponent(JSON.stringify(payload)),
+    });
+}
+
+function parseDrawBackupPreviewDocumentUri(uri) {
+    try {
+        return JSON.parse(decodeURIComponent(uri.query || ""));
+    } catch {
+        return null;
+    }
+}
+
+function provideDrawBackupPreviewDocumentContent(uri) {
+    const payload = parseDrawBackupPreviewDocumentUri(uri);
+    if (!payload?.sourceUri || !payload?.blockKey) {
+        return "// Invalid draw backUp preview URI";
+    }
+    const sourceUri = vscode.Uri.parse(payload.sourceUri);
+    const document = vscode.workspace.textDocuments.find((doc) => doc.uri.toString() === sourceUri.toString());
+    if (!document) {
+        return `// Source document is not open: ${payload.sourceUri}`;
+    }
+    const block = getCachedDrawBackupBlocks(document).find((item) => item.key === payload.blockKey);
+    if (!block) {
+        return `// Draw backUp block not found: ${payload.blockKey}`;
+    }
+    const state = getDrawBackupBlockState(document, block);
+    return buildDrawBackupPreviewDocumentText(document, block, state);
+}
+
+async function openDrawBackupPreviewDocument(editor, block) {
+    const uri = buildDrawBackupPreviewDocumentUri(editor.document, block);
+    drawBackupPreviewDocumentEmitter.fire(uri);
+    const document = await vscode.workspace.openTextDocument(uri);
+    await vscode.window.showTextDocument(document, {
+        preview: false,
+        preserveFocus: true,
+        viewColumn: vscode.ViewColumn.Beside,
+    });
+}
+
+function listDisplayedBackupFiles(document, block, state) {
+    const directory = getBackupDirectoryForBlock(document, block, state.generation, state.variantDirectory);
+    const files = [];
+    const uniformFile = findLatestBackupFile(directory, block.drawKind, "uniforms");
+    if (uniformFile) {
+        files.push({ label: "uniforms", filePath: uniformFile });
+    }
+    if (state.variantOpenMode === "all") {
+        for (const entry of findLatestBackupFilesByDrawKind(directory, block.drawKind).filter((entry) => entry.suffix !== "uniforms")) {
+            files.push({ label: entry.suffix, filePath: entry.filePath });
+        }
+        return files;
+    }
+    for (const outputName of block.outputs) {
+        const textureFile = findLatestBackupFile(directory, block.drawKind, outputName);
+        if (textureFile) {
+            files.push({ label: outputName, filePath: textureFile });
+        }
+    }
+    return files;
+}
+
+async function openDrawBackupBackingFile(editor, block) {
+    const state = getDrawBackupBlockState(editor.document, block);
+    const files = listDisplayedBackupFiles(editor.document, block, state);
+    if (!files.length) {
+        vscode.window.showInformationMessage("No backup file exists yet for this draw block.");
+        return;
+    }
+    let target = files[0];
+    if (files.length > 1) {
+        const picked = await vscode.window.showQuickPick(
+            files.map((item) => ({
+                label: item.label,
+                description: item.filePath,
+                filePath: item.filePath,
+            })),
+            {
+                placeHolder: `Choose a backup file for ${block.programName}`,
+                title: "Open backup file",
+            },
+        );
+        if (!picked) {
+            return;
+        }
+        target = { label: picked.label, filePath: picked.filePath };
+    }
+    const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(target.filePath));
+    await vscode.window.showTextDocument(doc, {
+        preview: false,
+        preserveFocus: false,
+        viewColumn: vscode.ViewColumn.Beside,
+    });
+}
+
+function buildDrawBackupPreviewOptions(editor, text) {
+    return [];
+}
+
+function buildDrawBackupInlayHints(document, text) {
+    ensureWorkspaceBackupPathReplaceRegistryFresh();
+    return getCachedDrawBackupBlocks(document, text).map((block) => {
+        const position = document.lineAt(block.endLine).range.end;
+        const state = getDrawBackupBlockState(document, block);
+        const showHideLabel = state.visible ? "Hide<" : "Show";
+        const hint = new vscode.InlayHint(position, [
+            {
+                value: `  ${showHideLabel}`,
+                tooltip: state.visible ? "Hide this draw backUp preview" : "Show this draw backUp preview",
+                command: {
+                    title: "Toggle Draw backUp Preview",
+                    command: "vsTSSnippets.toggleDrawBackupPreviewAtBlock",
+                    arguments: [document.uri.toString(), block.key],
+                },
+            },
+            {
+                value: " | Open",
+                tooltip: "Open the full draw backUp preview document",
+                command: {
+                    title: "Open Draw backUp Preview",
+                    command: "vsTSSnippets.openDrawBackupPreviewAtBlock",
+                    arguments: [document.uri.toString(), block.key],
+                },
+            },
+            {
+                value: " | Open File",
+                tooltip: "Open one of the concrete backup files behind this preview",
+                command: {
+                    title: "Open Draw backUp File",
+                    command: "vsTSSnippets.openDrawBackupFileAtBlock",
+                    arguments: [document.uri.toString(), block.key],
+                },
+            },
+            {
+                value: " | Options",
+                tooltip: "Open the draw backUp options menu",
+                command: {
+                    title: "Show Draw backUp Options",
+                    command: "vsTSSnippets.showDrawBackupOptionsAtBlock",
+                    arguments: [document.uri.toString(), block.key],
+                },
+            },
+        ], vscode.InlayHintKind.Other);
+        hint.paddingLeft = true;
+        return hint;
+    });
+}
+
+function makeCodeLens(line, command, title, args = []) {
+    return new vscode.CodeLens(
+        new vscode.Range(line, 0, line, 0),
+        {
+            title,
+            command,
+            arguments: args,
+        },
+    );
+}
+
+function makeTextCodeLens(line, title) {
+    return makeCodeLens(line, "vsTSSnippets.noop", title, []);
+}
+
+function pushDrawBackupTextCodeLenses(lenses, document, block, state, startLine) {
+    const text = buildDrawBackupCommentText(
+        document,
+        block,
+        state.generation,
+        state.variantDirectory,
+        state.variantOpenMode,
+    );
+    const lines = text.split(/\r?\n/);
+    for (let index = 0; index < lines.length; index++) {
+        const line = Math.min(startLine + index, Math.max(0, document.lineCount - 1));
+        lenses.push(makeTextCodeLens(line, lines[index]));
+    }
+}
+
+function buildDrawBackupCodeLenses(document, text) {
+    const blocks = getCachedDrawBackupBlocks(document, text);
+    const lenses = [];
+    for (const block of blocks) {
+        const state = getDrawBackupBlockState(document, block);
+        const basePathLabel = buildDrawBackupVariantBaseLabel(state, block);
+        const generationLabel = state.generation === 1 ? "main" : `/${state.generation}`;
+        const scopeLabel = state.variantOpenMode === "all" ? "all" : "selected";
+        const rowLine = Math.min(block.startLine, Math.max(0, document.lineCount - 1));
+        lenses.push(
+            makeCodeLens(rowLine, "vsTSSnippets.selectDrawBackupVariantAtBlock", `Path: ${basePathLabel}`, [document.uri.toString(), block.key]),
+            makeCodeLens(rowLine, "vsTSSnippets.toggleDrawBackupScopeAtBlock", `Scope: ${scopeLabel}`, [document.uri.toString(), block.key]),
+            makeCodeLens(rowLine, "vsTSSnippets.selectDrawBackupGenerationAtBlock", `Gen: ${generationLabel}`, [document.uri.toString(), block.key]),
+        );
+        if (state.visible) {
+            pushDrawBackupTextCodeLenses(lenses, document, block, state, block.endLine + 1);
+        }
+    }
+    return lenses;
+}
+
+function findVisibleEditorByUri(documentUriString) {
+    return vscode.window.visibleTextEditors.find((editor) => editor.document.uri.toString() === documentUriString) || null;
+}
+
+async function showDrawBackupGenerationPicker(editor, block) {
+    const currentState = getDrawBackupBlockState(editor.document, block);
+    const generations = listAvailableBackupGenerationsForBlock(editor.document, block, currentState.variantDirectory);
+    const picked = await vscode.window.showQuickPick(
+        generations.map((generation) => ({
+            label: generation === 1 ? "main" : `/${generation}`,
+            description: generation === currentState.generation ? "current" : "",
+            generation,
+        })),
+        {
+            placeHolder: `Choose the draw backUp generation for ${block.outputs.join(", ")}`,
+            title: `Draw backUp generation for ${block.programName}`,
+        },
+    );
+    if (!picked) {
+        return;
+    }
+    updateDrawBackupBlockState(editor.document, block.key, {
+        visible: true,
+        generation: picked.generation,
+    });
+    refreshDrawBackupUi(editor);
+}
+
+async function showDrawBackupOptionsPicker(editor, block) {
+    const picked = await vscode.window.showQuickPick([
+        { label: "Change path", action: "path" },
+        { label: "Change generation", action: "generation" },
+    ], {
+        placeHolder: `Choose an option for ${block.outputs.join(", ")}`,
+        title: `Draw backUp options for ${block.programName}`,
+    });
+    if (!picked) {
+        return;
+    }
+    if (picked.action === "path") {
+        await showDrawBackupVariantPicker(editor, block);
+        return;
+    }
+    await showDrawBackupGenerationPicker(editor, block);
+}
+
+async function showDrawBackupVariantPicker(editor, block) {
+    await refreshWorkspaceBackupPathReplaceRegistry(false);
+    const currentState = getDrawBackupBlockState(editor.document, block);
+    const picked = await vscode.window.showQuickPick(
+        getBackupVariantOptionsForBlock(block).map((option) => ({
+            label: option.label,
+            description: option.relativeDir === currentState.variantDirectory && option.openMode === currentState.variantOpenMode
+                ? "current"
+                : `${option.relativeDir} (${option.openMode})`,
+            relativeDir: option.relativeDir,
+            openMode: option.openMode,
+        })),
+        {
+            placeHolder: `Choose the draw backUp path variant for ${block.outputs.join(", ")}`,
+            title: `Draw backUp path for ${block.programName}`,
+        },
+    );
+    if (!picked) {
+        return;
+    }
+    updateDrawBackupBlockState(editor.document, block.key, {
+        visible: true,
+        variantDirectory: picked.relativeDir,
+        variantOpenMode: picked.openMode,
+    });
+    refreshDrawBackupUi(editor);
+}
+
+function refreshDrawBackupUi(editor) {
+    refreshEditorDecorations(editor);
+    drawBackupInlayHintsEmitter.fire();
+    drawBackupCodeLensEmitter.fire();
+    for (const document of vscode.workspace.textDocuments) {
+        if (document.uri.scheme === DRAW_BACKUP_PREVIEW_SCHEME) {
+            drawBackupPreviewDocumentEmitter.fire(document.uri);
+        }
+    }
+}
+
+function getSelectedTokenOrSymbol(editor) {
+    const selected = editor.document.getText(editor.selection).trim();
+    if (/^[A-Za-z_]\w*$/.test(selected)) {
+        return selected;
+    }
+    return getSymbolAtPosition(editor.document, editor.selection.active)?.text || "";
 }
 
 function collectProgramDrawOutputTargets(text) {
@@ -1561,6 +2812,7 @@ function refreshEditorDecorations(editor) {
     const dimensionXRanges = [];
     const rebindSquareRangesByUnit = TEX_UNIT_COLORS.map(() => []);
     const rebindEmptySquareRanges = [];
+    const drawBackupPreviewOptions = [];
     const text = editor.document.getText();
     const tagDefinitions = isShaderDsl ? parseDefineTagBlocks(text) : null;
     const namedBlocks = isShaderDsl ? parseNamedAssignedBlocks(text, editor.document) : new Map();
@@ -1611,6 +2863,7 @@ function refreshEditorDecorations(editor) {
         const uniformDiagnostics = buildUniformBlockDiagnostics(editor.document, text, namedBlocks);
         duplicateUniformErrorOptions.push(...uniformDiagnostics.duplicateErrorOptions);
         uniformOverrideOptions.push(...uniformDiagnostics.overrideOptions);
+        drawBackupPreviewOptions.push(...buildDrawBackupPreviewOptions(editor, text));
     }
 
     optionDecorations.forEach((decoration, index) => {
@@ -1652,6 +2905,7 @@ function refreshEditorDecorations(editor) {
         editor.setDecorations(squareDecoration, rebindSquareRangesByUnit[i]);
     });
     editor.setDecorations(emptySquareDecoration, rebindEmptySquareRanges);
+    editor.setDecorations(drawBackupPreviewDecoration, drawBackupPreviewOptions);
 }
 
 function collectTagDecorations(document, text, editor, tagRanges, derivedKeywordRanges, derivedVariableRanges, optiRanges, optiLineRanges, optiFadedRanges, optiTextRanges, tagDefinitionsInfo) {
@@ -3395,6 +4649,160 @@ async function getSearchDocuments(currentDocument, options = {}) {
 
 function escapeRegExp(text) {
     return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function mermaidNodeId(prefix, name) {
+    return `${prefix}_${name.replace(/[^A-Za-z0-9_]/g, "_")}`;
+}
+
+function escapeMermaidLabel(text) {
+    return (text || "").replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+
+function buildShaderDslMermaid(text, document, highlightedToken = "") {
+    const lines = text.split(/\r?\n/);
+    const programNodes = new Map();
+    const textureNodes = new Map();
+    const edges = new Set();
+    const adjacency = new Map();
+    let currentProgram = null;
+    let pendingFramebufferOutputs = null;
+    let pendingStandaloneRebindInputs = [];
+
+    const addProgramNode = (name) => {
+        if (!name) return null;
+        const id = mermaidNodeId("prog", name);
+        programNodes.set(name, id);
+        if (!adjacency.has(id)) adjacency.set(id, new Set());
+        return id;
+    };
+
+    const addTextureNode = (name) => {
+        if (!name) return null;
+        const id = mermaidNodeId("tex", name);
+        textureNodes.set(name, id);
+        if (!adjacency.has(id)) adjacency.set(id, new Set());
+        return id;
+    };
+
+    const connect = (fromId, toId) => {
+        if (!fromId || !toId) return;
+        edges.add(`${fromId} --> ${toId}`);
+        if (!adjacency.has(fromId)) adjacency.set(fromId, new Set());
+        if (!adjacency.has(toId)) adjacency.set(toId, new Set());
+        adjacency.get(fromId).add(toId);
+        adjacency.get(toId).add(fromId);
+    };
+
+    for (let lineNo = 0; lineNo < lines.length; lineNo++) {
+        const code = stripLineComment(lines[lineNo] || "");
+        const useMatch = code.match(/^\s*(?:lduse|use)\s+([A-Za-z_]\w*)\b/);
+        if (useMatch) {
+            currentProgram = useMatch[1];
+            addProgramNode(currentProgram);
+        }
+
+        const framebufferInlineMatch = code.match(/^\s*framebuffer\s+[A-Za-z_]\w*\s*\[([^\]]*)\]/);
+        if (framebufferInlineMatch) {
+            pendingFramebufferOutputs = framebufferInlineMatch[1]
+                .split(",")
+                .map((item) => item.trim())
+                .filter(Boolean);
+        }
+
+        if (/^\s*rebind\b[^{]*\{/.test(code)) {
+            const blockInfo = analyzeDrawBlock(lines, lineNo);
+            pendingStandaloneRebindInputs = Array.from(blockInfo.rebinds.keys());
+            lineNo = Math.max(lineNo, blockInfo.endLine);
+            continue;
+        }
+
+        const drawInfo = parseDrawHeaderInfo(code);
+        if (!drawInfo || !currentProgram) {
+            continue;
+        }
+
+        let inputs = [];
+        let outputs = drawInfo.outputs.slice();
+        if (drawInfo.outputs.length) {
+            const blockInfo = analyzeDrawBlock(lines, lineNo);
+            inputs = Array.from(blockInfo.rebinds.keys());
+            lineNo = Math.max(lineNo, blockInfo.endLine);
+        } else if (pendingFramebufferOutputs?.length) {
+            outputs = pendingFramebufferOutputs.slice();
+            inputs = pendingStandaloneRebindInputs.slice();
+            pendingFramebufferOutputs = null;
+        }
+
+        const programId = addProgramNode(currentProgram);
+        for (const inputName of inputs) {
+            connect(addTextureNode(inputName), programId);
+        }
+        for (const outputName of outputs) {
+            connect(programId, addTextureNode(outputName));
+        }
+    }
+
+    const highlightedIds = new Set();
+    const selectedIds = [];
+    if (highlightedToken) {
+        const programId = programNodes.get(highlightedToken);
+        const textureId = textureNodes.get(highlightedToken);
+        if (programId) selectedIds.push(programId);
+        if (textureId) selectedIds.push(textureId);
+    }
+    const queue = [...new Set(selectedIds)];
+    while (queue.length) {
+        const current = queue.shift();
+        if (!current || highlightedIds.has(current)) {
+            continue;
+        }
+        highlightedIds.add(current);
+        for (const next of adjacency.get(current) || []) {
+            if (!highlightedIds.has(next)) {
+                queue.push(next);
+            }
+        }
+    }
+
+    const linesOut = [
+        "flowchart LR",
+        highlightedToken ? `%% highlighted token: ${highlightedToken}` : "%% full lineage",
+    ];
+    for (const [name, id] of programNodes.entries()) {
+        linesOut.push(`    ${id}["${escapeMermaidLabel(name)}"]`);
+    }
+    for (const [name, id] of textureNodes.entries()) {
+        linesOut.push(`    ${id}(["${escapeMermaidLabel(name)}"])`);
+    }
+    for (const edge of Array.from(edges).sort((a, b) => a.localeCompare(b))) {
+        linesOut.push(`    ${edge}`);
+    }
+    linesOut.push('    classDef program fill:#1f2430,stroke:#7aa2f7,color:#d9e0ee;');
+    linesOut.push('    classDef texture fill:#17352a,stroke:#7bd88f,color:#d9e0ee;');
+    linesOut.push('    classDef highlight fill:#f7a072,stroke:#ffcc66,color:#1b1b1b;');
+    if (programNodes.size) {
+        linesOut.push(`    class ${Array.from(programNodes.values()).join(",")} program;`);
+    }
+    if (textureNodes.size) {
+        linesOut.push(`    class ${Array.from(textureNodes.values()).join(",")} texture;`);
+    }
+    if (highlightedIds.size) {
+        linesOut.push(`    class ${Array.from(highlightedIds).join(",")} highlight;`);
+    }
+    return `${linesOut.join("\n")}\n`;
+}
+
+function exportParseTextC23Mermaid(document, highlightedToken = "") {
+    const fs = require("node:fs");
+    const path = require("path");
+    const root = getWorkspaceRootPath(document);
+    const backupsDir = path.join(root, "backups", "parseTextC23");
+    fs.mkdirSync(backupsDir, { recursive: true });
+    const safeToken = highlightedToken ? `_${highlightedToken.replace(/[^A-Za-z0-9_]/g, "_")}` : "";
+    const exportPath = path.join(backupsDir, `parseTextC23_lineage${safeToken}.mmd`);
+    fs.writeFileSync(exportPath, buildShaderDslMermaid(document.getText(), document, highlightedToken), "utf8");
+    return vscode.Uri.file(exportPath);
 }
 
 module.exports = {

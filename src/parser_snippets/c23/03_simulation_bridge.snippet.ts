@@ -1,6 +1,6 @@
 /**
 Archivo:
-- Convierte el modelo estimado en una trayectoria simulada publicable para C1.
+- Convierte el modelo estimado en una trayectoria simulada publicable/accesible para C1.
 - Une lecturas de texturas, coeficientes medios, escalado de amplitud y escritura en window.simDataX/Y.
 
 Objetivos:

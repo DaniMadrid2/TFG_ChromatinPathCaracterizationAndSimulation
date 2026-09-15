@@ -175,8 +175,12 @@ void main(){
             if(i >= nBins) break;
             vec4 s0 = texelFetch(tauSindyInit, ivec2(i,0), 0);
             vec4 s1 = texelFetch(tauSindy, ivec2(i,0), 0);
-            minF = min(minF, min(s0.y, s1.y));
-            maxF = max(maxF, max(s0.y, s1.y));
+            minF = min(minF, s1.y);
+            maxF = max(maxF, s1.y);
+            if(showLSOverlay > 0){
+                minF = min(minF, s0.y);
+                maxF = max(maxF, s0.y);
+            }
             minS = min(minS, min(s0.z, s1.z));
             maxS = max(maxS, max(s0.z, s1.z));
             minA = min(minA, min(s0.w, s1.w));
@@ -215,7 +219,6 @@ void main(){
             float baseY = (yTop1 - pad) - ((0.0 - minF) / spanF) * (h - 2.0 * pad);
             float base = 1.0 - smoothstep(0.0, 0.0012, abs(vUV.y - baseY));
             col = mix(col, vec3(0.18,0.2,0.23), base * 0.6);
-            col += vec3(0.25, 0.75, 0.85) * l0;
             if(showLSOverlay > 0) col += vec3(0.95) * (l0 * 0.95);
             col += vec3(0.05, 0.95, 1.00) * l1;
             alpha = max(alpha, 0.90);

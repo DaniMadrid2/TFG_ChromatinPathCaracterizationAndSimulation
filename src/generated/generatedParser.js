@@ -262,6 +262,300 @@ async function __c1Main() {
         __runtimeLetCache.set(resolvedPath, parsed);
         return parsed;
     };
+    const __backupBaseUrl = "/api/backups";
+    const __backupDefaultScope = "backups";
+    const __backupPad2 = (n) => String(n).padStart(2, "0");
+    const __backupStamp = () => {
+        const d = new Date();
+        return String(d.getFullYear()) + __backupPad2(d.getMonth() + 1) + __backupPad2(d.getDate()) + __backupPad2(d.getHours()) + __backupPad2(d.getMinutes());
+    };
+    const __backupSafeName = (name) => String(name ?? "backup").replace(/[^A-Za-z0-9_.-]+/g, "_").replace(/^_+|_+$/g, "") || "backup";
+    const __backupDefaultPath = (value, varName) => {
+        const isTex = value && typeof value === "object" && ("w" in value || "h" in value || "unit" in value || value instanceof WebGLTexture);
+        const parts = [__backupSafeName(varName)];
+        if (isTex) {
+            parts.push(String(value.w ?? value.width ?? "x"));
+            parts.push(String(value.h ?? value.height ?? "y"));
+            parts.push("TexUnit" + String(value.unit ?? "NA").replace(/^TexUnit/i, ""));
+            parts.push(__backupSafeName(value.__backupProgram ?? value.programName ?? value.program ?? "programNA"));
+        }
+        parts.push(__backupStamp());
+        return parts.join("_") + ".txt";
+    };
+    const __backupTexturePreview = (tex, varName) => {
+        if (!tex || tex.__backupType !== "texture2D")
+            return "";
+        const w = Number(tex.w ?? 0) || 0;
+        const h = Number(tex.h ?? 0) || 0;
+        const dim = Number(tex.dim ?? 1) || 1;
+        const name = String(varName ?? "texture");
+        const program = String(tex.program ?? "programNA");
+        const values = Array.isArray(tex.data) ? tex.data : [];
+        const formatScalar = (value) => {
+            const num = Number(value);
+            if (!Number.isFinite(num))
+                return String(value ?? "").padStart(10, " ");
+            return num.toFixed(4).padStart(10, " ");
+        };
+        const lines = [name + " [" + w + " x " + h + "] " + program];
+        for (let y = 0; y < h; y++) {
+            const row = [];
+            for (let x = 0; x < w; x++) {
+                const base = (y * w + x) * dim;
+                for (let c = 0; c < dim; c++) {
+                    row.push(formatScalar(values[base + c]));
+                }
+            }
+            lines.push(row.join(" "));
+        }
+        return lines.join("\n");
+    };
+    const __backupNormalizeScopePath = (pathHint) => {
+        const raw = String(pathHint ?? "").trim().replace(/\\/g, "/");
+        const scope = String(__backupDefaultScope || "").replace(/^\/+|\/+$/g, "");
+        const withScope = (value) => {
+            const clean = String(value || "").replace(/^\/+/, "");
+            if (!scope)
+                return clean;
+            if (!clean)
+                return scope;
+            if (clean === scope || clean.startsWith(scope + "/"))
+                return clean;
+            return scope + "/" + clean;
+        };
+        if (!raw || raw === "/" || raw === ".")
+            return { path: withScope(""), directoryMode: true };
+        if (raw.startsWith("./")) {
+            const rest = raw.slice(2);
+            return { path: withScope(rest), directoryMode: !rest || /\/$/.test(rest) };
+        }
+        if (raw.startsWith("/"))
+            return { path: withScope(raw.slice(1)), directoryMode: true };
+        return { path: withScope(raw), directoryMode: true };
+    };
+    const __backupReadTexture2D = (tex) => {
+        if (!tex || typeof tex !== "object" || !(tex instanceof WebGLTexture))
+            return null;
+        const w = Number(tex.w ?? tex.width ?? 1) || 1;
+        const h = Number(tex.h ?? tex.height ?? 1) || 1;
+        const format = tex.format || TexExamples.RGBAFloat;
+        const dim = format?.[0] === gl.RED ? 1 : format?.[0] === gl.RG ? 2 : format?.[0] === gl.RGB ? 3 : 4;
+        const fbo = gl.createFramebuffer();
+        gl.bindFramebuffer(gl.READ_FRAMEBUFFER, fbo);
+        gl.framebufferTexture2D(gl.READ_FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+        gl.readBuffer(gl.COLOR_ATTACHMENT0);
+        const data = new Float32Array(w * h * dim);
+        gl.readPixels(0, 0, w, h, format[0], format[2], data);
+        gl.bindFramebuffer(gl.READ_FRAMEBUFFER, null);
+        gl.deleteFramebuffer(fbo);
+        return { __backupType: "texture2D", w, h, dim, format: Array.from(format || []), unit: tex.unit, program: tex.__backupProgram, data: Array.from(data) };
+    };
+    const __backupSerializeValue = (value, varName) => {
+        const tex = __backupReadTexture2D(value);
+        if (tex) {
+            const jsonLine = JSON.stringify({ varName, savedAt: new Date().toISOString(), value: tex });
+            return __backupTexturePreview(tex, varName) + "\n" + jsonLine;
+        }
+        if (value instanceof Float32Array || value instanceof Int32Array || value instanceof Uint32Array || value instanceof Uint8Array) {
+            return JSON.stringify({ varName, savedAt: new Date().toISOString(), value: { __backupType: value.constructor.name, data: Array.from(value) } });
+        }
+        try {
+            return JSON.stringify({ varName, savedAt: new Date().toISOString(), value });
+        }
+        catch {
+            return String(value);
+        }
+    };
+    const __backupNormalizeValue = (value, varName) => {
+        const tex = __backupReadTexture2D(value);
+        if (tex)
+            return { varName, value: tex };
+        if (value instanceof Float32Array || value instanceof Int32Array || value instanceof Uint32Array || value instanceof Uint8Array) {
+            return { varName, value: { __backupType: value.constructor.name, data: Array.from(value) } };
+        }
+        return { varName, value };
+    };
+    const __backupPut = async (route, path, content, extra = {}) => {
+        const response = await fetch(__backupBaseUrl + route, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ path, content, ...extra })
+        });
+        const raw = await response.text();
+        if (!response.ok)
+            throw new Error("Backup request failed: " + response.status + " " + raw);
+        try {
+            return raw ? JSON.parse(raw) : { ok: true, path: String(path ?? "") };
+        }
+        catch {
+            return { ok: true, path: String(path ?? ""), raw };
+        }
+    };
+    const __backupStore = async (value, varName, pathHint) => {
+        try {
+            const target = __backupNormalizeScopePath(pathHint);
+            const result = await __backupPut("/file", target.path, __backupSerializeValue(value, varName), target.directoryMode ? { directoryMode: true, suggestedName: __backupDefaultPath(value, varName) } : {});
+            console.log("[backUp store]", result.path);
+            return result;
+        }
+        catch (err) {
+            console.error("[backUp store] failed", err);
+            return { ok: false, error: String(err) };
+        }
+    };
+    const __backupFetchText = async (pathHint) => {
+        const target = __backupNormalizeScopePath(pathHint);
+        const response = await fetch(__backupBaseUrl + "/file?path=" + encodeURIComponent(target.path));
+        if (!response.ok)
+            throw new Error("Backup restore failed: " + response.status + " " + await response.text());
+        return await response.text();
+    };
+    const __backupDecodeValue = (text) => {
+        try {
+            const lines = String(text ?? "").split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+            const jsonLine = lines.length ? lines[lines.length - 1] : "";
+            const parsed = JSON.parse(jsonLine);
+            return parsed && Object.prototype.hasOwnProperty.call(parsed, "value") ? parsed.value : parsed;
+        }
+        catch {
+            const nums = text.trim().split(/[\s,;]+/).map(Number).filter(Number.isFinite);
+            return nums.length ? new Float32Array(nums) : text;
+        }
+    };
+    const __backupRestoreInto = async (target, pathHint) => {
+        const value = __backupDecodeValue(await __backupFetchText(pathHint));
+        if (target && typeof target.fill === "function" && value?.__backupType === "texture2D") {
+            target.fill(new Float32Array(value.data || []), 0, 0, value.w, value.h);
+            return target;
+        }
+        if (value?.__backupType && Array.isArray(value.data))
+            return new Float32Array(value.data);
+        return value;
+    };
+    const __backupLog = async (pathHint) => {
+        const target = __backupNormalizeScopePath(pathHint);
+        const p = target.path;
+        const prevLog = console.log.bind(console);
+        const prevWarn = console.warn.bind(console);
+        const prevError = console.error.bind(console);
+        const append = (level, args) => {
+            const line = "[" + new Date().toISOString() + "] " + level + " " + args.map(a => { try {
+                return typeof a === "string" ? a : JSON.stringify(a);
+            }
+            catch {
+                return String(a);
+            } }).join(" ") + "\n";
+            __backupPut("/append", p, line, target.directoryMode ? { directoryMode: true, suggestedName: "log_" + __backupStamp() + ".txt" } : {}).catch(prevError);
+        };
+        console.log = (...args) => { prevLog(...args); append("log", args); };
+        console.warn = (...args) => { prevWarn(...args); append("warn", args); };
+        console.error = (...args) => { prevError(...args); append("error", args); };
+        console.log("[backUp log]", p);
+    };
+    const __backupDrawGenerationState = { stamp: Symbol("init"), counts: new Map(), clearedScopes: new Set() };
+    const __backupRefreshGenerationState = () => {
+        try {
+            if (typeof recomputeTau === "undefined" || !recomputeTau)
+                return;
+            const stamp = (typeof tauModelStamp !== "undefined") ? tauModelStamp : "__recompute__";
+            if (__backupDrawGenerationState.stamp !== stamp) {
+                __backupDrawGenerationState.stamp = stamp;
+                __backupDrawGenerationState.counts = new Map();
+                __backupDrawGenerationState.clearedScopes = new Set();
+            }
+        }
+        catch { }
+    };
+    const __backupClearDrawScopeGenerationsIfNeeded = async (pathHint) => {
+        __backupRefreshGenerationState();
+        try {
+            if (typeof recomputeTau === "undefined" || !recomputeTau)
+                return;
+            const target = __backupNormalizeScopePath(pathHint);
+            const key = String(target.path || "");
+            if (__backupDrawGenerationState.clearedScopes.has(key))
+                return;
+            __backupDrawGenerationState.clearedScopes.add(key);
+            await __backupPut("/clear-generations", target.path, "");
+        }
+        catch (err) {
+            console.warn("[backUp clear-generations] failed", pathHint, err);
+        }
+    };
+    const __backupNextDrawGeneration = (drawKind, pathHint, program) => {
+        __backupRefreshGenerationState();
+        try {
+            if (typeof recomputeTau === "undefined" || !recomputeTau)
+                return 1;
+            const target = __backupNormalizeScopePath(pathHint);
+            const drawName = __backupSafeName(drawKind || "draw");
+            const programName = __backupSafeName(program?.ID ?? program?.fragPath ?? program?.name ?? "program");
+            const key = target.path + "::" + programName + "::" + drawName;
+            const next = (__backupDrawGenerationState.counts.get(key) || 0) + 1;
+            __backupDrawGenerationState.counts.set(key, next);
+            return next;
+        }
+        catch {
+            return 1;
+        }
+    };
+    const __backupResolveMultiTarget = (pathHint, defaultStem, suffix, generation = 1) => {
+        const target = __backupNormalizeScopePath(pathHint);
+        const stem = __backupSafeName(defaultStem);
+        const cleanSuffix = String(suffix ?? "").replace(/^_+/, "");
+        const fileName = stem + "_" + cleanSuffix + "_" + __backupStamp() + ".txt";
+        const gen = Math.max(1, Number(generation) || 1);
+        if (target.directoryMode) {
+            const dirPath = gen > 1 ? (target.path ? String(target.path).replace(/\/+$/g, "") + "/" + String(gen) : String(gen)) : target.path;
+            return { path: dirPath, directoryMode: true, suggestedName: fileName, generation: gen };
+        }
+        const p = target.path;
+        if (/\.txt$/i.test(p)) {
+            const slash = Math.max(p.lastIndexOf("/"), p.lastIndexOf("\\"));
+            const dir = slash >= 0 ? p.slice(0, slash + 1) : "";
+            const base = slash >= 0 ? p.slice(slash + 1) : p;
+            const dot = base.toLowerCase().endsWith(".txt") ? base.slice(0, -4) : base;
+            const genDir = gen > 1 ? (dir ? dir.replace(/\/+$/g, "") + "/" + String(gen) + "/" : String(gen) + "/") : dir;
+            return { path: genDir + dot + "_" + cleanSuffix + ".txt", directoryMode: false, generation: gen };
+        }
+        const dirPath = gen > 1 ? (p ? String(p).replace(/\/+$/g, "") + "/" + String(gen) : String(gen)) : p;
+        return { path: dirPath, directoryMode: true, suggestedName: fileName, generation: gen };
+    };
+    const __backupStoreDrawBlock = async (drawKind, pathHint, outputTextures, uniformEntries, program) => {
+        try {
+            const drawName = __backupSafeName(drawKind || "draw");
+            await __backupClearDrawScopeGenerationsIfNeeded(pathHint);
+            const generation = __backupNextDrawGeneration(drawKind, pathHint, program);
+            const outputs = Array.isArray(outputTextures) ? outputTextures.filter(Boolean) : [];
+            const outputSet = new Set(outputs.map(item => item?.tex).filter(Boolean));
+            const programTextures = Array.isArray(program?.textures) ? program.textures.filter((tex) => tex && !outputSet.has(tex)) : [];
+            const prependedInputs = programTextures.map((tex, idx) => __backupNormalizeValue(tex, tex.__backupVarName || tex.__backupUniformName || ("inputTex" + idx)));
+            const normalizedUniforms = (Array.isArray(uniformEntries) ? uniformEntries : []).map((entry) => ({
+                kind: entry?.kind || "uniform",
+                name: entry?.name || "uniform",
+                ...__backupNormalizeValue(entry?.value, entry?.name || "uniform")
+            }));
+            const uniformPayload = JSON.stringify({
+                source: drawKind,
+                savedAt: new Date().toISOString(),
+                entries: [
+                    ...prependedInputs.map((entry) => ({ kind: "programTexture", name: entry.varName, value: entry.value })),
+                    ...normalizedUniforms
+                ]
+            });
+            const uniformTarget = __backupResolveMultiTarget(pathHint, drawName, "uniforms", generation);
+            await __backupPut("/file", uniformTarget.path, uniformPayload, uniformTarget.directoryMode ? { directoryMode: true, suggestedName: uniformTarget.suggestedName } : {});
+            for (const output of outputs) {
+                const outputTarget = __backupResolveMultiTarget(pathHint, drawName, __backupSafeName(output?.name || "output"), generation);
+                await __backupPut("/file", outputTarget.path, __backupSerializeValue(output?.tex, output?.name || "output"), outputTarget.directoryMode ? { directoryMode: true, suggestedName: outputTarget.suggestedName } : {});
+            }
+            return { ok: true };
+        }
+        catch (err) {
+            console.error("[backUp draw] failed", drawKind, pathHint, err);
+            return { ok: false, error: String(err) };
+        }
+    };
     var camera = new Camera3D(new Vector3D(0, 1, 0), 63);
     camera.setMoveControlsAt("s").setCamControlsAt("down").setMouseControls("mouse");
     camera.keys.a = "a";
@@ -354,13 +648,9 @@ async function __c1Main() {
     drawPCA.VAO.attribute("aPos", [-1, -1, 1, -1, 1, 1, -1, 1], 2);
     drawPCA.use?.();
     drawPCA.uNum("nCromatin", false, false).set(0);
-    drawPCA.use?.();
     drawPCA.uNum("isPerp", false, false).set(0);
-    drawPCA.use?.();
     drawPCA.uVec("offset", 3, true, false).set([0, 0, 0]);
-    drawPCA.use?.();
     drawPCA.uNum("scale", true, false).set(1);
-    drawPCA.use?.();
     drawPCA.uNum("is3D", false, false).set((!!is3D ? 1 : 0));
     drawPCA.bindTexName2TexUnit("datosX", "TexUnit0");
     drawPCA.bindTexName2TexUnit("datosY", "TexUnit1");
@@ -380,26 +670,17 @@ async function __c1Main() {
     drawStart.bindTexName2TexUnit("startPosTex", "TexUnit30");
     drawStart.use?.();
     drawStart.uNum("selectedChromatin", false, false).set(0);
-    drawStart.use?.();
     drawStart.uNum("useStartPosTex", false, false).set(0);
-    drawStart.use?.();
     drawStart.uNum("useMeanColor", false, false).set(0);
-    drawStart.use?.();
     drawStart.uNum("markerSize", true, false).set(42);
-    drawStart.use?.();
     drawStart.uVec("offset", 3, true, false).set([0, 0, 0]);
-    drawStart.use?.();
     drawStart.uNum("scale", true, false).set(1);
-    drawStart.use?.();
     drawStart.uNum("is3D", false, false).set((!!is3D ? 1 : 0));
     drawStart.isDepthTest = false;
     d.use?.();
     d.uVec("offset", 3, true, false).set([0, 0, 0]);
-    d.use?.();
     d.uNum("scale", true, false).set(1);
-    d.use?.();
     d.uNum("lCromatin", false, false).set((drawDataCount / nCromatins));
-    d.use?.();
     d.uNum("is3D", false, false).set((!!is3D ? 1 : 0));
     await d.use?.();
     lastUsedProgram = d;
@@ -476,9 +757,7 @@ async function __c1Main() {
         lastUsedProgram = calcPCA;
         calcPCA.use?.();
         calcPCA.uNum("lCromatin", false, false).set((drawDataCount / nCromatins));
-        calcPCA.use?.();
         calcPCA.uNum("datosXLength", false, false).set((MAX_TEXTURE_SIZE));
-        calcPCA.use?.();
         calcPCA.uNum("datosYLength", false, false).set((MAX_TEXTURE_SIZE));
         calcPCA.bindTexName2TexUnit("datosX", "TexUnit0");
         calcPCA.bindTexName2TexUnit("datosY", "TexUnit1");

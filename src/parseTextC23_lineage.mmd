@@ -1,0 +1,218 @@
+flowchart LR
+%% full lineage
+    prog_tauMom["tauMom"]
+    prog_tauXi["tauXi"]
+    prog_tauAFP["tauAFP"]
+    prog_tauNMSimplexInit["tauNMSimplexInit"]
+    prog_tauAdjFields["tauAdjFields"]
+    prog_tauAdjDiffOps["tauAdjDiffOps"]
+    prog_tauAdjOperator["tauAdjOperator"]
+    prog_tauKrylovInit["tauKrylovInit"]
+    prog_tauKrylovStep["tauKrylovStep"]
+    prog_tauArnoldiCoeff["tauArnoldiCoeff"]
+    prog_tauAdjExp["tauAdjExp"]
+    prog_tauSteadyFP["tauSteadyFP"]
+    prog_tauAdjCost["tauAdjCost"]
+    prog_tauNMStep["tauNMStep"]
+    prog_tauNMFinalize["tauNMFinalize"]
+    prog_tauStats["tauStats"]
+    prog_tauMask["tauMask"]
+    prog_tauFP["tauFP"]
+    prog_tauKL["tauKL"]
+    prog_tauScore["tauScore"]
+    prog_tauBest["tauBest"]
+    prog_tauSindy["tauSindy"]
+    prog_tauFPStat["tauFPStat"]
+    prog_drawTau["drawTau"]
+    tex_datosX1(["datosX1"])
+    tex_tauMom1(["tauMom1"])
+    tex_tauMom2(["tauMom2"])
+    tex_tauXiF(["tauXiF"])
+    tex_tauXiS(["tauXiS"])
+    tex_tauXiMeta(["tauXiMeta"])
+    tex_tauXiFOpt(["tauXiFOpt"])
+    tex_tauXiSOpt(["tauXiSOpt"])
+    tex_tauXiMetaOpt(["tauXiMetaOpt"])
+    tex_tauNMXiF0(["tauNMXiF0"])
+    tex_tauNMXiS0(["tauNMXiS0"])
+    tex_tauNMMeta0(["tauNMMeta0"])
+    tex_tauNMXiFRead(["tauNMXiFRead"])
+    tex_tauNMXiSRead(["tauNMXiSRead"])
+    tex_tauNMMetaRead(["tauNMMetaRead"])
+    tex_tauAdjFieldsTex(["tauAdjFieldsTex"])
+    tex_tauAdjDiffOpsTex(["tauAdjDiffOpsTex"])
+    tex_tauAdjFields(["tauAdjFields"])
+    tex_tauAdjDiffOps(["tauAdjDiffOps"])
+    tex_tauAdjOperatorTex(["tauAdjOperatorTex"])
+    tex_tauKrylov0Tex(["tauKrylov0Tex"])
+    tex_tauAdjOperator(["tauAdjOperator"])
+    tex_tauKrylovPrev(["tauKrylovPrev"])
+    tex_tauKrylov1Tex(["tauKrylov1Tex"])
+    tex_tauKrylov2Tex(["tauKrylov2Tex"])
+    tex_tauKrylov3Tex(["tauKrylov3Tex"])
+    tex_tauKrylov4Tex(["tauKrylov4Tex"])
+    tex_tauKrylov5Tex(["tauKrylov5Tex"])
+    tex_tauKrylov0(["tauKrylov0"])
+    tex_tauKrylov1(["tauKrylov1"])
+    tex_tauKrylov2(["tauKrylov2"])
+    tex_tauKrylov3(["tauKrylov3"])
+    tex_tauKrylov4(["tauKrylov4"])
+    tex_tauKrylov5(["tauKrylov5"])
+    tex_tauArnoldiCoeffTex(["tauArnoldiCoeffTex"])
+    tex_tauArnoldiCoeff(["tauArnoldiCoeff"])
+    tex_tauAdjExpTex(["tauAdjExpTex"])
+    tex_tauSteadyFPTex(["tauSteadyFPTex"])
+    tex_tauSteadyFP(["tauSteadyFP"])
+    tex_tauAdjExp(["tauAdjExp"])
+    tex_tauNMCost(["tauNMCost"])
+    tex_tauNMWriteF(["tauNMWriteF"])
+    tex_tauNMWriteS(["tauNMWriteS"])
+    tex_tauNMWriteM(["tauNMWriteM"])
+    tex_tauXiFFinal(["tauXiFFinal"])
+    tex_tauXiSFinal(["tauXiSFinal"])
+    tex_tauXiMetaFinal(["tauXiMetaFinal"])
+    tex_tauStatsTex(["tauStatsTex"])
+    tex_tauStats(["tauStats"])
+    tex_tauMaskTex(["tauMaskTex"])
+    tex_tauModelMask(["tauModelMask"])
+    tex_tauFPTex(["tauFPTex"])
+    tex_tauKLTex(["tauKLTex"])
+    tex_tauFPProxy(["tauFPProxy"])
+    tex_tauModelKL(["tauModelKL"])
+    tex_tauScoreTex(["tauScoreTex"])
+    tex_tauModelScore(["tauModelScore"])
+    tex_tauBestTex(["tauBestTex"])
+    tex_tauBest(["tauBest"])
+    tex_tauSindyInitTex(["tauSindyInitTex"])
+    tex_tauSindyTau1RefTex(["tauSindyTau1RefTex"])
+    tex_tauSindyTex(["tauSindyTex"])
+    tex_tauFPStatTex(["tauFPStatTex"])
+    prog_tauAdjCost --> tex_tauNMCost
+    prog_tauAdjDiffOps --> tex_tauAdjDiffOpsTex
+    prog_tauAdjExp --> tex_tauAdjExpTex
+    prog_tauAdjFields --> tex_tauAdjFieldsTex
+    prog_tauAdjOperator --> tex_tauAdjOperatorTex
+    prog_tauAFP --> tex_tauXiFOpt
+    prog_tauAFP --> tex_tauXiMetaOpt
+    prog_tauAFP --> tex_tauXiSOpt
+    prog_tauArnoldiCoeff --> tex_tauArnoldiCoeffTex
+    prog_tauBest --> tex_tauBestTex
+    prog_tauFP --> tex_tauFPTex
+    prog_tauFPStat --> tex_tauFPStatTex
+    prog_tauKL --> tex_tauKLTex
+    prog_tauKrylovInit --> tex_tauKrylov0Tex
+    prog_tauKrylovStep --> tex_tauKrylov1Tex
+    prog_tauKrylovStep --> tex_tauKrylov2Tex
+    prog_tauKrylovStep --> tex_tauKrylov3Tex
+    prog_tauKrylovStep --> tex_tauKrylov4Tex
+    prog_tauKrylovStep --> tex_tauKrylov5Tex
+    prog_tauMask --> tex_tauMaskTex
+    prog_tauMom --> tex_tauMom1
+    prog_tauMom --> tex_tauMom2
+    prog_tauNMFinalize --> tex_tauXiFFinal
+    prog_tauNMFinalize --> tex_tauXiMetaFinal
+    prog_tauNMFinalize --> tex_tauXiSFinal
+    prog_tauNMSimplexInit --> tex_tauNMMeta0
+    prog_tauNMSimplexInit --> tex_tauNMXiF0
+    prog_tauNMSimplexInit --> tex_tauNMXiS0
+    prog_tauNMStep --> tex_tauNMWriteF
+    prog_tauNMStep --> tex_tauNMWriteM
+    prog_tauNMStep --> tex_tauNMWriteS
+    prog_tauScore --> tex_tauScoreTex
+    prog_tauSindy --> tex_tauSindyInitTex
+    prog_tauSindy --> tex_tauSindyTau1RefTex
+    prog_tauSindy --> tex_tauSindyTex
+    prog_tauStats --> tex_tauStatsTex
+    prog_tauSteadyFP --> tex_tauSteadyFPTex
+    prog_tauXi --> tex_tauXiF
+    prog_tauXi --> tex_tauXiMeta
+    prog_tauXi --> tex_tauXiS
+    tex_datosX1 --> prog_tauMom
+    tex_tauAdjDiffOps --> prog_tauAdjOperator
+    tex_tauAdjExp --> prog_tauAdjCost
+    tex_tauAdjFields --> prog_tauAdjCost
+    tex_tauAdjFields --> prog_tauAdjOperator
+    tex_tauAdjFields --> prog_tauKrylovInit
+    tex_tauAdjFields --> prog_tauSteadyFP
+    tex_tauAdjOperator --> prog_tauKrylovStep
+    tex_tauArnoldiCoeff --> prog_tauAdjExp
+    tex_tauBest --> prog_tauFPStat
+    tex_tauBest --> prog_tauSindy
+    tex_tauFPProxy --> prog_tauBest
+    tex_tauFPProxy --> prog_tauScore
+    tex_tauKrylov0 --> prog_tauAdjExp
+    tex_tauKrylov0 --> prog_tauArnoldiCoeff
+    tex_tauKrylov1 --> prog_tauAdjExp
+    tex_tauKrylov1 --> prog_tauArnoldiCoeff
+    tex_tauKrylov2 --> prog_tauAdjExp
+    tex_tauKrylov2 --> prog_tauArnoldiCoeff
+    tex_tauKrylov3 --> prog_tauAdjExp
+    tex_tauKrylov3 --> prog_tauArnoldiCoeff
+    tex_tauKrylov4 --> prog_tauAdjExp
+    tex_tauKrylov4 --> prog_tauArnoldiCoeff
+    tex_tauKrylov5 --> prog_tauAdjExp
+    tex_tauKrylov5 --> prog_tauArnoldiCoeff
+    tex_tauKrylovPrev --> prog_tauKrylovStep
+    tex_tauModelKL --> prog_tauScore
+    tex_tauModelMask --> prog_tauBest
+    tex_tauModelMask --> prog_tauFP
+    tex_tauModelMask --> prog_tauScore
+    tex_tauModelScore --> prog_tauBest
+    tex_tauMom1 --> prog_tauAdjCost
+    tex_tauMom1 --> prog_tauAdjDiffOps
+    tex_tauMom1 --> prog_tauAdjFields
+    tex_tauMom1 --> prog_tauFP
+    tex_tauMom1 --> prog_tauFPStat
+    tex_tauMom1 --> prog_tauKL
+    tex_tauMom1 --> prog_tauSindy
+    tex_tauMom1 --> prog_tauSteadyFP
+    tex_tauMom1 --> prog_tauXi
+    tex_tauMom2 --> prog_tauAdjCost
+    tex_tauMom2 --> prog_tauAFP
+    tex_tauMom2 --> prog_tauXi
+    tex_tauNMCost --> prog_tauNMFinalize
+    tex_tauNMCost --> prog_tauNMStep
+    tex_tauNMMetaRead --> prog_tauAdjCost
+    tex_tauNMMetaRead --> prog_tauAdjFields
+    tex_tauNMXiFRead --> prog_tauAdjCost
+    tex_tauNMXiFRead --> prog_tauAdjFields
+    tex_tauNMXiFRead --> prog_tauNMFinalize
+    tex_tauNMXiFRead --> prog_tauNMStep
+    tex_tauNMXiSRead --> prog_tauAdjCost
+    tex_tauNMXiSRead --> prog_tauAdjFields
+    tex_tauNMXiSRead --> prog_tauNMFinalize
+    tex_tauNMXiSRead --> prog_tauNMStep
+    tex_tauStats --> prog_tauMask
+    tex_tauStats --> prog_tauScore
+    tex_tauSteadyFP --> prog_tauAdjCost
+    tex_tauXiF --> prog_tauSindy
+    tex_tauXiFFinal --> prog_tauFP
+    tex_tauXiFFinal --> prog_tauFPStat
+    tex_tauXiFFinal --> prog_tauKL
+    tex_tauXiFOpt --> prog_tauFPStat
+    tex_tauXiFOpt --> prog_tauNMFinalize
+    tex_tauXiFOpt --> prog_tauNMSimplexInit
+    tex_tauXiMeta --> prog_tauAFP
+    tex_tauXiMetaFinal --> prog_tauBest
+    tex_tauXiMetaFinal --> prog_tauFP
+    tex_tauXiMetaFinal --> prog_tauFPStat
+    tex_tauXiMetaFinal --> prog_tauKL
+    tex_tauXiMetaFinal --> prog_tauMask
+    tex_tauXiMetaFinal --> prog_tauScore
+    tex_tauXiMetaFinal --> prog_tauStats
+    tex_tauXiMetaOpt --> prog_tauFPStat
+    tex_tauXiMetaOpt --> prog_tauNMFinalize
+    tex_tauXiMetaOpt --> prog_tauNMSimplexInit
+    tex_tauXiS --> prog_tauAFP
+    tex_tauXiS --> prog_tauSindy
+    tex_tauXiSFinal --> prog_tauFP
+    tex_tauXiSFinal --> prog_tauFPStat
+    tex_tauXiSFinal --> prog_tauKL
+    tex_tauXiSOpt --> prog_tauFPStat
+    tex_tauXiSOpt --> prog_tauNMFinalize
+    tex_tauXiSOpt --> prog_tauNMSimplexInit
+    classDef program fill:#1f2430,stroke:#7aa2f7,color:#d9e0ee;
+    classDef texture fill:#17352a,stroke:#7bd88f,color:#d9e0ee;
+    classDef highlight fill:#f7a072,stroke:#ffcc66,color:#1b1b1b;
+    class prog_tauMom,prog_tauXi,prog_tauAFP,prog_tauNMSimplexInit,prog_tauAdjFields,prog_tauAdjDiffOps,prog_tauAdjOperator,prog_tauKrylovInit,prog_tauKrylovStep,prog_tauArnoldiCoeff,prog_tauAdjExp,prog_tauSteadyFP,prog_tauAdjCost,prog_tauNMStep,prog_tauNMFinalize,prog_tauStats,prog_tauMask,prog_tauFP,prog_tauKL,prog_tauScore,prog_tauBest,prog_tauSindy,prog_tauFPStat,prog_drawTau program;
+    class tex_datosX1,tex_tauMom1,tex_tauMom2,tex_tauXiF,tex_tauXiS,tex_tauXiMeta,tex_tauXiFOpt,tex_tauXiSOpt,tex_tauXiMetaOpt,tex_tauNMXiF0,tex_tauNMXiS0,tex_tauNMMeta0,tex_tauNMXiFRead,tex_tauNMXiSRead,tex_tauNMMetaRead,tex_tauAdjFieldsTex,tex_tauAdjDiffOpsTex,tex_tauAdjFields,tex_tauAdjDiffOps,tex_tauAdjOperatorTex,tex_tauKrylov0Tex,tex_tauAdjOperator,tex_tauKrylovPrev,tex_tauKrylov1Tex,tex_tauKrylov2Tex,tex_tauKrylov3Tex,tex_tauKrylov4Tex,tex_tauKrylov5Tex,tex_tauKrylov0,tex_tauKrylov1,tex_tauKrylov2,tex_tauKrylov3,tex_tauKrylov4,tex_tauKrylov5,tex_tauArnoldiCoeffTex,tex_tauArnoldiCoeff,tex_tauAdjExpTex,tex_tauSteadyFPTex,tex_tauSteadyFP,tex_tauAdjExp,tex_tauNMCost,tex_tauNMWriteF,tex_tauNMWriteS,tex_tauNMWriteM,tex_tauXiFFinal,tex_tauXiSFinal,tex_tauXiMetaFinal,tex_tauStatsTex,tex_tauStats,tex_tauMaskTex,tex_tauModelMask,tex_tauFPTex,tex_tauKLTex,tex_tauFPProxy,tex_tauModelKL,tex_tauScoreTex,tex_tauModelScore,tex_tauBestTex,tex_tauBest,tex_tauSindyInitTex,tex_tauSindyTau1RefTex,tex_tauSindyTex,tex_tauFPStatTex texture;

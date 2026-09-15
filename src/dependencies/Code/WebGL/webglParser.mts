@@ -14,71 +14,6 @@ import { Axis3DGroup, MeshRenderingProgram, MeshFillerProgram } from "./webglCap
 import { Camera3D } from "../Game3D/Game3D.js";
 import { WebGLMan, WebProgram, BindableTexture, parseTexUnitType, TexExamples } from "./webglMan.js";
 
-// export class DetailedParser{
-//     static context:{
-//             vars:any[],
-//             lookUpNames:{obj:any,names:any[]}[]&
-//                 {add:(obj:any,...names)=>void},
-//             blockName:string[],
-//         };
-//     static parse(str:string, gl: WebGL2RenderingContext) {
-//         DetailedParser.context={
-//             vars:[],
-//             lookUpNames:[] as any,
-//             blockName:[],
-//         };
-//         DetailedParser.context.lookUpNames.add=
-//             (obj:any,...names)=>{(DetailedParser.ctx.lookUpNames).push({obj,names})};
-
-        
-//         let lines=(str as any)
-//         .replaceAll("//.*$","")
-//         .replace(/\n(?!\n)/gm, " ") //only 1 \n
-//         .replaceAll("\t","    ")
-//         .split(/[(\n{2..});]/gm) as string[];
-//         let isBlock=false;
-//         for (let i = 0; i < lines.length; i++) {
-//             const line = lines[i];
-
-//             let result;
-//             //name{
-//             if(result=line.match(/^\s*([a-zA-Z]+)\{\s*$/)){
-//                 isBlock=true;
-//                 DetailedParser.ctx.blockName.push(result[1]);
-//             }
-//             //}
-//             if(isBlock&&(result=line.match(/^\s*\}\s*$/))){
-//                 isBlock=false;
-//                 DetailedParser.ctx.blockName.pop();
-//                 continue;
-//             }
-            
-//             //run only 1 parse
-//             if(DetailedParser.parseObjectDef(line)) continue;
-//             if(DetailedParser.parseFncCall(line)) continue;
-//         }
-//     }
-//     static get ctx(){
-//         return DetailedParser.context;
-//     }
-//     static parseObjectDef(line:string):boolean{
-
-//         return false;
-//     }
-//     static parseFncCall(line:string):boolean{
-
-//         return false;
-//     }
-// }
-
-
-//casos de uso, pedido, se lo lleva el camarero
-
-
-//GoogleAI
-
-// Simulación de registros omitidos por brevedad...
-
 
 
 export class DetailedParser {
@@ -103,6 +38,7 @@ export class DetailedParser {
     static shaderFilters: Array<{ stage: string, filePattern: any, searchPattern: any, replacement: any }> = [];
     static transpileShaderFilters: Array<{ stage: string, filePatternExpr: string, searchPatternExpr: string, replacementExpr: string }> = [];
     static transpileTexAliasToUniform = new Map<string, string>();
+    static transpileTexAliasToTextureVar = new Map<string, string>();
     static transpileTexDeclaredNames = new Set<string>();
     static transpileProgramOutAliases = new Map<string, Map<string, string[]>>();
     static transpileTemplateBlocks = new Map<string, { kind: "uniforms" | "rebind" | "framebuffer", lines: string[] }>();
@@ -1476,25 +1412,72 @@ export class DetailedParser {
             `    console.error = (...args:any[])=>{ prevError(...args); append("error", args); };`,
             `    console.log("[backUp log]", p);`,
             `};`,
-            `const __backupResolveMultiTarget = (pathHint:any, defaultStem:any, suffix:any)=>{`,
+            `const __backupDrawGenerationState = { stamp: Symbol("init"), counts: new Map<string, number>(), clearedScopes: new Set<string>() };`,
+            `const __backupRefreshGenerationState = ()=>{`,
+            `    try {`,
+            `        if(typeof recomputeTau === "undefined" || !recomputeTau) return;`,
+            `        const stamp = (typeof tauModelStamp !== "undefined") ? tauModelStamp : "__recompute__";`,
+            `        if(__backupDrawGenerationState.stamp !== stamp){`,
+            `            __backupDrawGenerationState.stamp = stamp;`,
+            `            __backupDrawGenerationState.counts = new Map<string, number>();`,
+            `            __backupDrawGenerationState.clearedScopes = new Set<string>();`,
+            `        }`,
+            `    } catch {}`,
+            `};`,
+            `const __backupClearDrawScopeGenerationsIfNeeded = async (pathHint:any)=>{`,
+            `    __backupRefreshGenerationState();`,
+            `    try {`,
+            `        if(typeof recomputeTau === "undefined" || !recomputeTau) return;`,
+            `        const target = __backupNormalizeScopePath(pathHint);`,
+            `        const key = String(target.path || "");`,
+            `        if(__backupDrawGenerationState.clearedScopes.has(key)) return;`,
+            `        __backupDrawGenerationState.clearedScopes.add(key);`,
+            `        await __backupPut("/clear-generations", target.path, "");`,
+            `    } catch (err) {`,
+            `        console.warn("[backUp clear-generations] failed", pathHint, err);`,
+            `    }`,
+            `};`,
+            `const __backupNextDrawGeneration = (drawKind:any, pathHint:any, program:any)=>{`,
+            `    __backupRefreshGenerationState();`,
+            `    try {`,
+            `        if(typeof recomputeTau === "undefined" || !recomputeTau) return 1;`,
+            `        const target = __backupNormalizeScopePath(pathHint);`,
+            `        const drawName = __backupSafeName(drawKind || "draw");`,
+            `        const programName = __backupSafeName(program?.ID ?? program?.fragPath ?? program?.name ?? "program");`,
+            `        const key = target.path + "::" + programName + "::" + drawName;`,
+            `        const next = (__backupDrawGenerationState.counts.get(key) || 0) + 1;`,
+            `        __backupDrawGenerationState.counts.set(key, next);`,
+            `        return next;`,
+            `    } catch {`,
+            `        return 1;`,
+            `    }`,
+            `};`,
+            `const __backupResolveMultiTarget = (pathHint:any, defaultStem:any, suffix:any, generation:any=1)=>{`,
             `    const target = __backupNormalizeScopePath(pathHint);`,
             `    const stem = __backupSafeName(defaultStem);`,
             `    const cleanSuffix = String(suffix ?? "").replace(/^_+/, "");`,
             `    const fileName = stem + "_" + cleanSuffix + "_" + __backupStamp() + ".txt";`,
-            `    if(target.directoryMode) return { path: target.path, directoryMode: true, suggestedName: fileName };`,
+            `    const gen = Math.max(1, Number(generation) || 1);`,
+            `    if(target.directoryMode){`,
+            `        const dirPath = gen > 1 ? (target.path ? String(target.path).replace(/\\/+$/g, "") + "/" + String(gen) : String(gen)) : target.path;`,
+            `        return { path: dirPath, directoryMode: true, suggestedName: fileName, generation: gen };`,
+            `    }`,
             `    const p = target.path;`,
             `    if(/\\.txt$/i.test(p)){`,
             `        const slash = Math.max(p.lastIndexOf("/"), p.lastIndexOf("\\\\"));`,
             `        const dir = slash >= 0 ? p.slice(0, slash + 1) : "";`,
             `        const base = slash >= 0 ? p.slice(slash + 1) : p;`,
             `        const dot = base.toLowerCase().endsWith(".txt") ? base.slice(0, -4) : base;`,
-            `        return { path: dir + dot + "_" + cleanSuffix + ".txt", directoryMode: false };`,
+            `        const genDir = gen > 1 ? (dir ? dir.replace(/\\/+$/g, "") + "/" + String(gen) + "/" : String(gen) + "/") : dir;`,
+            `        return { path: genDir + dot + "_" + cleanSuffix + ".txt", directoryMode: false, generation: gen };`,
             `    }`,
-            `    return { path: p, directoryMode: true, suggestedName: fileName };`,
+            `    const dirPath = gen > 1 ? (p ? String(p).replace(/\\/+$/g, "") + "/" + String(gen) : String(gen)) : p;`,
+            `    return { path: dirPath, directoryMode: true, suggestedName: fileName, generation: gen };`,
             `};`,
             `const __backupStoreDrawBlock = async (drawKind:any, pathHint:any, outputTextures:any[], uniformEntries:any[], program:any)=>{`,
             `    try {`,
             `        const drawName = __backupSafeName(drawKind || "draw");`,
+            `        const generation = __backupNextDrawGeneration(drawKind, pathHint, program);`,
             `        const outputs = Array.isArray(outputTextures) ? outputTextures.filter(Boolean) : [];`,
             `        const outputSet = new Set(outputs.map(item => item?.tex).filter(Boolean));`,
             `        const programTextures = Array.isArray(program?.textures) ? program.textures.filter((tex:any)=>tex && !outputSet.has(tex)) : [];`,
@@ -1504,6 +1487,22 @@ export class DetailedParser {
             `            name: entry?.name || "uniform",`,
             `            ...__backupNormalizeValue(entry?.value, entry?.name || "uniform")`,
             `        }));`,
+            `        const serializedOutputs = outputs.map((output:any)=>{`,
+            `            const outputName = output?.name || "output";`,
+            `            try {`,
+            `                return { outputName, ok: true, payload: __backupSerializeValue(output?.tex, outputName) };`,
+            `            } catch (err) {`,
+            `                return {`,
+            `                    outputName,`,
+            `                    ok: false,`,
+            `                    payload: JSON.stringify({`,
+            `                        varName: outputName,`,
+            `                        savedAt: new Date().toISOString(),`,
+            `                        error: String(err)`,
+            `                    })`,
+            `                };`,
+            `            }`,
+            `        });`,
             `        const uniformPayload = JSON.stringify({`,
             `            source: drawKind,`,
             `            savedAt: new Date().toISOString(),`,
@@ -1512,11 +1511,19 @@ export class DetailedParser {
             `                ...normalizedUniforms`,
             `            ]`,
             `        });`,
-            `        const uniformTarget = __backupResolveMultiTarget(pathHint, drawName, "uniforms");`,
+            `        await __backupClearDrawScopeGenerationsIfNeeded(pathHint);`,
+            `        const uniformTarget = __backupResolveMultiTarget(pathHint, drawName, "uniforms", generation);`,
             `        await __backupPut("/file", uniformTarget.path, uniformPayload, uniformTarget.directoryMode ? { directoryMode: true, suggestedName: uniformTarget.suggestedName } : {});`,
-            `        for (const output of outputs) {`,
-            `            const outputTarget = __backupResolveMultiTarget(pathHint, drawName, __backupSafeName(output?.name || "output"));`,
-            `            await __backupPut("/file", outputTarget.path, __backupSerializeValue(output?.tex, output?.name || "output"), outputTarget.directoryMode ? { directoryMode: true, suggestedName: outputTarget.suggestedName } : {});`,
+            `        for (const snapshot of serializedOutputs) {`,
+            `            try {`,
+            `                const outputTarget = __backupResolveMultiTarget(pathHint, drawName, __backupSafeName(snapshot.outputName), generation);`,
+            `                await __backupPut("/file", outputTarget.path, snapshot.payload, outputTarget.directoryMode ? { directoryMode: true, suggestedName: outputTarget.suggestedName } : {});`,
+            `                if(!snapshot.ok){`,
+            `                    console.warn("[backUp draw] stored output fallback payload", snapshot.outputName, pathHint);`,
+            `                }`,
+            `            } catch (err) {`,
+            `                console.error("[backUp draw] output store failed", snapshot.outputName, pathHint, err);`,
+            `            }`,
             `        }`,
             `        return { ok: true };`,
             `    } catch (err) {`,
@@ -1704,6 +1711,7 @@ export class DetailedParser {
         }
         for (const alias of allAliases) {
             DetailedParser.transpileTexAliasToUniform.set(alias, uniformName);
+            DetailedParser.transpileTexAliasToTextureVar.set(alias, firstAlias);
             DetailedParser.transpileTexDeclaredNames.add(alias);
         }
         DetailedParser.transpileTexDeclaredNames.add(uniformName);
@@ -1823,6 +1831,9 @@ export class DetailedParser {
             ? "lastUsedProgram"
             : DetailedParser.transpileExpr(targetRaw);
         const out: string[] = [];
+        if (targetRaw && targetExpr !== "lastUsedProgram" && !/^-\w[\w-]*-$/.test(targetRaw)) {
+            out.push(`${targetExpr}.use?.();`);
+        }
         const clauses: string[] = [];
         for (const rawLine of lines) {
             const line = rawLine.trim();
@@ -1849,7 +1860,12 @@ export class DetailedParser {
             for (let i = 0; i < leftItems.length; i++) {
                 const refName = leftItems[i];
                 const uniformName = DetailedParser.transpileTexAliasToUniform.get(refName) || refName;
-                out.push(`${targetExpr}.bindTexName2TexUnit(${JSON.stringify(uniformName)}, ${DetailedParser.normalizeTexUnitToken(rightItems[i])});`);
+                const texVarName = DetailedParser.transpileTexAliasToTextureVar.get(refName) || DetailedParser.transpileTexAliasToTextureVar.get(uniformName);
+                const texUnitExpr = DetailedParser.normalizeTexUnitToken(rightItems[i]);
+                if (texVarName && /^[A-Za-z_]\w*$/.test(texVarName)) {
+                    out.push(`if(typeof ${texVarName} !== "undefined" && ${texVarName}?.bind) ${texVarName}.bind(${texUnitExpr});`);
+                }
+                out.push(`${targetExpr}.bindTexName2TexUnit(${JSON.stringify(uniformName)}, ${texUnitExpr});`);
             }
         }
         return out;
@@ -1953,7 +1969,8 @@ export class DetailedParser {
             const aliases = framebufferAliases.length ? framebufferAliases : [defaultFbo];
             const primaryFbo = aliases[0];
             if (!declaredVars.has(primaryFbo)) declaredVars.add(primaryFbo);
-            out.push(`${declaredVars.has(primaryFbo) ? "var " + primaryFbo : primaryFbo} = (typeof ${primaryFbo} !== "undefined" && ${primaryFbo}) ? ${primaryFbo} : lastUsedProgram.cFrameBuffer().bind([${bindings.map(b => b.attachmentExpr).join(", ")}]);`);
+            const drawBuffersExpr = `[${bindings.map(b => b.attachmentExpr).join(", ")}]`;
+            out.push(`${declaredVars.has(primaryFbo) ? "var " + primaryFbo : primaryFbo} = (typeof ${primaryFbo} !== "undefined" && ${primaryFbo}) ? ${primaryFbo}.bind(${drawBuffersExpr}) : lastUsedProgram.cFrameBuffer().bind(${drawBuffersExpr});`);
             bindings.forEach(b => out.push(`${primaryFbo}.bindColorBuffer(${b.texExpr}, ${b.attachmentExpr});`));
             for (const alias of aliases.slice(1)) {
                 if (!/^[A-Za-z_]\w*$/.test(alias)) continue;
@@ -2046,6 +2063,10 @@ export class DetailedParser {
         if (!t) return t;
         if (t.endsWith(";") || t.endsWith("{") || t.endsWith("}") || t.endsWith(");")) return t;
         return t + ";";
+    }
+
+    static isBackupPathReplaceDirective(line: string): boolean {
+        return /^\s*backUpPathReplace\s+\/((?:\\.|[^/])+)\/([dgimsuvy]*)\s*->\s*(.+?)\s*$/.test(line);
     }
 
     static inferBackupDefaultScope(str: string, outPath?: string, backupScopeHint?: string): string {
@@ -2828,6 +2849,7 @@ export class DetailedParser {
         const body: string[] = [];
         const declaredVars = new Set<string>();
         DetailedParser.transpileTexAliasToUniform = new Map<string, string>();
+        DetailedParser.transpileTexAliasToTextureVar = new Map<string, string>();
         DetailedParser.transpileTexDeclaredNames = new Set<string>();
         DetailedParser.transpileProgramOutAliases = new Map<string, Map<string, string[]>>();
         DetailedParser.transpileTemplateBlocks = new Map();
@@ -2846,6 +2868,7 @@ export class DetailedParser {
             fnVarName?: string,
             globalOrder?: number,
             uniformPrograms?: string[],
+            uniformProgramsExplicit?: boolean,
             sourceToken?: string,
             groupedDecl?: "let" | "var",
             buffer?: string[],
@@ -2877,6 +2900,7 @@ export class DetailedParser {
             const raw = lines[i];
             const line = DetailedParser.stripInlineDslTags(raw.trim());
             if (!line) continue;
+            if (DetailedParser.isBackupPathReplaceDirective(line)) continue;
 
             const marker = line.match(/^<(?:\/)?([A-Za-z_][\w-]*)(?:\/)?>$/);
             if (marker) {
@@ -2905,8 +2929,9 @@ export class DetailedParser {
                         const programsForTpl = tplCall[2]
                             ? tplCall[2].split(",").map(s => DetailedParser.transpileExpr(s.trim())).filter(Boolean)
                             : ((currentBlock.uniformPrograms && currentBlock.uniformPrograms.length) ? currentBlock.uniformPrograms : ["lastUsedProgram"]);
+                        const tplHasExplicitProgram = !!tplCall[2]?.trim();
                         for (const p of programsForTpl) {
-                            body.push(`${ind()}${p}.use?.();`);
+                            if (tplHasExplicitProgram) body.push(`${ind()}${p}.use?.();`);
                             for (const uniLine of tpl.lines) {
                                 const uniLines = DetailedParser.transpileUniformLine(p, uniLine);
                                 uniLines.forEach(l => body.push(`${ind()}${l}`));
@@ -2919,7 +2944,6 @@ export class DetailedParser {
                     ? currentBlock.uniformPrograms
                     : ["lastUsedProgram"];
                 for (const p of programs) {
-                    body.push(`${ind()}${p}.use?.();`);
                     const uniLines = DetailedParser.transpileUniformLine(p, line);
                     uniLines.forEach(l => body.push(`${ind()}${l}`));
                 }
@@ -3136,15 +3160,20 @@ export class DetailedParser {
 
             const uniformsStart = line.match(/^uniforms(?:\s+(.+?))?\s*\{$/);
             if (uniformsStart) {
+                const explicitPrograms = !!uniformsStart[1]?.trim();
                 const programs = uniformsStart[1]
                     ? uniformsStart[1].split(",").map(s => s.trim()).filter(Boolean).map(s => DetailedParser.transpileExpr(s))
                     : ["lastUsedProgram"];
+                if (explicitPrograms) {
+                    programs.forEach(p => body.push(`${ind()}${p}.use?.();`));
+                }
                 blockStack.push({
                     kind: "uniforms",
                     name: "uniforms",
                     ifDepth: 0,
                     loopCount: 0,
-                    uniformPrograms: programs
+                    uniformPrograms: programs,
+                    uniformProgramsExplicit: explicitPrograms
                 });
                 continue;
             }
@@ -3157,8 +3186,9 @@ export class DetailedParser {
                         const programs = templateCall[2]
                             ? templateCall[2].split(",").map(s => DetailedParser.transpileExpr(s.trim())).filter(Boolean)
                             : ["lastUsedProgram"];
+                        const hasExplicitProgram = !!templateCall[2]?.trim();
                         for (const p of programs) {
-                            body.push(`${ind()}${p}.use?.();`);
+                            if (hasExplicitProgram) body.push(`${ind()}${p}.use?.();`);
                             for (const uniLine of tpl.lines) {
                                 const uniLines = DetailedParser.transpileUniformLine(p, uniLine);
                                 uniLines.forEach(l => body.push(`${ind()}${l}`));

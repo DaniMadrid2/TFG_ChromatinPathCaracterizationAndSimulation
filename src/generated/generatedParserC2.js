@@ -815,7 +815,7 @@ import { read as readMat } from "/ExternalCode/mat4js/mat4js.read.js";
     };
     /**
     Archivo:
-    - Convierte el modelo estimado en una trayectoria simulada publicable para C1.
+    - Convierte el modelo estimado en una trayectoria simulada publicable/accesible para C1.
     - Une lecturas de texturas, coeficientes medios, escalado de amplitud y escritura en window.simDataX/Y.
     
     Objetivos:
@@ -2416,26 +2416,79 @@ import { read as readMat } from "/ExternalCode/mat4js/mat4js.read.js";
         console.error = (...args) => { prevError(...args); append("error", args); };
         console.log("[backUp log]", p);
     };
-    const __backupResolveMultiTarget = (pathHint, defaultStem, suffix) => {
+    const __backupDrawGenerationState = { stamp: Symbol("init"), counts: new Map(), clearedScopes: new Set() };
+    const __backupRefreshGenerationState = () => {
+        try {
+            if (typeof recomputeTau === "undefined" || !recomputeTau)
+                return;
+            const stamp = (typeof tauModelStamp !== "undefined") ? tauModelStamp : "__recompute__";
+            if (__backupDrawGenerationState.stamp !== stamp) {
+                __backupDrawGenerationState.stamp = stamp;
+                __backupDrawGenerationState.counts = new Map();
+                __backupDrawGenerationState.clearedScopes = new Set();
+            }
+        }
+        catch { }
+    };
+    const __backupClearDrawScopeGenerationsIfNeeded = async (pathHint) => {
+        __backupRefreshGenerationState();
+        try {
+            if (typeof recomputeTau === "undefined" || !recomputeTau)
+                return;
+            const target = __backupNormalizeScopePath(pathHint);
+            const key = String(target.path || "");
+            if (__backupDrawGenerationState.clearedScopes.has(key))
+                return;
+            __backupDrawGenerationState.clearedScopes.add(key);
+            await __backupPut("/clear-generations", target.path, "");
+        }
+        catch (err) {
+            console.warn("[backUp clear-generations] failed", pathHint, err);
+        }
+    };
+    const __backupNextDrawGeneration = (drawKind, pathHint, program) => {
+        __backupRefreshGenerationState();
+        try {
+            if (typeof recomputeTau === "undefined" || !recomputeTau)
+                return 1;
+            const target = __backupNormalizeScopePath(pathHint);
+            const drawName = __backupSafeName(drawKind || "draw");
+            const programName = __backupSafeName(program?.ID ?? program?.fragPath ?? program?.name ?? "program");
+            const key = target.path + "::" + programName + "::" + drawName;
+            const next = (__backupDrawGenerationState.counts.get(key) || 0) + 1;
+            __backupDrawGenerationState.counts.set(key, next);
+            return next;
+        }
+        catch {
+            return 1;
+        }
+    };
+    const __backupResolveMultiTarget = (pathHint, defaultStem, suffix, generation = 1) => {
         const target = __backupNormalizeScopePath(pathHint);
         const stem = __backupSafeName(defaultStem);
         const cleanSuffix = String(suffix ?? "").replace(/^_+/, "");
         const fileName = stem + "_" + cleanSuffix + "_" + __backupStamp() + ".txt";
-        if (target.directoryMode)
-            return { path: target.path, directoryMode: true, suggestedName: fileName };
+        const gen = Math.max(1, Number(generation) || 1);
+        if (target.directoryMode) {
+            const dirPath = gen > 1 ? (target.path ? String(target.path).replace(/\/+$/g, "") + "/" + String(gen) : String(gen)) : target.path;
+            return { path: dirPath, directoryMode: true, suggestedName: fileName, generation: gen };
+        }
         const p = target.path;
         if (/\.txt$/i.test(p)) {
             const slash = Math.max(p.lastIndexOf("/"), p.lastIndexOf("\\"));
             const dir = slash >= 0 ? p.slice(0, slash + 1) : "";
             const base = slash >= 0 ? p.slice(slash + 1) : p;
             const dot = base.toLowerCase().endsWith(".txt") ? base.slice(0, -4) : base;
-            return { path: dir + dot + "_" + cleanSuffix + ".txt", directoryMode: false };
+            const genDir = gen > 1 ? (dir ? dir.replace(/\/+$/g, "") + "/" + String(gen) + "/" : String(gen) + "/") : dir;
+            return { path: genDir + dot + "_" + cleanSuffix + ".txt", directoryMode: false, generation: gen };
         }
-        return { path: p, directoryMode: true, suggestedName: fileName };
+        const dirPath = gen > 1 ? (p ? String(p).replace(/\/+$/g, "") + "/" + String(gen) : String(gen)) : p;
+        return { path: dirPath, directoryMode: true, suggestedName: fileName, generation: gen };
     };
     const __backupStoreDrawBlock = async (drawKind, pathHint, outputTextures, uniformEntries, program) => {
         try {
             const drawName = __backupSafeName(drawKind || "draw");
+            const generation = __backupNextDrawGeneration(drawKind, pathHint, program);
             const outputs = Array.isArray(outputTextures) ? outputTextures.filter(Boolean) : [];
             const outputSet = new Set(outputs.map(item => item?.tex).filter(Boolean));
             const programTextures = Array.isArray(program?.textures) ? program.textures.filter((tex) => tex && !outputSet.has(tex)) : [];
@@ -2445,6 +2498,23 @@ import { read as readMat } from "/ExternalCode/mat4js/mat4js.read.js";
                 name: entry?.name || "uniform",
                 ...__backupNormalizeValue(entry?.value, entry?.name || "uniform")
             }));
+            const serializedOutputs = outputs.map((output) => {
+                const outputName = output?.name || "output";
+                try {
+                    return { outputName, ok: true, payload: __backupSerializeValue(output?.tex, outputName) };
+                }
+                catch (err) {
+                    return {
+                        outputName,
+                        ok: false,
+                        payload: JSON.stringify({
+                            varName: outputName,
+                            savedAt: new Date().toISOString(),
+                            error: String(err)
+                        })
+                    };
+                }
+            });
             const uniformPayload = JSON.stringify({
                 source: drawKind,
                 savedAt: new Date().toISOString(),
@@ -2453,11 +2523,20 @@ import { read as readMat } from "/ExternalCode/mat4js/mat4js.read.js";
                     ...normalizedUniforms
                 ]
             });
-            const uniformTarget = __backupResolveMultiTarget(pathHint, drawName, "uniforms");
+            await __backupClearDrawScopeGenerationsIfNeeded(pathHint);
+            const uniformTarget = __backupResolveMultiTarget(pathHint, drawName, "uniforms", generation);
             await __backupPut("/file", uniformTarget.path, uniformPayload, uniformTarget.directoryMode ? { directoryMode: true, suggestedName: uniformTarget.suggestedName } : {});
-            for (const output of outputs) {
-                const outputTarget = __backupResolveMultiTarget(pathHint, drawName, __backupSafeName(output?.name || "output"));
-                await __backupPut("/file", outputTarget.path, __backupSerializeValue(output?.tex, output?.name || "output"), outputTarget.directoryMode ? { directoryMode: true, suggestedName: outputTarget.suggestedName } : {});
+            for (const snapshot of serializedOutputs) {
+                try {
+                    const outputTarget = __backupResolveMultiTarget(pathHint, drawName, __backupSafeName(snapshot.outputName), generation);
+                    await __backupPut("/file", outputTarget.path, snapshot.payload, outputTarget.directoryMode ? { directoryMode: true, suggestedName: outputTarget.suggestedName } : {});
+                    if (!snapshot.ok) {
+                        console.warn("[backUp draw] stored output fallback payload", snapshot.outputName, pathHint);
+                    }
+                }
+                catch (err) {
+                    console.error("[backUp draw] output store failed", snapshot.outputName, pathHint, err);
+                }
             }
             return { ok: true };
         }
@@ -2467,8 +2546,8 @@ import { read as readMat } from "/ExternalCode/mat4js/mat4js.read.js";
         }
     };
     let tauSignalData = datosX1;
-    let tauMaxVeces = 3;
-    let tauMinVeces = 1;
+    let tauMaxVeces = 6;
+    let tauMinVeces = 5;
     let nBins = 64;
     let tauEStar = 1.0;
     let dtSample = 1.0;
@@ -2723,26 +2802,6 @@ import { read as readMat } from "/ExternalCode/mat4js/mat4js.read.js";
     await tauKrylovStep.use?.();
     lastUsedProgram = tauKrylovStep;
     tauKrylovStep.createVAO().bind();
-    var tauKrylov1Tex = tauKrylovStep.createTexture2D("tauKrylov1", [nBins, tauAdjTauBatch * tauMaxVeces * 9], TexExamples.TauFloatTex, null, ["NEAREST", "NEAREST", "CLAMP", "CLAMP"], "TexUnit24");
-    tauKrylov1Tex.__backupVarName = "tauKrylov1Tex";
-    tauKrylov1Tex.__backupUniformName = "tauKrylov1";
-    tauKrylov1Tex.__backupProgram = tauKrylovStep?.ID ?? tauKrylovStep?.fragPath ?? "tauKrylovStep";
-    var tauKrylov2Tex = tauKrylovStep.createTexture2D("tauKrylov2", [nBins, tauAdjTauBatch * tauMaxVeces * 9], TexExamples.TauFloatTex, null, ["NEAREST", "NEAREST", "CLAMP", "CLAMP"], "TexUnit25");
-    tauKrylov2Tex.__backupVarName = "tauKrylov2Tex";
-    tauKrylov2Tex.__backupUniformName = "tauKrylov2";
-    tauKrylov2Tex.__backupProgram = tauKrylovStep?.ID ?? tauKrylovStep?.fragPath ?? "tauKrylovStep";
-    var tauKrylov3Tex = tauKrylovStep.createTexture2D("tauKrylov3", [nBins, tauAdjTauBatch * tauMaxVeces * 9], TexExamples.TauFloatTex, null, ["NEAREST", "NEAREST", "CLAMP", "CLAMP"], "TexUnit26");
-    tauKrylov3Tex.__backupVarName = "tauKrylov3Tex";
-    tauKrylov3Tex.__backupUniformName = "tauKrylov3";
-    tauKrylov3Tex.__backupProgram = tauKrylovStep?.ID ?? tauKrylovStep?.fragPath ?? "tauKrylovStep";
-    var tauKrylov4Tex = tauKrylovStep.createTexture2D("tauKrylov4", [nBins, tauAdjTauBatch * tauMaxVeces * 9], TexExamples.TauFloatTex, null, ["NEAREST", "NEAREST", "CLAMP", "CLAMP"], "TexUnit2");
-    tauKrylov4Tex.__backupVarName = "tauKrylov4Tex";
-    tauKrylov4Tex.__backupUniformName = "tauKrylov4";
-    tauKrylov4Tex.__backupProgram = tauKrylovStep?.ID ?? tauKrylovStep?.fragPath ?? "tauKrylovStep";
-    var tauKrylov5Tex = tauKrylovStep.createTexture2D("tauKrylov5", [nBins, tauAdjTauBatch * tauMaxVeces * 9], TexExamples.TauFloatTex, null, ["NEAREST", "NEAREST", "CLAMP", "CLAMP"], "TexUnit3");
-    tauKrylov5Tex.__backupVarName = "tauKrylov5Tex";
-    tauKrylov5Tex.__backupUniformName = "tauKrylov5";
-    tauKrylov5Tex.__backupProgram = tauKrylovStep?.ID ?? tauKrylovStep?.fragPath ?? "tauKrylovStep";
     var tauArnoldiCoeff = webglMan.program(-1, "tau/03_afp/14_tauArnoldiCoeff");
     await tauArnoldiCoeff.loadProgram(tauArnoldiCoeff.vertPath, tauArnoldiCoeff.fragPath, __makeTranspiledShaderFilter("vert", tauArnoldiCoeff.vertPath), __makeTranspiledShaderFilter("frag", tauArnoldiCoeff.fragPath));
     await tauArnoldiCoeff.use?.();
@@ -2752,6 +2811,26 @@ import { read as readMat } from "/ExternalCode/mat4js/mat4js.read.js";
     tauArnoldiCoeffTex.__backupVarName = "tauArnoldiCoeffTex";
     tauArnoldiCoeffTex.__backupUniformName = "tauArnoldiCoeff";
     tauArnoldiCoeffTex.__backupProgram = tauArnoldiCoeff?.ID ?? tauArnoldiCoeff?.fragPath ?? "tauArnoldiCoeff";
+    var tauKrylov1Tex = tauArnoldiCoeff.createTexture2D("tauKrylov1", [nBins, tauAdjTauBatch * tauMaxVeces * 9], TexExamples.TauFloatTex, null, ["NEAREST", "NEAREST", "CLAMP", "CLAMP"], "TexUnit24");
+    tauKrylov1Tex.__backupVarName = "tauKrylov1Tex";
+    tauKrylov1Tex.__backupUniformName = "tauKrylov1";
+    tauKrylov1Tex.__backupProgram = tauArnoldiCoeff?.ID ?? tauArnoldiCoeff?.fragPath ?? "tauArnoldiCoeff";
+    var tauKrylov2Tex = tauArnoldiCoeff.createTexture2D("tauKrylov2", [nBins, tauAdjTauBatch * tauMaxVeces * 9], TexExamples.TauFloatTex, null, ["NEAREST", "NEAREST", "CLAMP", "CLAMP"], "TexUnit25");
+    tauKrylov2Tex.__backupVarName = "tauKrylov2Tex";
+    tauKrylov2Tex.__backupUniformName = "tauKrylov2";
+    tauKrylov2Tex.__backupProgram = tauArnoldiCoeff?.ID ?? tauArnoldiCoeff?.fragPath ?? "tauArnoldiCoeff";
+    var tauKrylov3Tex = tauArnoldiCoeff.createTexture2D("tauKrylov3", [nBins, tauAdjTauBatch * tauMaxVeces * 9], TexExamples.TauFloatTex, null, ["NEAREST", "NEAREST", "CLAMP", "CLAMP"], "TexUnit26");
+    tauKrylov3Tex.__backupVarName = "tauKrylov3Tex";
+    tauKrylov3Tex.__backupUniformName = "tauKrylov3";
+    tauKrylov3Tex.__backupProgram = tauArnoldiCoeff?.ID ?? tauArnoldiCoeff?.fragPath ?? "tauArnoldiCoeff";
+    var tauKrylov4Tex = tauArnoldiCoeff.createTexture2D("tauKrylov4", [nBins, tauAdjTauBatch * tauMaxVeces * 9], TexExamples.TauFloatTex, null, ["NEAREST", "NEAREST", "CLAMP", "CLAMP"], "TexUnit2");
+    tauKrylov4Tex.__backupVarName = "tauKrylov4Tex";
+    tauKrylov4Tex.__backupUniformName = "tauKrylov4";
+    tauKrylov4Tex.__backupProgram = tauArnoldiCoeff?.ID ?? tauArnoldiCoeff?.fragPath ?? "tauArnoldiCoeff";
+    var tauKrylov5Tex = tauArnoldiCoeff.createTexture2D("tauKrylov5", [nBins, tauAdjTauBatch * tauMaxVeces * 9], TexExamples.TauFloatTex, null, ["NEAREST", "NEAREST", "CLAMP", "CLAMP"], "TexUnit3");
+    tauKrylov5Tex.__backupVarName = "tauKrylov5Tex";
+    tauKrylov5Tex.__backupUniformName = "tauKrylov5";
+    tauKrylov5Tex.__backupProgram = tauArnoldiCoeff?.ID ?? tauArnoldiCoeff?.fragPath ?? "tauArnoldiCoeff";
     var tauStats = webglMan.program(-1, "tau/04_stats_mask/1_tauModelStats");
     await tauStats.loadProgram(tauStats.vertPath, tauStats.fragPath, __makeTranspiledShaderFilter("vert", tauStats.vertPath), __makeTranspiledShaderFilter("frag", tauStats.fragPath));
     await tauStats.use?.();
@@ -2766,36 +2845,36 @@ import { read as readMat } from "/ExternalCode/mat4js/mat4js.read.js";
     await tauMask.use?.();
     lastUsedProgram = tauMask;
     tauMask.createVAO().bind();
-    var tauMaskTex = tauMask.createTexture2D("tauMask", [tauMaxVeces, tauMaxVeces], TexExamples.TauFloatTex, null, ["NEAREST", "NEAREST", "CLAMP", "CLAMP"], "TexUnit22");
+    var tauMaskTex = tauMask.createTexture2D("tauModelMask", [tauMaxVeces, tauMaxVeces], TexExamples.TauFloatTex, null, ["NEAREST", "NEAREST", "CLAMP", "CLAMP"], "TexUnit22");
     tauMaskTex.__backupVarName = "tauMaskTex";
-    tauMaskTex.__backupUniformName = "tauMask";
+    tauMaskTex.__backupUniformName = "tauModelMask";
     tauMaskTex.__backupProgram = tauMask?.ID ?? tauMask?.fragPath ?? "tauMask";
     var tauFP = webglMan.program(-1, "tau/05_filters/1_tauFPProxy");
     await tauFP.loadProgram(tauFP.vertPath, tauFP.fragPath, __makeTranspiledShaderFilter("vert", tauFP.vertPath), __makeTranspiledShaderFilter("frag", tauFP.fragPath));
     await tauFP.use?.();
     lastUsedProgram = tauFP;
     tauFP.createVAO().bind();
-    var tauFPTex = tauFP.createTexture2D("tauFP", [tauMaxVeces, tauMaxVeces], TexExamples.TauFloatTex, null, ["NEAREST", "NEAREST", "CLAMP", "CLAMP"], "TexUnit23");
+    var tauFPTex = tauFP.createTexture2D("tauFPProxy", [tauMaxVeces, tauMaxVeces], TexExamples.TauFloatTex, null, ["NEAREST", "NEAREST", "CLAMP", "CLAMP"], "TexUnit23");
     tauFPTex.__backupVarName = "tauFPTex";
-    tauFPTex.__backupUniformName = "tauFP";
+    tauFPTex.__backupUniformName = "tauFPProxy";
     tauFPTex.__backupProgram = tauFP?.ID ?? tauFP?.fragPath ?? "tauFP";
     var tauKL = webglMan.program(-1, "tau/05_filters/2_tauModelKL");
     await tauKL.loadProgram(tauKL.vertPath, tauKL.fragPath, __makeTranspiledShaderFilter("vert", tauKL.vertPath), __makeTranspiledShaderFilter("frag", tauKL.fragPath));
     await tauKL.use?.();
     lastUsedProgram = tauKL;
     tauKL.createVAO().bind();
-    var tauKLTex = tauKL.createTexture2D("tauKL", [tauMaxVeces, tauMaxVeces], TexExamples.TauFloatTex, null, ["NEAREST", "NEAREST", "CLAMP", "CLAMP"], "TexUnit4");
+    var tauKLTex = tauKL.createTexture2D("tauModelKL", [tauMaxVeces, tauMaxVeces], TexExamples.TauFloatTex, null, ["NEAREST", "NEAREST", "CLAMP", "CLAMP"], "TexUnit4");
     tauKLTex.__backupVarName = "tauKLTex";
-    tauKLTex.__backupUniformName = "tauKL";
+    tauKLTex.__backupUniformName = "tauModelKL";
     tauKLTex.__backupProgram = tauKL?.ID ?? tauKL?.fragPath ?? "tauKL";
     var tauScore = webglMan.program(-1, "tau/05_filters/3_tauModelScore");
     await tauScore.loadProgram(tauScore.vertPath, tauScore.fragPath, __makeTranspiledShaderFilter("vert", tauScore.vertPath), __makeTranspiledShaderFilter("frag", tauScore.fragPath));
     await tauScore.use?.();
     lastUsedProgram = tauScore;
     tauScore.createVAO().bind();
-    var tauScoreTex = tauScore.createTexture2D("tauScore", [tauMaxVeces, tauMaxVeces], TexExamples.TauFloatTex, null, ["NEAREST", "NEAREST", "CLAMP", "CLAMP"], "TexUnit5");
+    var tauScoreTex = tauScore.createTexture2D("tauModelScore", [tauMaxVeces, tauMaxVeces], TexExamples.TauFloatTex, null, ["NEAREST", "NEAREST", "CLAMP", "CLAMP"], "TexUnit5");
     tauScoreTex.__backupVarName = "tauScoreTex";
-    tauScoreTex.__backupUniformName = "tauScore";
+    tauScoreTex.__backupUniformName = "tauModelScore";
     tauScoreTex.__backupProgram = tauScore?.ID ?? tauScore?.fragPath ?? "tauScore";
     var tauBest = webglMan.program(-1, "tau/06_select/1_tauBestModel");
     await tauBest.loadProgram(tauBest.vertPath, tauBest.fragPath, __makeTranspiledShaderFilter("vert", tauBest.vertPath), __makeTranspiledShaderFilter("frag", tauBest.fragPath));
@@ -2828,41 +2907,57 @@ import { read as readMat } from "/ExternalCode/mat4js/mat4js.read.js";
     await tauFPStat.use?.();
     lastUsedProgram = tauFPStat;
     tauFPStat.createVAO().bind();
-    var tauFPStatTex = tauFPStat.createTexture2D("tauFPStat", [nBins, 1], TexExamples.TauFloatTex, null, ["NEAREST", "NEAREST", "CLAMP", "CLAMP"], "TexUnit24");
+    var tauFPStatTex = tauFPStat.createTexture2D("tauFPStationary", [nBins, 1], TexExamples.TauFloatTex, null, ["NEAREST", "NEAREST", "CLAMP", "CLAMP"], "TexUnit24");
     tauFPStatTex.__backupVarName = "tauFPStatTex";
-    tauFPStatTex.__backupUniformName = "tauFPStat";
+    tauFPStatTex.__backupUniformName = "tauFPStationary";
     tauFPStatTex.__backupProgram = tauFPStat?.ID ?? tauFPStat?.fragPath ?? "tauFPStat";
     var drawTau = webglMan.program(-1, "tau/08_draw/1_drawTauMaxVeces");
     await drawTau.loadProgram(drawTau.vertPath, drawTau.fragPath, __makeTranspiledShaderFilter("vert", drawTau.vertPath), __makeTranspiledShaderFilter("frag", drawTau.fragPath));
     await drawTau.use?.();
     lastUsedProgram = drawTau;
     drawTau.createVAO().bind();
+    drawTau.use?.();
+    if (typeof tauXiMetaFinal !== "undefined" && tauXiMetaFinal?.bind)
+        tauXiMetaFinal.bind("TexUnit27");
     drawTau.bindTexName2TexUnit("tauXiMetaFinal", "TexUnit27");
+    if (typeof tauBestTex !== "undefined" && tauBestTex?.bind)
+        tauBestTex.bind("TexUnit17");
     drawTau.bindTexName2TexUnit("tauBest", "TexUnit17");
+    if (typeof tauSindyTex !== "undefined" && tauSindyTex?.bind)
+        tauSindyTex.bind("TexUnit6");
     drawTau.bindTexName2TexUnit("tauSindy", "TexUnit6");
+    if (typeof tauSindyInitTex !== "undefined" && tauSindyInitTex?.bind)
+        tauSindyInitTex.bind("TexUnit7");
     drawTau.bindTexName2TexUnit("tauSindyInit", "TexUnit7");
+    if (typeof tauSindyTau1RefTex !== "undefined" && tauSindyTau1RefTex?.bind)
+        tauSindyTau1RefTex.bind("TexUnit8");
     drawTau.bindTexName2TexUnit("tauSindyTau1Ref", "TexUnit8");
+    if (typeof tauMaskTex !== "undefined" && tauMaskTex?.bind)
+        tauMaskTex.bind("TexUnit22");
     drawTau.bindTexName2TexUnit("tauModelMask", "TexUnit22");
+    if (typeof tauFPTex !== "undefined" && tauFPTex?.bind)
+        tauFPTex.bind("TexUnit23");
     drawTau.bindTexName2TexUnit("tauFPProxy", "TexUnit23");
+    if (typeof tauFPStatTex !== "undefined" && tauFPStatTex?.bind)
+        tauFPStatTex.bind("TexUnit24");
     drawTau.bindTexName2TexUnit("tauFPStationary", "TexUnit24");
+    if (typeof tauKLTex !== "undefined" && tauKLTex?.bind)
+        tauKLTex.bind("TexUnit4");
     drawTau.bindTexName2TexUnit("tauModelKL", "TexUnit4");
+    if (typeof tauScoreTex !== "undefined" && tauScoreTex?.bind)
+        tauScoreTex.bind("TexUnit5");
     drawTau.bindTexName2TexUnit("tauModelScore", "TexUnit5");
+    if (typeof tauStatsTex !== "undefined" && tauStatsTex?.bind)
+        tauStatsTex.bind("TexUnit21");
     drawTau.bindTexName2TexUnit("tauStats", "TexUnit21");
     drawTau.use?.();
     drawTau.uNum("tauMax", false, false).set((tauMaxVeces));
-    drawTau.use?.();
     drawTau.uNum("tauMin", false, false).set((tauMinVeces));
-    drawTau.use?.();
     drawTau.uNum("nBins", false, false).set((nBins));
-    drawTau.use?.();
     drawTau.uNum("bestTau", false, false).set((bestTau));
-    drawTau.use?.();
     drawTau.uNum("bestSubseq", false, false).set((bestSubseq));
-    drawTau.use?.();
     drawTau.uNum("showTauCurves", false, false).set((!!showTauCurves ? 1 : 0));
-    drawTau.use?.();
     drawTau.uNum("showFPStationary", false, false).set((!!showFPStationary ? 1 : 0));
-    drawTau.use?.();
     drawTau.uNum("showLSOverlay", false, false).set((!!showLSFOverlay ? 1 : 0));
     drawTau.isDepthTest = false;
     var __globalBlockFn_0 = async (dt) => {
@@ -2881,7 +2976,7 @@ import { read as readMat } from "/ExternalCode/mat4js/mat4js.read.js";
             lastUsedProgram = tauMom;
             lastUsedProgram?.use?.();
             (() => { const __sz = [nBins, tauMaxVeces * tauMaxVeces]; lastUsedProgram?.setViewport(0, 0, __sz[0], __sz[1]); })();
-            var tauMomFBO = (typeof tauMomFBO !== "undefined" && tauMomFBO) ? tauMomFBO : lastUsedProgram.cFrameBuffer().bind(["ColAtch0", "ColAtch1"]);
+            var tauMomFBO = (typeof tauMomFBO !== "undefined" && tauMomFBO) ? tauMomFBO.bind(["ColAtch0", "ColAtch1"]) : lastUsedProgram.cFrameBuffer().bind(["ColAtch0", "ColAtch1"]);
             tauMomFBO.bindColorBuffer(tauMom1, "ColAtch0");
             tauMomFBO.bindColorBuffer(tauMom2, "ColAtch1");
             lastUsedProgram.uNum("nSamples", false, false).set((NMuestras1));
@@ -2890,31 +2985,37 @@ import { read as readMat } from "/ExternalCode/mat4js/mat4js.read.js";
             lastUsedProgram.uNum("nBins", false, false).set((nBins));
             lastUsedProgram.uNum("dtSample", true, false).set((dtSample));
             lastUsedProgram.uNum("tauEStar", true, false).set((tauEStar));
+            if (typeof xTex !== "undefined" && xTex?.bind)
+                xTex.bind("TexUnit10");
             lastUsedProgram.bindTexName2TexUnit("datosX1", "TexUnit10");
             lastUsedProgram?.drawArrays("TRIANGLES", 0, 6);
-            void __backupStoreDrawBlock("drawTriangles", "/parseTextC23/tauMom/", [{ name: "tauMom1", tex: tauMom1 }, { name: "tauMom2", tex: tauMom2 }], [{ kind: "uniform", name: "nSamples", value: (NMuestras1) }, { kind: "uniform", name: "tauMax", value: (tauMaxVeces) }, { kind: "uniform", name: "tauMin", value: (tauMinVeces) }, { kind: "uniform", name: "nBins", value: (nBins) }, { kind: "uniform", name: "dtSample", value: (dtSample) }, { kind: "uniform", name: "tauEStar", value: (tauEStar) }], lastUsedProgram);
+            void __backupStoreDrawBlock("drawTriangles", "/parseTextC2/tauMom/", [{ name: "tauMom1", tex: tauMom1 }, { name: "tauMom2", tex: tauMom2 }], [{ kind: "uniform", name: "nSamples", value: (NMuestras1) }, { kind: "uniform", name: "tauMax", value: (tauMaxVeces) }, { kind: "uniform", name: "tauMin", value: (tauMinVeces) }, { kind: "uniform", name: "nBins", value: (nBins) }, { kind: "uniform", name: "dtSample", value: (dtSample) }, { kind: "uniform", name: "tauEStar", value: (tauEStar) }], lastUsedProgram);
             console.log("-> phase 02 tauXi", (Array.from(tauMomFBO.readColorAttachment(1, 0, 0, 4, 1, TexExamples.RGBAFloat16, 4))));
             await tauXi.use?.();
             lastUsedProgram = tauXi;
             lastUsedProgram?.use?.();
             (() => { const __sz = [tauMaxVeces, tauMaxVeces]; lastUsedProgram?.setViewport(0, 0, __sz[0], __sz[1]); })();
-            var tauXiFBO = (typeof tauXiFBO !== "undefined" && tauXiFBO) ? tauXiFBO : lastUsedProgram.cFrameBuffer().bind(["ColAtch0", "ColAtch1", "ColAtch2"]);
+            var tauXiFBO = (typeof tauXiFBO !== "undefined" && tauXiFBO) ? tauXiFBO.bind(["ColAtch0", "ColAtch1", "ColAtch2"]) : lastUsedProgram.cFrameBuffer().bind(["ColAtch0", "ColAtch1", "ColAtch2"]);
             tauXiFBO.bindColorBuffer(tauXiF, "ColAtch0");
             tauXiFBO.bindColorBuffer(tauXiS, "ColAtch1");
             tauXiFBO.bindColorBuffer(tauXiMeta, "ColAtch2");
             lastUsedProgram.uNum("tauMax", false, false).set((tauMaxVeces));
             lastUsedProgram.uNum("tauMin", false, false).set((tauMinVeces));
             lastUsedProgram.uNum("nBins", false, false).set((nBins));
+            if (typeof tauMom1 !== "undefined" && tauMom1?.bind)
+                tauMom1.bind("TexUnit14");
             lastUsedProgram.bindTexName2TexUnit("tauMom1", "TexUnit14");
+            if (typeof tauMom2 !== "undefined" && tauMom2?.bind)
+                tauMom2.bind("TexUnit15");
             lastUsedProgram.bindTexName2TexUnit("tauMom2", "TexUnit15");
             lastUsedProgram?.drawArrays("TRIANGLES", 0, 6);
-            void __backupStoreDrawBlock("drawTriangles", "/parseTextC23/tauXi/", [{ name: "tauXiF", tex: tauXiF }, { name: "tauXiS", tex: tauXiS }, { name: "tauXiMeta", tex: tauXiMeta }], [{ kind: "uniform", name: "tauMax", value: (tauMaxVeces) }, { kind: "uniform", name: "tauMin", value: (tauMinVeces) }, { kind: "uniform", name: "nBins", value: (nBins) }], lastUsedProgram);
+            void __backupStoreDrawBlock("drawTriangles", "/parseTextC2/tauXi/", [{ name: "tauXiF", tex: tauXiF }, { name: "tauXiS", tex: tauXiS }, { name: "tauXiMeta", tex: tauXiMeta }], [{ kind: "uniform", name: "tauMax", value: (tauMaxVeces) }, { kind: "uniform", name: "tauMin", value: (tauMinVeces) }, { kind: "uniform", name: "nBins", value: (nBins) }], lastUsedProgram);
             console.log("-> phase 03 tauAFP", (Array.from(tauXiFBO.readColorAttachment(2, 0, 0, 4, 1, TexExamples.RGBAFloat16, 4))));
             await tauAFP.use?.();
             lastUsedProgram = tauAFP;
             lastUsedProgram?.use?.();
             (() => { const __sz = [tauMaxVeces, tauMaxVeces]; lastUsedProgram?.setViewport(0, 0, __sz[0], __sz[1]); })();
-            var tauAFPFBO = (typeof tauAFPFBO !== "undefined" && tauAFPFBO) ? tauAFPFBO : lastUsedProgram.cFrameBuffer().bind(["ColAtch0", "ColAtch1", "ColAtch2"]);
+            var tauAFPFBO = (typeof tauAFPFBO !== "undefined" && tauAFPFBO) ? tauAFPFBO.bind(["ColAtch0", "ColAtch1", "ColAtch2"]) : lastUsedProgram.cFrameBuffer().bind(["ColAtch0", "ColAtch1", "ColAtch2"]);
             tauAFPFBO.bindColorBuffer(tauXiFOpt, "ColAtch0");
             tauAFPFBO.bindColorBuffer(tauXiSOpt, "ColAtch1");
             tauAFPFBO.bindColorBuffer(tauXiMetaOpt, "ColAtch2");
@@ -2926,29 +3027,45 @@ import { read as readMat } from "/ExternalCode/mat4js/mat4js.read.js";
             lastUsedProgram.uNum("l1F", true, false).set((afpL1F));
             lastUsedProgram.uNum("l1S", true, false).set((afpL1S));
             lastUsedProgram.uNum("nIter", false, false).set((afpIters));
+            if (typeof tauMom1 !== "undefined" && tauMom1?.bind)
+                tauMom1.bind("TexUnit14");
             lastUsedProgram.bindTexName2TexUnit("tauMom1", "TexUnit14");
+            if (typeof tauMom2 !== "undefined" && tauMom2?.bind)
+                tauMom2.bind(15);
             lastUsedProgram.bindTexName2TexUnit("tauMom2", 15);
+            if (typeof tauXiF !== "undefined" && tauXiF?.bind)
+                tauXiF.bind("TexUnit12");
             lastUsedProgram.bindTexName2TexUnit("tauXiF", "TexUnit12");
+            if (typeof tauXiS !== "undefined" && tauXiS?.bind)
+                tauXiS.bind(13);
             lastUsedProgram.bindTexName2TexUnit("tauXiS", 13);
+            if (typeof tauXiMeta !== "undefined" && tauXiMeta?.bind)
+                tauXiMeta.bind("TexUnit16");
             lastUsedProgram.bindTexName2TexUnit("tauXiMeta", "TexUnit16");
             lastUsedProgram?.drawArrays("TRIANGLES", 0, 6);
-            void __backupStoreDrawBlock("drawTriangles", "/parseTextC23/tauAFP/", [{ name: "tauXiFOpt", tex: tauXiFOpt }, { name: "tauXiSOpt", tex: tauXiSOpt }, { name: "tauXiMetaOpt", tex: tauXiMetaOpt }], [{ kind: "uniform", name: "tauMax", value: (tauMaxVeces) }, { kind: "uniform", name: "tauMin", value: (tauMinVeces) }, { kind: "uniform", name: "nBins", value: (nBins) }, { kind: "uniform", name: "lrF", value: (afpLrF) }, { kind: "uniform", name: "lrS", value: (afpLrS) }, { kind: "uniform", name: "l1F", value: (afpL1F) }, { kind: "uniform", name: "l1S", value: (afpL1S) }, { kind: "uniform", name: "nIter", value: (afpIters) }], lastUsedProgram);
+            void __backupStoreDrawBlock("drawTriangles", "/parseTextC2/tauAFP/", [{ name: "tauXiFOpt", tex: tauXiFOpt }, { name: "tauXiSOpt", tex: tauXiSOpt }, { name: "tauXiMetaOpt", tex: tauXiMetaOpt }], [{ kind: "uniform", name: "tauMax", value: (tauMaxVeces) }, { kind: "uniform", name: "tauMin", value: (tauMinVeces) }, { kind: "uniform", name: "nBins", value: (nBins) }, { kind: "uniform", name: "lrF", value: (afpLrF) }, { kind: "uniform", name: "lrS", value: (afpLrS) }, { kind: "uniform", name: "l1F", value: (afpL1F) }, { kind: "uniform", name: "l1S", value: (afpL1S) }, { kind: "uniform", name: "nIter", value: (afpIters) }], lastUsedProgram);
             await tauNMSimplexInit.use?.();
             lastUsedProgram = tauNMSimplexInit;
             lastUsedProgram?.use?.();
             (() => { const __sz = [tauMaxVeces, tauMaxVeces * 9]; lastUsedProgram?.setViewport(0, 0, __sz[0], __sz[1]); })();
-            var tauNMInitFBO = (typeof tauNMInitFBO !== "undefined" && tauNMInitFBO) ? tauNMInitFBO : lastUsedProgram.cFrameBuffer().bind(["ColAtch0", "ColAtch1", "ColAtch2"]);
+            var tauNMInitFBO = (typeof tauNMInitFBO !== "undefined" && tauNMInitFBO) ? tauNMInitFBO.bind(["ColAtch0", "ColAtch1", "ColAtch2"]) : lastUsedProgram.cFrameBuffer().bind(["ColAtch0", "ColAtch1", "ColAtch2"]);
             tauNMInitFBO.bindColorBuffer(tauNMXiF0, "ColAtch0");
             tauNMInitFBO.bindColorBuffer(tauNMXiS0, "ColAtch1");
             tauNMInitFBO.bindColorBuffer(tauNMMeta0, "ColAtch2");
             lastUsedProgram.uNum("tauMax", false, false).set((tauMaxVeces));
             lastUsedProgram.uNum("tauMin", false, false).set((tauMinVeces));
             lastUsedProgram.uNum("nelderShift", true, false).set((nelderShift));
+            if (typeof tauXiFOpt !== "undefined" && tauXiFOpt?.bind)
+                tauXiFOpt.bind("TexUnit18");
             lastUsedProgram.bindTexName2TexUnit("tauXiFOpt", "TexUnit18");
+            if (typeof tauXiSOpt !== "undefined" && tauXiSOpt?.bind)
+                tauXiSOpt.bind("TexUnit19");
             lastUsedProgram.bindTexName2TexUnit("tauXiSOpt", "TexUnit19");
+            if (typeof tauXiMetaOpt !== "undefined" && tauXiMetaOpt?.bind)
+                tauXiMetaOpt.bind("TexUnit20");
             lastUsedProgram.bindTexName2TexUnit("tauXiMetaOpt", "TexUnit20");
             lastUsedProgram?.drawArrays("TRIANGLES", 0, 6);
-            void __backupStoreDrawBlock("drawTriangles", "/parseTextC23/tauNMInit/", [{ name: "tauNMXiF0", tex: tauNMXiF0 }, { name: "tauNMXiS0", tex: tauNMXiS0 }, { name: "tauNMMeta0", tex: tauNMMeta0 }], [{ kind: "uniform", name: "tauMax", value: (tauMaxVeces) }, { kind: "uniform", name: "tauMin", value: (tauMinVeces) }, { kind: "uniform", name: "nelderShift", value: (nelderShift) }], lastUsedProgram);
+            void __backupStoreDrawBlock("drawTriangles", "/parseTextC2/tauNMInit/", [{ name: "tauNMXiF0", tex: tauNMXiF0 }, { name: "tauNMXiS0", tex: tauNMXiS0 }, { name: "tauNMMeta0", tex: tauNMMeta0 }], [{ kind: "uniform", name: "tauMax", value: (tauMaxVeces) }, { kind: "uniform", name: "tauMin", value: (tauMinVeces) }, { kind: "uniform", name: "nelderShift", value: (nelderShift) }], lastUsedProgram);
             let tauNMReadF = tauNMXiF0;
             let tauNMReadS = tauNMXiS0;
             let tauNMReadM = tauNMMeta0;
@@ -2973,134 +3090,154 @@ import { read as readMat } from "/ExternalCode/mat4js/mat4js.read.js";
                         lastUsedProgram = tauAdjFields;
                         lastUsedProgram?.use?.();
                         (() => { const __sz = [nBins, tauAdjCount * tauMaxVeces * 9]; lastUsedProgram?.setViewport(0, 0, __sz[0], __sz[1]); })();
-                        var tauAdjFieldsFBO = (typeof tauAdjFieldsFBO !== "undefined" && tauAdjFieldsFBO) ? tauAdjFieldsFBO : lastUsedProgram.cFrameBuffer().bind(["ColAtch0"]);
+                        var tauAdjFieldsFBO = (typeof tauAdjFieldsFBO !== "undefined" && tauAdjFieldsFBO) ? tauAdjFieldsFBO.bind(["ColAtch0"]) : lastUsedProgram.cFrameBuffer().bind(["ColAtch0"]);
                         tauAdjFieldsFBO.bindColorBuffer(tauAdjFieldsTex, "ColAtch0");
                         lastUsedProgram.uNum("tauMax", false, false).set((tauMaxVeces));
                         lastUsedProgram.uNum("tauMin", false, false).set((tauMinVeces));
                         lastUsedProgram.uNum("nBins", false, false).set((nBins));
                         lastUsedProgram.uNum("tauBatchOffset", false, false).set((tauAdjX0));
                         lastUsedProgram.uNum("tauBatchCount", false, false).set((tauAdjCount));
+                        if (typeof tauMom1 !== "undefined" && tauMom1?.bind)
+                            tauMom1.bind("TexUnit14");
                         lastUsedProgram.bindTexName2TexUnit("tauMom1", "TexUnit14");
                         lastUsedProgram.bindTexName2TexUnit("tauNMXiFRead", "TexUnit4");
                         lastUsedProgram.bindTexName2TexUnit("tauNMXiSRead", "TexUnit5");
                         lastUsedProgram.bindTexName2TexUnit("tauNMMetaRead", "TexUnit6");
                         lastUsedProgram?.drawArrays("TRIANGLES", 0, 6);
-                        void __backupStoreDrawBlock("drawTriangles", "/parseTextC23/tauAdjFields/", [{ name: "tauAdjFieldsTex", tex: tauAdjFieldsTex }], [{ kind: "uniform", name: "tauMax", value: (tauMaxVeces) }, { kind: "uniform", name: "tauMin", value: (tauMinVeces) }, { kind: "uniform", name: "nBins", value: (nBins) }, { kind: "uniform", name: "tauBatchOffset", value: (tauAdjX0) }, { kind: "uniform", name: "tauBatchCount", value: (tauAdjCount) }], lastUsedProgram);
+                        void __backupStoreDrawBlock("drawTriangles", "/parseTextC2/tauAdjFields/", [{ name: "tauAdjFieldsTex", tex: tauAdjFieldsTex }], [{ kind: "uniform", name: "tauMax", value: (tauMaxVeces) }, { kind: "uniform", name: "tauMin", value: (tauMinVeces) }, { kind: "uniform", name: "nBins", value: (nBins) }, { kind: "uniform", name: "tauBatchOffset", value: (tauAdjX0) }, { kind: "uniform", name: "tauBatchCount", value: (tauAdjCount) }], lastUsedProgram);
                         await tauAdjDiffOps.use?.();
                         lastUsedProgram = tauAdjDiffOps;
                         lastUsedProgram?.use?.();
                         (() => { const __sz = [nBins * nBins, tauAdjCount * tauMaxVeces * 9]; lastUsedProgram?.setViewport(0, 0, __sz[0], __sz[1]); })();
-                        var tauAdjDiffOpsFBO = (typeof tauAdjDiffOpsFBO !== "undefined" && tauAdjDiffOpsFBO) ? tauAdjDiffOpsFBO : lastUsedProgram.cFrameBuffer().bind(["ColAtch0"]);
+                        var tauAdjDiffOpsFBO = (typeof tauAdjDiffOpsFBO !== "undefined" && tauAdjDiffOpsFBO) ? tauAdjDiffOpsFBO.bind(["ColAtch0"]) : lastUsedProgram.cFrameBuffer().bind(["ColAtch0"]);
                         tauAdjDiffOpsFBO.bindColorBuffer(tauAdjDiffOpsTex, "ColAtch0");
                         lastUsedProgram.uNum("tauMax", false, false).set((tauMaxVeces));
                         lastUsedProgram.uNum("tauMin", false, false).set((tauMinVeces));
                         lastUsedProgram.uNum("nBins", false, false).set((nBins));
                         lastUsedProgram.uNum("tauBatchOffset", false, false).set((tauAdjX0));
                         lastUsedProgram.uNum("tauBatchCount", false, false).set((tauAdjCount));
+                        if (typeof tauMom1 !== "undefined" && tauMom1?.bind)
+                            tauMom1.bind("TexUnit14");
                         lastUsedProgram.bindTexName2TexUnit("tauMom1", "TexUnit14");
                         lastUsedProgram?.drawArrays("TRIANGLES", 0, 6);
-                        void __backupStoreDrawBlock("drawTriangles", "/parseTextC23/tauAdjDiffOps/", [{ name: "tauAdjDiffOpsTex", tex: tauAdjDiffOpsTex }], [{ kind: "uniform", name: "tauMax", value: (tauMaxVeces) }, { kind: "uniform", name: "tauMin", value: (tauMinVeces) }, { kind: "uniform", name: "nBins", value: (nBins) }, { kind: "uniform", name: "tauBatchOffset", value: (tauAdjX0) }, { kind: "uniform", name: "tauBatchCount", value: (tauAdjCount) }], lastUsedProgram);
+                        void __backupStoreDrawBlock("drawTriangles", "/parseTextC2/tauAdjDiffOps/", [{ name: "tauAdjDiffOpsTex", tex: tauAdjDiffOpsTex }], [{ kind: "uniform", name: "tauMax", value: (tauMaxVeces) }, { kind: "uniform", name: "tauMin", value: (tauMinVeces) }, { kind: "uniform", name: "nBins", value: (nBins) }, { kind: "uniform", name: "tauBatchOffset", value: (tauAdjX0) }, { kind: "uniform", name: "tauBatchCount", value: (tauAdjCount) }], lastUsedProgram);
                         await tauAdjOperator.use?.();
                         lastUsedProgram = tauAdjOperator;
                         lastUsedProgram?.use?.();
                         (() => { const __sz = [nBins * nBins, tauAdjCount * tauMaxVeces * 9]; lastUsedProgram?.setViewport(0, 0, __sz[0], __sz[1]); })();
-                        var tauAdjOperatorFBO = (typeof tauAdjOperatorFBO !== "undefined" && tauAdjOperatorFBO) ? tauAdjOperatorFBO : lastUsedProgram.cFrameBuffer().bind(["ColAtch0"]);
+                        var tauAdjOperatorFBO = (typeof tauAdjOperatorFBO !== "undefined" && tauAdjOperatorFBO) ? tauAdjOperatorFBO.bind(["ColAtch0"]) : lastUsedProgram.cFrameBuffer().bind(["ColAtch0"]);
                         tauAdjOperatorFBO.bindColorBuffer(tauAdjOperatorTex, "ColAtch0");
                         lastUsedProgram.uNum("tauMax", false, false).set((tauMaxVeces));
                         lastUsedProgram.uNum("tauMin", false, false).set((tauMinVeces));
                         lastUsedProgram.uNum("nBins", false, false).set((nBins));
                         lastUsedProgram.uNum("tauBatchOffset", false, false).set((tauAdjX0));
                         lastUsedProgram.uNum("tauBatchCount", false, false).set((tauAdjCount));
+                        if (typeof tauAdjFieldsTex !== "undefined" && tauAdjFieldsTex?.bind)
+                            tauAdjFieldsTex.bind("TexUnit28");
                         lastUsedProgram.bindTexName2TexUnit("tauAdjFields", "TexUnit28");
+                        if (typeof tauAdjDiffOpsTex !== "undefined" && tauAdjDiffOpsTex?.bind)
+                            tauAdjDiffOpsTex.bind("TexUnit29");
                         lastUsedProgram.bindTexName2TexUnit("tauAdjDiffOps", "TexUnit29");
                         lastUsedProgram?.drawArrays("TRIANGLES", 0, 6);
-                        void __backupStoreDrawBlock("drawTriangles", "/parseTextC23/tauAdjOperator/", [{ name: "tauAdjOperatorTex", tex: tauAdjOperatorTex }], [{ kind: "uniform", name: "tauMax", value: (tauMaxVeces) }, { kind: "uniform", name: "tauMin", value: (tauMinVeces) }, { kind: "uniform", name: "nBins", value: (nBins) }, { kind: "uniform", name: "tauBatchOffset", value: (tauAdjX0) }, { kind: "uniform", name: "tauBatchCount", value: (tauAdjCount) }], lastUsedProgram);
+                        void __backupStoreDrawBlock("drawTriangles", "/parseTextC2/tauAdjOperator/", [{ name: "tauAdjOperatorTex", tex: tauAdjOperatorTex }], [{ kind: "uniform", name: "tauMax", value: (tauMaxVeces) }, { kind: "uniform", name: "tauMin", value: (tauMinVeces) }, { kind: "uniform", name: "nBins", value: (nBins) }, { kind: "uniform", name: "tauBatchOffset", value: (tauAdjX0) }, { kind: "uniform", name: "tauBatchCount", value: (tauAdjCount) }], lastUsedProgram);
                         await tauKrylovInit.use?.();
                         lastUsedProgram = tauKrylovInit;
                         lastUsedProgram?.use?.();
                         (() => { const __sz = [nBins, tauAdjCount * tauMaxVeces * 9]; lastUsedProgram?.setViewport(0, 0, __sz[0], __sz[1]); })();
-                        var tauKrylov0FBO = (typeof tauKrylov0FBO !== "undefined" && tauKrylov0FBO) ? tauKrylov0FBO : lastUsedProgram.cFrameBuffer().bind(["ColAtch0"]);
+                        var tauKrylov0FBO = (typeof tauKrylov0FBO !== "undefined" && tauKrylov0FBO) ? tauKrylov0FBO.bind(["ColAtch0"]) : lastUsedProgram.cFrameBuffer().bind(["ColAtch0"]);
                         tauKrylov0FBO.bindColorBuffer(tauKrylov0Tex, "ColAtch0");
                         lastUsedProgram.uNum("tauMax", false, false).set((tauMaxVeces));
                         lastUsedProgram.uNum("tauMin", false, false).set((tauMinVeces));
                         lastUsedProgram.uNum("nBins", false, false).set((nBins));
                         lastUsedProgram.uNum("tauBatchOffset", false, false).set((tauAdjX0));
                         lastUsedProgram.uNum("tauBatchCount", false, false).set((tauAdjCount));
+                        if (typeof tauAdjFieldsTex !== "undefined" && tauAdjFieldsTex?.bind)
+                            tauAdjFieldsTex.bind("TexUnit28");
                         lastUsedProgram.bindTexName2TexUnit("tauAdjFields", "TexUnit28");
                         lastUsedProgram?.drawArrays("TRIANGLES", 0, 6);
-                        void __backupStoreDrawBlock("drawTriangles", "/parseTextC23/tauKrylovInit/", [{ name: "tauKrylov0Tex", tex: tauKrylov0Tex }], [{ kind: "uniform", name: "tauMax", value: (tauMaxVeces) }, { kind: "uniform", name: "tauMin", value: (tauMinVeces) }, { kind: "uniform", name: "nBins", value: (nBins) }, { kind: "uniform", name: "tauBatchOffset", value: (tauAdjX0) }, { kind: "uniform", name: "tauBatchCount", value: (tauAdjCount) }], lastUsedProgram);
+                        void __backupStoreDrawBlock("drawTriangles", "/parseTextC2/tauKrylovInit/", [{ name: "tauKrylov0Tex", tex: tauKrylov0Tex }], [{ kind: "uniform", name: "tauMax", value: (tauMaxVeces) }, { kind: "uniform", name: "tauMin", value: (tauMinVeces) }, { kind: "uniform", name: "nBins", value: (nBins) }, { kind: "uniform", name: "tauBatchOffset", value: (tauAdjX0) }, { kind: "uniform", name: "tauBatchCount", value: (tauAdjCount) }], lastUsedProgram);
                         await tauKrylovStep.use?.();
                         lastUsedProgram = tauKrylovStep;
                         lastUsedProgram?.use?.();
                         (() => { const __sz = [nBins, tauAdjCount * tauMaxVeces * 9]; lastUsedProgram?.setViewport(0, 0, __sz[0], __sz[1]); })();
-                        var tauKrylov1FBO = (typeof tauKrylov1FBO !== "undefined" && tauKrylov1FBO) ? tauKrylov1FBO : lastUsedProgram.cFrameBuffer().bind(["ColAtch0"]);
+                        var tauKrylov1FBO = (typeof tauKrylov1FBO !== "undefined" && tauKrylov1FBO) ? tauKrylov1FBO.bind(["ColAtch0"]) : lastUsedProgram.cFrameBuffer().bind(["ColAtch0"]);
                         tauKrylov1FBO.bindColorBuffer(tauKrylov1Tex, "ColAtch0");
                         lastUsedProgram.uNum("tauMax", false, false).set((tauMaxVeces));
                         lastUsedProgram.uNum("tauMin", false, false).set((tauMinVeces));
                         lastUsedProgram.uNum("nBins", false, false).set((nBins));
                         lastUsedProgram.uNum("tauBatchOffset", false, false).set((tauAdjX0));
                         lastUsedProgram.uNum("tauBatchCount", false, false).set((tauAdjCount));
+                        if (typeof tauAdjOperatorTex !== "undefined" && tauAdjOperatorTex?.bind)
+                            tauAdjOperatorTex.bind("TexUnit30");
                         lastUsedProgram.bindTexName2TexUnit("tauAdjOperator", "TexUnit30");
                         lastUsedProgram.bindTexName2TexUnit("tauKrylovPrev", "TexUnit23");
                         lastUsedProgram?.drawArrays("TRIANGLES", 0, 6);
-                        void __backupStoreDrawBlock("drawTriangles", "/parseTextC23/tauKrylovStep/", [{ name: "tauKrylov1Tex", tex: tauKrylov1Tex }], [{ kind: "uniform", name: "tauMax", value: (tauMaxVeces) }, { kind: "uniform", name: "tauMin", value: (tauMinVeces) }, { kind: "uniform", name: "nBins", value: (nBins) }, { kind: "uniform", name: "tauBatchOffset", value: (tauAdjX0) }, { kind: "uniform", name: "tauBatchCount", value: (tauAdjCount) }], lastUsedProgram);
+                        void __backupStoreDrawBlock("drawTriangles", "/parseTextC2/tauKrylovStep/", [{ name: "tauKrylov1Tex", tex: tauKrylov1Tex }], [{ kind: "uniform", name: "tauMax", value: (tauMaxVeces) }, { kind: "uniform", name: "tauMin", value: (tauMinVeces) }, { kind: "uniform", name: "nBins", value: (nBins) }, { kind: "uniform", name: "tauBatchOffset", value: (tauAdjX0) }, { kind: "uniform", name: "tauBatchCount", value: (tauAdjCount) }], lastUsedProgram);
                         lastUsedProgram?.use?.();
                         (() => { const __sz = [nBins, tauAdjCount * tauMaxVeces * 9]; lastUsedProgram?.setViewport(0, 0, __sz[0], __sz[1]); })();
-                        var tauKrylov2FBO = (typeof tauKrylov2FBO !== "undefined" && tauKrylov2FBO) ? tauKrylov2FBO : lastUsedProgram.cFrameBuffer().bind(["ColAtch0"]);
+                        var tauKrylov2FBO = (typeof tauKrylov2FBO !== "undefined" && tauKrylov2FBO) ? tauKrylov2FBO.bind(["ColAtch0"]) : lastUsedProgram.cFrameBuffer().bind(["ColAtch0"]);
                         tauKrylov2FBO.bindColorBuffer(tauKrylov2Tex, "ColAtch0");
                         lastUsedProgram.uNum("tauMax", false, false).set((tauMaxVeces));
                         lastUsedProgram.uNum("tauMin", false, false).set((tauMinVeces));
                         lastUsedProgram.uNum("nBins", false, false).set((nBins));
                         lastUsedProgram.uNum("tauBatchOffset", false, false).set((tauAdjX0));
                         lastUsedProgram.uNum("tauBatchCount", false, false).set((tauAdjCount));
+                        if (typeof tauAdjOperatorTex !== "undefined" && tauAdjOperatorTex?.bind)
+                            tauAdjOperatorTex.bind("TexUnit30");
                         lastUsedProgram.bindTexName2TexUnit("tauAdjOperator", "TexUnit30");
                         lastUsedProgram.bindTexName2TexUnit("tauKrylovPrev", "TexUnit24");
                         lastUsedProgram?.drawArrays("TRIANGLES", 0, 6);
-                        void __backupStoreDrawBlock("drawTriangles", "/parseTextC23/tauKrylovStep/", [{ name: "tauKrylov2Tex", tex: tauKrylov2Tex }], [{ kind: "uniform", name: "tauMax", value: (tauMaxVeces) }, { kind: "uniform", name: "tauMin", value: (tauMinVeces) }, { kind: "uniform", name: "nBins", value: (nBins) }, { kind: "uniform", name: "tauBatchOffset", value: (tauAdjX0) }, { kind: "uniform", name: "tauBatchCount", value: (tauAdjCount) }], lastUsedProgram);
+                        void __backupStoreDrawBlock("drawTriangles", "/parseTextC2/tauKrylovStep/", [{ name: "tauKrylov2Tex", tex: tauKrylov2Tex }], [{ kind: "uniform", name: "tauMax", value: (tauMaxVeces) }, { kind: "uniform", name: "tauMin", value: (tauMinVeces) }, { kind: "uniform", name: "nBins", value: (nBins) }, { kind: "uniform", name: "tauBatchOffset", value: (tauAdjX0) }, { kind: "uniform", name: "tauBatchCount", value: (tauAdjCount) }], lastUsedProgram);
                         lastUsedProgram?.use?.();
                         (() => { const __sz = [nBins, tauAdjCount * tauMaxVeces * 9]; lastUsedProgram?.setViewport(0, 0, __sz[0], __sz[1]); })();
-                        var tauKrylov3FBO = (typeof tauKrylov3FBO !== "undefined" && tauKrylov3FBO) ? tauKrylov3FBO : lastUsedProgram.cFrameBuffer().bind(["ColAtch0"]);
+                        var tauKrylov3FBO = (typeof tauKrylov3FBO !== "undefined" && tauKrylov3FBO) ? tauKrylov3FBO.bind(["ColAtch0"]) : lastUsedProgram.cFrameBuffer().bind(["ColAtch0"]);
                         tauKrylov3FBO.bindColorBuffer(tauKrylov3Tex, "ColAtch0");
                         lastUsedProgram.uNum("tauMax", false, false).set((tauMaxVeces));
                         lastUsedProgram.uNum("tauMin", false, false).set((tauMinVeces));
                         lastUsedProgram.uNum("nBins", false, false).set((nBins));
                         lastUsedProgram.uNum("tauBatchOffset", false, false).set((tauAdjX0));
                         lastUsedProgram.uNum("tauBatchCount", false, false).set((tauAdjCount));
+                        if (typeof tauAdjOperatorTex !== "undefined" && tauAdjOperatorTex?.bind)
+                            tauAdjOperatorTex.bind("TexUnit30");
                         lastUsedProgram.bindTexName2TexUnit("tauAdjOperator", "TexUnit30");
                         lastUsedProgram.bindTexName2TexUnit("tauKrylovPrev", "TexUnit25");
                         lastUsedProgram?.drawArrays("TRIANGLES", 0, 6);
-                        void __backupStoreDrawBlock("drawTriangles", "/parseTextC23/tauKrylovStep/", [{ name: "tauKrylov3Tex", tex: tauKrylov3Tex }], [{ kind: "uniform", name: "tauMax", value: (tauMaxVeces) }, { kind: "uniform", name: "tauMin", value: (tauMinVeces) }, { kind: "uniform", name: "nBins", value: (nBins) }, { kind: "uniform", name: "tauBatchOffset", value: (tauAdjX0) }, { kind: "uniform", name: "tauBatchCount", value: (tauAdjCount) }], lastUsedProgram);
+                        void __backupStoreDrawBlock("drawTriangles", "/parseTextC2/tauKrylovStep/", [{ name: "tauKrylov3Tex", tex: tauKrylov3Tex }], [{ kind: "uniform", name: "tauMax", value: (tauMaxVeces) }, { kind: "uniform", name: "tauMin", value: (tauMinVeces) }, { kind: "uniform", name: "nBins", value: (nBins) }, { kind: "uniform", name: "tauBatchOffset", value: (tauAdjX0) }, { kind: "uniform", name: "tauBatchCount", value: (tauAdjCount) }], lastUsedProgram);
                         lastUsedProgram?.use?.();
                         (() => { const __sz = [nBins, tauAdjCount * tauMaxVeces * 9]; lastUsedProgram?.setViewport(0, 0, __sz[0], __sz[1]); })();
-                        var tauKrylov4FBO = (typeof tauKrylov4FBO !== "undefined" && tauKrylov4FBO) ? tauKrylov4FBO : lastUsedProgram.cFrameBuffer().bind(["ColAtch0"]);
+                        var tauKrylov4FBO = (typeof tauKrylov4FBO !== "undefined" && tauKrylov4FBO) ? tauKrylov4FBO.bind(["ColAtch0"]) : lastUsedProgram.cFrameBuffer().bind(["ColAtch0"]);
                         tauKrylov4FBO.bindColorBuffer(tauKrylov4Tex, "ColAtch0");
                         lastUsedProgram.uNum("tauMax", false, false).set((tauMaxVeces));
                         lastUsedProgram.uNum("tauMin", false, false).set((tauMinVeces));
                         lastUsedProgram.uNum("nBins", false, false).set((nBins));
                         lastUsedProgram.uNum("tauBatchOffset", false, false).set((tauAdjX0));
                         lastUsedProgram.uNum("tauBatchCount", false, false).set((tauAdjCount));
+                        if (typeof tauAdjOperatorTex !== "undefined" && tauAdjOperatorTex?.bind)
+                            tauAdjOperatorTex.bind("TexUnit30");
                         lastUsedProgram.bindTexName2TexUnit("tauAdjOperator", "TexUnit30");
                         lastUsedProgram.bindTexName2TexUnit("tauKrylovPrev", "TexUnit26");
                         lastUsedProgram?.drawArrays("TRIANGLES", 0, 6);
-                        void __backupStoreDrawBlock("drawTriangles", "/parseTextC23/tauKrylovStep/", [{ name: "tauKrylov4Tex", tex: tauKrylov4Tex }], [{ kind: "uniform", name: "tauMax", value: (tauMaxVeces) }, { kind: "uniform", name: "tauMin", value: (tauMinVeces) }, { kind: "uniform", name: "nBins", value: (nBins) }, { kind: "uniform", name: "tauBatchOffset", value: (tauAdjX0) }, { kind: "uniform", name: "tauBatchCount", value: (tauAdjCount) }], lastUsedProgram);
+                        void __backupStoreDrawBlock("drawTriangles", "/parseTextC2/tauKrylovStep/", [{ name: "tauKrylov4Tex", tex: tauKrylov4Tex }], [{ kind: "uniform", name: "tauMax", value: (tauMaxVeces) }, { kind: "uniform", name: "tauMin", value: (tauMinVeces) }, { kind: "uniform", name: "nBins", value: (nBins) }, { kind: "uniform", name: "tauBatchOffset", value: (tauAdjX0) }, { kind: "uniform", name: "tauBatchCount", value: (tauAdjCount) }], lastUsedProgram);
                         lastUsedProgram?.use?.();
                         (() => { const __sz = [nBins, tauAdjCount * tauMaxVeces * 9]; lastUsedProgram?.setViewport(0, 0, __sz[0], __sz[1]); })();
-                        var tauKrylov5FBO = (typeof tauKrylov5FBO !== "undefined" && tauKrylov5FBO) ? tauKrylov5FBO : lastUsedProgram.cFrameBuffer().bind(["ColAtch0"]);
+                        var tauKrylov5FBO = (typeof tauKrylov5FBO !== "undefined" && tauKrylov5FBO) ? tauKrylov5FBO.bind(["ColAtch0"]) : lastUsedProgram.cFrameBuffer().bind(["ColAtch0"]);
                         tauKrylov5FBO.bindColorBuffer(tauKrylov5Tex, "ColAtch0");
                         lastUsedProgram.uNum("tauMax", false, false).set((tauMaxVeces));
                         lastUsedProgram.uNum("tauMin", false, false).set((tauMinVeces));
                         lastUsedProgram.uNum("nBins", false, false).set((nBins));
                         lastUsedProgram.uNum("tauBatchOffset", false, false).set((tauAdjX0));
                         lastUsedProgram.uNum("tauBatchCount", false, false).set((tauAdjCount));
+                        if (typeof tauAdjOperatorTex !== "undefined" && tauAdjOperatorTex?.bind)
+                            tauAdjOperatorTex.bind("TexUnit30");
                         lastUsedProgram.bindTexName2TexUnit("tauAdjOperator", "TexUnit30");
                         lastUsedProgram.bindTexName2TexUnit("tauKrylovPrev", "TexUnit2");
                         lastUsedProgram?.drawArrays("TRIANGLES", 0, 6);
-                        void __backupStoreDrawBlock("drawTriangles", "/parseTextC23/tauKrylovStep/", [{ name: "tauKrylov5Tex", tex: tauKrylov5Tex }], [{ kind: "uniform", name: "tauMax", value: (tauMaxVeces) }, { kind: "uniform", name: "tauMin", value: (tauMinVeces) }, { kind: "uniform", name: "nBins", value: (nBins) }, { kind: "uniform", name: "tauBatchOffset", value: (tauAdjX0) }, { kind: "uniform", name: "tauBatchCount", value: (tauAdjCount) }], lastUsedProgram);
+                        void __backupStoreDrawBlock("drawTriangles", "/parseTextC2/tauKrylovStep/", [{ name: "tauKrylov5Tex", tex: tauKrylov5Tex }], [{ kind: "uniform", name: "tauMax", value: (tauMaxVeces) }, { kind: "uniform", name: "tauMin", value: (tauMinVeces) }, { kind: "uniform", name: "nBins", value: (nBins) }, { kind: "uniform", name: "tauBatchOffset", value: (tauAdjX0) }, { kind: "uniform", name: "tauBatchCount", value: (tauAdjCount) }], lastUsedProgram);
                         await tauArnoldiCoeff.use?.();
                         lastUsedProgram = tauArnoldiCoeff;
                         lastUsedProgram?.use?.();
                         (() => { const __sz = [14, tauAdjCount * tauMaxVeces * 9]; lastUsedProgram?.setViewport(0, 0, __sz[0], __sz[1]); })();
-                        var tauArnoldiCoeffFBO = (typeof tauArnoldiCoeffFBO !== "undefined" && tauArnoldiCoeffFBO) ? tauArnoldiCoeffFBO : lastUsedProgram.cFrameBuffer().bind(["ColAtch0"]);
+                        var tauArnoldiCoeffFBO = (typeof tauArnoldiCoeffFBO !== "undefined" && tauArnoldiCoeffFBO) ? tauArnoldiCoeffFBO.bind(["ColAtch0"]) : lastUsedProgram.cFrameBuffer().bind(["ColAtch0"]);
                         tauArnoldiCoeffFBO.bindColorBuffer(tauArnoldiCoeffTex, "ColAtch0");
                         lastUsedProgram.uNum("tauMax", false, false).set((tauMaxVeces));
                         lastUsedProgram.uNum("tauMin", false, false).set((tauMinVeces));
@@ -3109,19 +3246,31 @@ import { read as readMat } from "/ExternalCode/mat4js/mat4js.read.js";
                         lastUsedProgram.uNum("tauBatchCount", false, false).set((tauAdjCount));
                         lastUsedProgram.uNum("tauArnoldiReorth", false, false).set((Math.max(1, Math.min(4, ~~tauArnoldiReorth))));
                         lastUsedProgram.uNum("tauArnoldiResidTol", true, false).set((Math.max(1e-4, Math.min(0.9, tauArnoldiResidTol))));
+                        if (typeof tauKrylov0Tex !== "undefined" && tauKrylov0Tex?.bind)
+                            tauKrylov0Tex.bind("TexUnit23");
                         lastUsedProgram.bindTexName2TexUnit("tauKrylov0", "TexUnit23");
+                        if (typeof tauKrylov1Tex !== "undefined" && tauKrylov1Tex?.bind)
+                            tauKrylov1Tex.bind("TexUnit24");
                         lastUsedProgram.bindTexName2TexUnit("tauKrylov1", "TexUnit24");
+                        if (typeof tauKrylov2Tex !== "undefined" && tauKrylov2Tex?.bind)
+                            tauKrylov2Tex.bind("TexUnit25");
                         lastUsedProgram.bindTexName2TexUnit("tauKrylov2", "TexUnit25");
+                        if (typeof tauKrylov3Tex !== "undefined" && tauKrylov3Tex?.bind)
+                            tauKrylov3Tex.bind("TexUnit26");
                         lastUsedProgram.bindTexName2TexUnit("tauKrylov3", "TexUnit26");
+                        if (typeof tauKrylov4Tex !== "undefined" && tauKrylov4Tex?.bind)
+                            tauKrylov4Tex.bind("TexUnit2");
                         lastUsedProgram.bindTexName2TexUnit("tauKrylov4", "TexUnit2");
+                        if (typeof tauKrylov5Tex !== "undefined" && tauKrylov5Tex?.bind)
+                            tauKrylov5Tex.bind("TexUnit3");
                         lastUsedProgram.bindTexName2TexUnit("tauKrylov5", "TexUnit3");
                         lastUsedProgram?.drawArrays("TRIANGLES", 0, 6);
-                        void __backupStoreDrawBlock("drawTriangles", "/parseTextC23/tauArnoldiCoeff/", [{ name: "tauArnoldiCoeffTex", tex: tauArnoldiCoeffTex }], [{ kind: "uniform", name: "tauMax", value: (tauMaxVeces) }, { kind: "uniform", name: "tauMin", value: (tauMinVeces) }, { kind: "uniform", name: "nBins", value: (nBins) }, { kind: "uniform", name: "tauBatchOffset", value: (tauAdjX0) }, { kind: "uniform", name: "tauBatchCount", value: (tauAdjCount) }, { kind: "uniform", name: "tauArnoldiReorth", value: (Math.max(1, Math.min(4, ~~tauArnoldiReorth))) }, { kind: "uniform", name: "tauArnoldiResidTol", value: (Math.max(1e-4, Math.min(0.9, tauArnoldiResidTol))) }], lastUsedProgram);
+                        void __backupStoreDrawBlock("drawTriangles", "/parseTextC2/tauArnoldiCoeff/", [{ name: "tauArnoldiCoeffTex", tex: tauArnoldiCoeffTex }], [{ kind: "uniform", name: "tauMax", value: (tauMaxVeces) }, { kind: "uniform", name: "tauMin", value: (tauMinVeces) }, { kind: "uniform", name: "nBins", value: (nBins) }, { kind: "uniform", name: "tauBatchOffset", value: (tauAdjX0) }, { kind: "uniform", name: "tauBatchCount", value: (tauAdjCount) }, { kind: "uniform", name: "tauArnoldiReorth", value: (Math.max(1, Math.min(4, ~~tauArnoldiReorth))) }, { kind: "uniform", name: "tauArnoldiResidTol", value: (Math.max(1e-4, Math.min(0.9, tauArnoldiResidTol))) }], lastUsedProgram);
                         await tauAdjExp.use?.();
                         lastUsedProgram = tauAdjExp;
                         lastUsedProgram?.use?.();
                         (() => { const __sz = [nBins, tauAdjCount * tauMaxVeces * 9]; lastUsedProgram?.setViewport(0, 0, __sz[0], __sz[1]); })();
-                        var tauAdjExpFBO = (typeof tauAdjExpFBO !== "undefined" && tauAdjExpFBO) ? tauAdjExpFBO : lastUsedProgram.cFrameBuffer().bind(["ColAtch0"]);
+                        var tauAdjExpFBO = (typeof tauAdjExpFBO !== "undefined" && tauAdjExpFBO) ? tauAdjExpFBO.bind(["ColAtch0"]) : lastUsedProgram.cFrameBuffer().bind(["ColAtch0"]);
                         tauAdjExpFBO.bindColorBuffer(tauAdjExpTex, "ColAtch0");
                         lastUsedProgram.uNum("tauMax", false, false).set((tauMaxVeces));
                         lastUsedProgram.uNum("tauMin", false, false).set((tauMinVeces));
@@ -3130,20 +3279,34 @@ import { read as readMat } from "/ExternalCode/mat4js/mat4js.read.js";
                         lastUsedProgram.uNum("tauBatchCount", false, false).set((tauAdjCount));
                         lastUsedProgram.uNum("adjointTauScale", true, false).set((tauEStar * dtSample));
                         lastUsedProgram.uNum("tauExpTerms", false, false).set((Math.max(1, Math.min(4, ~~tauExpTerms))));
+                        if (typeof tauKrylov0Tex !== "undefined" && tauKrylov0Tex?.bind)
+                            tauKrylov0Tex.bind("TexUnit23");
                         lastUsedProgram.bindTexName2TexUnit("tauKrylov0", "TexUnit23");
+                        if (typeof tauKrylov1Tex !== "undefined" && tauKrylov1Tex?.bind)
+                            tauKrylov1Tex.bind("TexUnit24");
                         lastUsedProgram.bindTexName2TexUnit("tauKrylov1", "TexUnit24");
+                        if (typeof tauKrylov2Tex !== "undefined" && tauKrylov2Tex?.bind)
+                            tauKrylov2Tex.bind("TexUnit25");
                         lastUsedProgram.bindTexName2TexUnit("tauKrylov2", "TexUnit25");
+                        if (typeof tauKrylov3Tex !== "undefined" && tauKrylov3Tex?.bind)
+                            tauKrylov3Tex.bind("TexUnit26");
                         lastUsedProgram.bindTexName2TexUnit("tauKrylov3", "TexUnit26");
+                        if (typeof tauKrylov4Tex !== "undefined" && tauKrylov4Tex?.bind)
+                            tauKrylov4Tex.bind("TexUnit2");
                         lastUsedProgram.bindTexName2TexUnit("tauKrylov4", "TexUnit2");
+                        if (typeof tauKrylov5Tex !== "undefined" && tauKrylov5Tex?.bind)
+                            tauKrylov5Tex.bind("TexUnit3");
                         lastUsedProgram.bindTexName2TexUnit("tauKrylov5", "TexUnit3");
+                        if (typeof tauArnoldiCoeffTex !== "undefined" && tauArnoldiCoeffTex?.bind)
+                            tauArnoldiCoeffTex.bind("TexUnit22");
                         lastUsedProgram.bindTexName2TexUnit("tauArnoldiCoeff", "TexUnit22");
                         lastUsedProgram?.drawArrays("TRIANGLES", 0, 6);
-                        void __backupStoreDrawBlock("drawTriangles", "/parseTextC23/tauAdjExp/", [{ name: "tauAdjExpTex", tex: tauAdjExpTex }], [{ kind: "uniform", name: "tauMax", value: (tauMaxVeces) }, { kind: "uniform", name: "tauMin", value: (tauMinVeces) }, { kind: "uniform", name: "nBins", value: (nBins) }, { kind: "uniform", name: "tauBatchOffset", value: (tauAdjX0) }, { kind: "uniform", name: "tauBatchCount", value: (tauAdjCount) }, { kind: "uniform", name: "adjointTauScale", value: (tauEStar * dtSample) }, { kind: "uniform", name: "tauExpTerms", value: (Math.max(1, Math.min(4, ~~tauExpTerms))) }], lastUsedProgram);
+                        void __backupStoreDrawBlock("drawTriangles", "/parseTextC2/tauAdjExp/", [{ name: "tauAdjExpTex", tex: tauAdjExpTex }], [{ kind: "uniform", name: "tauMax", value: (tauMaxVeces) }, { kind: "uniform", name: "tauMin", value: (tauMinVeces) }, { kind: "uniform", name: "nBins", value: (nBins) }, { kind: "uniform", name: "tauBatchOffset", value: (tauAdjX0) }, { kind: "uniform", name: "tauBatchCount", value: (tauAdjCount) }, { kind: "uniform", name: "adjointTauScale", value: (tauEStar * dtSample) }, { kind: "uniform", name: "tauExpTerms", value: (Math.max(1, Math.min(4, ~~tauExpTerms))) }], lastUsedProgram);
                         await tauSteadyFP.use?.();
                         lastUsedProgram = tauSteadyFP;
                         lastUsedProgram?.use?.();
                         (() => { const __sz = [nBins, tauAdjCount * tauMaxVeces * 9]; lastUsedProgram?.setViewport(0, 0, __sz[0], __sz[1]); })();
-                        var tauSteadyFPFBO = (typeof tauSteadyFPFBO !== "undefined" && tauSteadyFPFBO) ? tauSteadyFPFBO : lastUsedProgram.cFrameBuffer().bind(["ColAtch0"]);
+                        var tauSteadyFPFBO = (typeof tauSteadyFPFBO !== "undefined" && tauSteadyFPFBO) ? tauSteadyFPFBO.bind(["ColAtch0"]) : lastUsedProgram.cFrameBuffer().bind(["ColAtch0"]);
                         tauSteadyFPFBO.bindColorBuffer(tauSteadyFPTex, "ColAtch0");
                         lastUsedProgram.uNum("tauMax", false, false).set((tauMaxVeces));
                         lastUsedProgram.uNum("tauMin", false, false).set((tauMinVeces));
@@ -3152,15 +3315,19 @@ import { read as readMat } from "/ExternalCode/mat4js/mat4js.read.js";
                         lastUsedProgram.uNum("tauBatchCount", false, false).set((tauAdjCount));
                         lastUsedProgram.uNum("fpLogSpanMax", true, false).set((fpLogSpanMax));
                         lastUsedProgram.uNum("steadyFPGaugeMode", false, false).set(((steadyFPSolverMode === "fourier_zero_mode_like") ? 1 : 0));
+                        if (typeof tauMom1 !== "undefined" && tauMom1?.bind)
+                            tauMom1.bind("TexUnit14");
                         lastUsedProgram.bindTexName2TexUnit("tauMom1", "TexUnit14");
+                        if (typeof tauAdjFieldsTex !== "undefined" && tauAdjFieldsTex?.bind)
+                            tauAdjFieldsTex.bind("TexUnit28");
                         lastUsedProgram.bindTexName2TexUnit("tauAdjFields", "TexUnit28");
                         lastUsedProgram?.drawArrays("TRIANGLES", 0, 6);
-                        void __backupStoreDrawBlock("drawTriangles", "/parseTextC23/tauSteadyFP/", [{ name: "tauSteadyFPTex", tex: tauSteadyFPTex }], [{ kind: "uniform", name: "tauMax", value: (tauMaxVeces) }, { kind: "uniform", name: "tauMin", value: (tauMinVeces) }, { kind: "uniform", name: "nBins", value: (nBins) }, { kind: "uniform", name: "tauBatchOffset", value: (tauAdjX0) }, { kind: "uniform", name: "tauBatchCount", value: (tauAdjCount) }, { kind: "uniform", name: "fpLogSpanMax", value: (fpLogSpanMax) }, { kind: "uniform", name: "steadyFPGaugeMode", value: ((steadyFPSolverMode === "fourier_zero_mode_like") ? 1 : 0) }], lastUsedProgram);
+                        void __backupStoreDrawBlock("drawTriangles", "/parseTextC2/tauSteadyFP/", [{ name: "tauSteadyFPTex", tex: tauSteadyFPTex }], [{ kind: "uniform", name: "tauMax", value: (tauMaxVeces) }, { kind: "uniform", name: "tauMin", value: (tauMinVeces) }, { kind: "uniform", name: "nBins", value: (nBins) }, { kind: "uniform", name: "tauBatchOffset", value: (tauAdjX0) }, { kind: "uniform", name: "tauBatchCount", value: (tauAdjCount) }, { kind: "uniform", name: "fpLogSpanMax", value: (fpLogSpanMax) }, { kind: "uniform", name: "steadyFPGaugeMode", value: ((steadyFPSolverMode === "fourier_zero_mode_like") ? 1 : 0) }], lastUsedProgram);
                         await tauAdjCost.use?.();
                         lastUsedProgram = tauAdjCost;
                         lastUsedProgram?.use?.();
                         (() => { const __sz = [tauAdjCount, tauMaxVeces * 9]; lastUsedProgram?.setViewport(0, 0, __sz[0], __sz[1]); })();
-                        var tauNMCostFBO = (typeof tauNMCostFBO !== "undefined" && tauNMCostFBO) ? tauNMCostFBO : lastUsedProgram.cFrameBuffer().bind(["ColAtch0"]);
+                        var tauNMCostFBO = (typeof tauNMCostFBO !== "undefined" && tauNMCostFBO) ? tauNMCostFBO.bind(["ColAtch0"]) : lastUsedProgram.cFrameBuffer().bind(["ColAtch0"]);
                         tauNMCostFBO.bindColorBuffer(tauNMCost, "ColAtch0");
                         lastUsedProgram.uNum("tauMax", false, false).set((tauMaxVeces));
                         lastUsedProgram.uNum("tauMin", false, false).set((tauMinVeces));
@@ -3172,36 +3339,43 @@ import { read as readMat } from "/ExternalCode/mat4js/mat4js.read.js";
                         lastUsedProgram.uNum("adjointTauScale", true, false).set((tauEStar * dtSample));
                         lastUsedProgram.uNum("useAdjointAFP", false, false).set((!!useAdjointAFP ? 1 : 0));
                         lastUsedProgram.uNum("klReg", true, false).set((tauKLReg));
+                        if (typeof tauMom1 !== "undefined" && tauMom1?.bind)
+                            tauMom1.bind("TexUnit14");
                         lastUsedProgram.bindTexName2TexUnit("tauMom1", "TexUnit14");
+                        if (typeof tauMom2 !== "undefined" && tauMom2?.bind)
+                            tauMom2.bind("TexUnit15");
                         lastUsedProgram.bindTexName2TexUnit("tauMom2", "TexUnit15");
                         lastUsedProgram.bindTexName2TexUnit("tauNMXiFRead", "TexUnit4");
                         lastUsedProgram.bindTexName2TexUnit("tauNMXiSRead", "TexUnit5");
                         lastUsedProgram.bindTexName2TexUnit("tauNMMetaRead", "TexUnit6");
+                        if (typeof tauAdjFieldsTex !== "undefined" && tauAdjFieldsTex?.bind)
+                            tauAdjFieldsTex.bind("TexUnit28");
                         lastUsedProgram.bindTexName2TexUnit("tauAdjFields", "TexUnit28");
+                        if (typeof tauSteadyFPTex !== "undefined" && tauSteadyFPTex?.bind)
+                            tauSteadyFPTex.bind("TexUnit27");
                         lastUsedProgram.bindTexName2TexUnit("tauSteadyFP", "TexUnit27");
+                        if (typeof tauAdjExpTex !== "undefined" && tauAdjExpTex?.bind)
+                            tauAdjExpTex.bind("TexUnit31");
                         lastUsedProgram.bindTexName2TexUnit("tauAdjExp", "TexUnit31");
                         lastUsedProgram?.drawArrays("TRIANGLES", 0, 6);
-                        void __backupStoreDrawBlock("drawTriangles", "/parseTextC23/tauAdjCost/", [{ name: "tauNMCost", tex: tauNMCost }], [{ kind: "uniform", name: "tauMax", value: (tauMaxVeces) }, { kind: "uniform", name: "tauMin", value: (tauMinVeces) }, { kind: "uniform", name: "nBins", value: (nBins) }, { kind: "uniform", name: "tauBatchOffset", value: (tauAdjX0) }, { kind: "uniform", name: "tauBatchCount", value: (tauAdjCount) }, { kind: "uniform", name: "l2F", value: (afpOptL2F) }, { kind: "uniform", name: "l2S", value: (afpOptL2S) }, { kind: "uniform", name: "adjointTauScale", value: (tauEStar * dtSample) }, { kind: "uniform", name: "useAdjointAFP", value: (!!useAdjointAFP ? 1 : 0) }, { kind: "uniform", name: "klReg", value: (tauKLReg) }], lastUsedProgram);
+                        void __backupStoreDrawBlock("drawTriangles", "/parseTextC2/tauAdjCost/", [{ name: "tauNMCost", tex: tauNMCost }], [{ kind: "uniform", name: "tauMax", value: (tauMaxVeces) }, { kind: "uniform", name: "tauMin", value: (tauMinVeces) }, { kind: "uniform", name: "nBins", value: (nBins) }, { kind: "uniform", name: "tauBatchOffset", value: (tauAdjX0) }, { kind: "uniform", name: "tauBatchCount", value: (tauAdjCount) }, { kind: "uniform", name: "l2F", value: (afpOptL2F) }, { kind: "uniform", name: "l2S", value: (afpOptL2S) }, { kind: "uniform", name: "adjointTauScale", value: (tauEStar * dtSample) }, { kind: "uniform", name: "useAdjointAFP", value: (!!useAdjointAFP ? 1 : 0) }, { kind: "uniform", name: "klReg", value: (tauKLReg) }], lastUsedProgram);
                         tauAdjX0 += (tauAdjCount);
                     }
                     await tauNMStep.use?.();
                     lastUsedProgram = tauNMStep;
                     tauNMStep.use?.();
                     tauNMStep.uNum("tauMax", false, false).set((tauMaxVeces));
-                    tauNMStep.use?.();
                     tauNMStep.uNum("tauMin", false, false).set((tauMinVeces));
-                    tauNMStep.use?.();
                     tauNMStep.uNum("nelderAlpha", true, false).set((nelderAlpha));
-                    tauNMStep.use?.();
                     tauNMStep.uNum("nelderGamma", true, false).set((nelderGamma));
-                    tauNMStep.use?.();
                     tauNMStep.uNum("nelderRho", true, false).set((nelderRho));
-                    tauNMStep.use?.();
                     tauNMStep.uNum("nelderSigma", true, false).set((nelderSigma));
-                    tauNMStep.use?.();
                     tauNMStep.uNum("nelderStopEps", true, false).set((nelderStopEps));
+                    tauNMStep.use?.();
                     tauNMStep.bindTexName2TexUnit("tauNMXiFRead", "TexUnit4");
                     tauNMStep.bindTexName2TexUnit("tauNMXiSRead", "TexUnit5");
+                    if (typeof tauNMCost !== "undefined" && tauNMCost?.bind)
+                        tauNMCost.bind("TexUnit11");
                     tauNMStep.bindTexName2TexUnit("tauNMCost", "TexUnit11");
                     var tauNMStepFBO = lastUsedProgram.cFrameBuffer().bind(["ColAtch0", "ColAtch1", "ColAtch2"]);
                     tauNMStepFBO.bindColorBuffer(tauNMWriteF, "ColAtch0");
@@ -3231,134 +3405,154 @@ import { read as readMat } from "/ExternalCode/mat4js/mat4js.read.js";
                     lastUsedProgram = tauAdjFields;
                     lastUsedProgram?.use?.();
                     (() => { const __sz = [nBins, tauAdjCount1 * tauMaxVeces * 9]; lastUsedProgram?.setViewport(0, 0, __sz[0], __sz[1]); })();
-                    var tauAdjFieldsFBO = (typeof tauAdjFieldsFBO !== "undefined" && tauAdjFieldsFBO) ? tauAdjFieldsFBO : lastUsedProgram.cFrameBuffer().bind(["ColAtch0"]);
+                    var tauAdjFieldsFBO = (typeof tauAdjFieldsFBO !== "undefined" && tauAdjFieldsFBO) ? tauAdjFieldsFBO.bind(["ColAtch0"]) : lastUsedProgram.cFrameBuffer().bind(["ColAtch0"]);
                     tauAdjFieldsFBO.bindColorBuffer(tauAdjFieldsTex, "ColAtch0");
                     lastUsedProgram.uNum("tauMax", false, false).set((tauMaxVeces));
                     lastUsedProgram.uNum("tauMin", false, false).set((tauMinVeces));
                     lastUsedProgram.uNum("nBins", false, false).set((nBins));
                     lastUsedProgram.uNum("tauBatchOffset", false, false).set((tauAdjX1));
                     lastUsedProgram.uNum("tauBatchCount", false, false).set((tauAdjCount1));
+                    if (typeof tauMom1 !== "undefined" && tauMom1?.bind)
+                        tauMom1.bind("TexUnit14");
                     lastUsedProgram.bindTexName2TexUnit("tauMom1", "TexUnit14");
                     lastUsedProgram.bindTexName2TexUnit("tauNMXiFRead", "TexUnit4");
                     lastUsedProgram.bindTexName2TexUnit("tauNMXiSRead", "TexUnit5");
                     lastUsedProgram.bindTexName2TexUnit("tauNMMetaRead", "TexUnit6");
                     lastUsedProgram?.drawArrays("TRIANGLES", 0, 6);
-                    void __backupStoreDrawBlock("drawTriangles", "/parseTextC23/tauAdjFields/", [{ name: "tauAdjFieldsTex", tex: tauAdjFieldsTex }], [{ kind: "uniform", name: "tauMax", value: (tauMaxVeces) }, { kind: "uniform", name: "tauMin", value: (tauMinVeces) }, { kind: "uniform", name: "nBins", value: (nBins) }, { kind: "uniform", name: "tauBatchOffset", value: (tauAdjX1) }, { kind: "uniform", name: "tauBatchCount", value: (tauAdjCount1) }], lastUsedProgram);
+                    void __backupStoreDrawBlock("drawTriangles", "/parseTextC2/tauAdjFields/", [{ name: "tauAdjFieldsTex", tex: tauAdjFieldsTex }], [{ kind: "uniform", name: "tauMax", value: (tauMaxVeces) }, { kind: "uniform", name: "tauMin", value: (tauMinVeces) }, { kind: "uniform", name: "nBins", value: (nBins) }, { kind: "uniform", name: "tauBatchOffset", value: (tauAdjX1) }, { kind: "uniform", name: "tauBatchCount", value: (tauAdjCount1) }], lastUsedProgram);
                     await tauAdjDiffOps.use?.();
                     lastUsedProgram = tauAdjDiffOps;
                     lastUsedProgram?.use?.();
                     (() => { const __sz = [nBins * nBins, tauAdjCount1 * tauMaxVeces * 9]; lastUsedProgram?.setViewport(0, 0, __sz[0], __sz[1]); })();
-                    var tauAdjDiffOpsFBO = (typeof tauAdjDiffOpsFBO !== "undefined" && tauAdjDiffOpsFBO) ? tauAdjDiffOpsFBO : lastUsedProgram.cFrameBuffer().bind(["ColAtch0"]);
+                    var tauAdjDiffOpsFBO = (typeof tauAdjDiffOpsFBO !== "undefined" && tauAdjDiffOpsFBO) ? tauAdjDiffOpsFBO.bind(["ColAtch0"]) : lastUsedProgram.cFrameBuffer().bind(["ColAtch0"]);
                     tauAdjDiffOpsFBO.bindColorBuffer(tauAdjDiffOpsTex, "ColAtch0");
                     lastUsedProgram.uNum("tauMax", false, false).set((tauMaxVeces));
                     lastUsedProgram.uNum("tauMin", false, false).set((tauMinVeces));
                     lastUsedProgram.uNum("nBins", false, false).set((nBins));
                     lastUsedProgram.uNum("tauBatchOffset", false, false).set((tauAdjX1));
                     lastUsedProgram.uNum("tauBatchCount", false, false).set((tauAdjCount1));
+                    if (typeof tauMom1 !== "undefined" && tauMom1?.bind)
+                        tauMom1.bind("TexUnit14");
                     lastUsedProgram.bindTexName2TexUnit("tauMom1", "TexUnit14");
                     lastUsedProgram?.drawArrays("TRIANGLES", 0, 6);
-                    void __backupStoreDrawBlock("drawTriangles", "/parseTextC23/tauAdjDiffOps/", [{ name: "tauAdjDiffOpsTex", tex: tauAdjDiffOpsTex }], [{ kind: "uniform", name: "tauMax", value: (tauMaxVeces) }, { kind: "uniform", name: "tauMin", value: (tauMinVeces) }, { kind: "uniform", name: "nBins", value: (nBins) }, { kind: "uniform", name: "tauBatchOffset", value: (tauAdjX1) }, { kind: "uniform", name: "tauBatchCount", value: (tauAdjCount1) }], lastUsedProgram);
+                    void __backupStoreDrawBlock("drawTriangles", "/parseTextC2/tauAdjDiffOps/", [{ name: "tauAdjDiffOpsTex", tex: tauAdjDiffOpsTex }], [{ kind: "uniform", name: "tauMax", value: (tauMaxVeces) }, { kind: "uniform", name: "tauMin", value: (tauMinVeces) }, { kind: "uniform", name: "nBins", value: (nBins) }, { kind: "uniform", name: "tauBatchOffset", value: (tauAdjX1) }, { kind: "uniform", name: "tauBatchCount", value: (tauAdjCount1) }], lastUsedProgram);
                     await tauAdjOperator.use?.();
                     lastUsedProgram = tauAdjOperator;
                     lastUsedProgram?.use?.();
                     (() => { const __sz = [nBins * nBins, tauAdjCount1 * tauMaxVeces * 9]; lastUsedProgram?.setViewport(0, 0, __sz[0], __sz[1]); })();
-                    var tauAdjOperatorFBO = (typeof tauAdjOperatorFBO !== "undefined" && tauAdjOperatorFBO) ? tauAdjOperatorFBO : lastUsedProgram.cFrameBuffer().bind(["ColAtch0"]);
+                    var tauAdjOperatorFBO = (typeof tauAdjOperatorFBO !== "undefined" && tauAdjOperatorFBO) ? tauAdjOperatorFBO.bind(["ColAtch0"]) : lastUsedProgram.cFrameBuffer().bind(["ColAtch0"]);
                     tauAdjOperatorFBO.bindColorBuffer(tauAdjOperatorTex, "ColAtch0");
                     lastUsedProgram.uNum("tauMax", false, false).set((tauMaxVeces));
                     lastUsedProgram.uNum("tauMin", false, false).set((tauMinVeces));
                     lastUsedProgram.uNum("nBins", false, false).set((nBins));
                     lastUsedProgram.uNum("tauBatchOffset", false, false).set((tauAdjX1));
                     lastUsedProgram.uNum("tauBatchCount", false, false).set((tauAdjCount1));
+                    if (typeof tauAdjFieldsTex !== "undefined" && tauAdjFieldsTex?.bind)
+                        tauAdjFieldsTex.bind("TexUnit28");
                     lastUsedProgram.bindTexName2TexUnit("tauAdjFields", "TexUnit28");
+                    if (typeof tauAdjDiffOpsTex !== "undefined" && tauAdjDiffOpsTex?.bind)
+                        tauAdjDiffOpsTex.bind("TexUnit29");
                     lastUsedProgram.bindTexName2TexUnit("tauAdjDiffOps", "TexUnit29");
                     lastUsedProgram?.drawArrays("TRIANGLES", 0, 6);
-                    void __backupStoreDrawBlock("drawTriangles", "/parseTextC23/tauAdjOperator/", [{ name: "tauAdjOperatorTex", tex: tauAdjOperatorTex }], [{ kind: "uniform", name: "tauMax", value: (tauMaxVeces) }, { kind: "uniform", name: "tauMin", value: (tauMinVeces) }, { kind: "uniform", name: "nBins", value: (nBins) }, { kind: "uniform", name: "tauBatchOffset", value: (tauAdjX1) }, { kind: "uniform", name: "tauBatchCount", value: (tauAdjCount1) }], lastUsedProgram);
+                    void __backupStoreDrawBlock("drawTriangles", "/parseTextC2/tauAdjOperator/", [{ name: "tauAdjOperatorTex", tex: tauAdjOperatorTex }], [{ kind: "uniform", name: "tauMax", value: (tauMaxVeces) }, { kind: "uniform", name: "tauMin", value: (tauMinVeces) }, { kind: "uniform", name: "nBins", value: (nBins) }, { kind: "uniform", name: "tauBatchOffset", value: (tauAdjX1) }, { kind: "uniform", name: "tauBatchCount", value: (tauAdjCount1) }], lastUsedProgram);
                     await tauKrylovInit.use?.();
                     lastUsedProgram = tauKrylovInit;
                     lastUsedProgram?.use?.();
                     (() => { const __sz = [nBins, tauAdjCount1 * tauMaxVeces * 9]; lastUsedProgram?.setViewport(0, 0, __sz[0], __sz[1]); })();
-                    var tauKrylov0FBO = (typeof tauKrylov0FBO !== "undefined" && tauKrylov0FBO) ? tauKrylov0FBO : lastUsedProgram.cFrameBuffer().bind(["ColAtch0"]);
+                    var tauKrylov0FBO = (typeof tauKrylov0FBO !== "undefined" && tauKrylov0FBO) ? tauKrylov0FBO.bind(["ColAtch0"]) : lastUsedProgram.cFrameBuffer().bind(["ColAtch0"]);
                     tauKrylov0FBO.bindColorBuffer(tauKrylov0Tex, "ColAtch0");
                     lastUsedProgram.uNum("tauMax", false, false).set((tauMaxVeces));
                     lastUsedProgram.uNum("tauMin", false, false).set((tauMinVeces));
                     lastUsedProgram.uNum("nBins", false, false).set((nBins));
                     lastUsedProgram.uNum("tauBatchOffset", false, false).set((tauAdjX1));
                     lastUsedProgram.uNum("tauBatchCount", false, false).set((tauAdjCount1));
+                    if (typeof tauAdjFieldsTex !== "undefined" && tauAdjFieldsTex?.bind)
+                        tauAdjFieldsTex.bind("TexUnit28");
                     lastUsedProgram.bindTexName2TexUnit("tauAdjFields", "TexUnit28");
                     lastUsedProgram?.drawArrays("TRIANGLES", 0, 6);
-                    void __backupStoreDrawBlock("drawTriangles", "/parseTextC23/tauKrylovInit/", [{ name: "tauKrylov0Tex", tex: tauKrylov0Tex }], [{ kind: "uniform", name: "tauMax", value: (tauMaxVeces) }, { kind: "uniform", name: "tauMin", value: (tauMinVeces) }, { kind: "uniform", name: "nBins", value: (nBins) }, { kind: "uniform", name: "tauBatchOffset", value: (tauAdjX1) }, { kind: "uniform", name: "tauBatchCount", value: (tauAdjCount1) }], lastUsedProgram);
+                    void __backupStoreDrawBlock("drawTriangles", "/parseTextC2/tauKrylovInit/", [{ name: "tauKrylov0Tex", tex: tauKrylov0Tex }], [{ kind: "uniform", name: "tauMax", value: (tauMaxVeces) }, { kind: "uniform", name: "tauMin", value: (tauMinVeces) }, { kind: "uniform", name: "nBins", value: (nBins) }, { kind: "uniform", name: "tauBatchOffset", value: (tauAdjX1) }, { kind: "uniform", name: "tauBatchCount", value: (tauAdjCount1) }], lastUsedProgram);
                     await tauKrylovStep.use?.();
                     lastUsedProgram = tauKrylovStep;
                     lastUsedProgram?.use?.();
                     (() => { const __sz = [nBins, tauAdjCount1 * tauMaxVeces * 9]; lastUsedProgram?.setViewport(0, 0, __sz[0], __sz[1]); })();
-                    var tauKrylov1FBO = (typeof tauKrylov1FBO !== "undefined" && tauKrylov1FBO) ? tauKrylov1FBO : lastUsedProgram.cFrameBuffer().bind(["ColAtch0"]);
+                    var tauKrylov1FBO = (typeof tauKrylov1FBO !== "undefined" && tauKrylov1FBO) ? tauKrylov1FBO.bind(["ColAtch0"]) : lastUsedProgram.cFrameBuffer().bind(["ColAtch0"]);
                     tauKrylov1FBO.bindColorBuffer(tauKrylov1Tex, "ColAtch0");
                     lastUsedProgram.uNum("tauMax", false, false).set((tauMaxVeces));
                     lastUsedProgram.uNum("tauMin", false, false).set((tauMinVeces));
                     lastUsedProgram.uNum("nBins", false, false).set((nBins));
                     lastUsedProgram.uNum("tauBatchOffset", false, false).set((tauAdjX1));
                     lastUsedProgram.uNum("tauBatchCount", false, false).set((tauAdjCount1));
+                    if (typeof tauAdjOperatorTex !== "undefined" && tauAdjOperatorTex?.bind)
+                        tauAdjOperatorTex.bind("TexUnit30");
                     lastUsedProgram.bindTexName2TexUnit("tauAdjOperator", "TexUnit30");
                     lastUsedProgram.bindTexName2TexUnit("tauKrylovPrev", "TexUnit23");
                     lastUsedProgram?.drawArrays("TRIANGLES", 0, 6);
-                    void __backupStoreDrawBlock("drawTriangles", "/parseTextC23/tauKrylovStep/", [{ name: "tauKrylov1Tex", tex: tauKrylov1Tex }], [{ kind: "uniform", name: "tauMax", value: (tauMaxVeces) }, { kind: "uniform", name: "tauMin", value: (tauMinVeces) }, { kind: "uniform", name: "nBins", value: (nBins) }, { kind: "uniform", name: "tauBatchOffset", value: (tauAdjX1) }, { kind: "uniform", name: "tauBatchCount", value: (tauAdjCount1) }], lastUsedProgram);
+                    void __backupStoreDrawBlock("drawTriangles", "/parseTextC2/tauKrylovStep/", [{ name: "tauKrylov1Tex", tex: tauKrylov1Tex }], [{ kind: "uniform", name: "tauMax", value: (tauMaxVeces) }, { kind: "uniform", name: "tauMin", value: (tauMinVeces) }, { kind: "uniform", name: "nBins", value: (nBins) }, { kind: "uniform", name: "tauBatchOffset", value: (tauAdjX1) }, { kind: "uniform", name: "tauBatchCount", value: (tauAdjCount1) }], lastUsedProgram);
                     lastUsedProgram?.use?.();
                     (() => { const __sz = [nBins, tauAdjCount1 * tauMaxVeces * 9]; lastUsedProgram?.setViewport(0, 0, __sz[0], __sz[1]); })();
-                    var tauKrylov2FBO = (typeof tauKrylov2FBO !== "undefined" && tauKrylov2FBO) ? tauKrylov2FBO : lastUsedProgram.cFrameBuffer().bind(["ColAtch0"]);
+                    var tauKrylov2FBO = (typeof tauKrylov2FBO !== "undefined" && tauKrylov2FBO) ? tauKrylov2FBO.bind(["ColAtch0"]) : lastUsedProgram.cFrameBuffer().bind(["ColAtch0"]);
                     tauKrylov2FBO.bindColorBuffer(tauKrylov2Tex, "ColAtch0");
                     lastUsedProgram.uNum("tauMax", false, false).set((tauMaxVeces));
                     lastUsedProgram.uNum("tauMin", false, false).set((tauMinVeces));
                     lastUsedProgram.uNum("nBins", false, false).set((nBins));
                     lastUsedProgram.uNum("tauBatchOffset", false, false).set((tauAdjX1));
                     lastUsedProgram.uNum("tauBatchCount", false, false).set((tauAdjCount1));
+                    if (typeof tauAdjOperatorTex !== "undefined" && tauAdjOperatorTex?.bind)
+                        tauAdjOperatorTex.bind("TexUnit30");
                     lastUsedProgram.bindTexName2TexUnit("tauAdjOperator", "TexUnit30");
                     lastUsedProgram.bindTexName2TexUnit("tauKrylovPrev", "TexUnit24");
                     lastUsedProgram?.drawArrays("TRIANGLES", 0, 6);
-                    void __backupStoreDrawBlock("drawTriangles", "/parseTextC23/tauKrylovStep/", [{ name: "tauKrylov2Tex", tex: tauKrylov2Tex }], [{ kind: "uniform", name: "tauMax", value: (tauMaxVeces) }, { kind: "uniform", name: "tauMin", value: (tauMinVeces) }, { kind: "uniform", name: "nBins", value: (nBins) }, { kind: "uniform", name: "tauBatchOffset", value: (tauAdjX1) }, { kind: "uniform", name: "tauBatchCount", value: (tauAdjCount1) }], lastUsedProgram);
+                    void __backupStoreDrawBlock("drawTriangles", "/parseTextC2/tauKrylovStep/", [{ name: "tauKrylov2Tex", tex: tauKrylov2Tex }], [{ kind: "uniform", name: "tauMax", value: (tauMaxVeces) }, { kind: "uniform", name: "tauMin", value: (tauMinVeces) }, { kind: "uniform", name: "nBins", value: (nBins) }, { kind: "uniform", name: "tauBatchOffset", value: (tauAdjX1) }, { kind: "uniform", name: "tauBatchCount", value: (tauAdjCount1) }], lastUsedProgram);
                     lastUsedProgram?.use?.();
                     (() => { const __sz = [nBins, tauAdjCount1 * tauMaxVeces * 9]; lastUsedProgram?.setViewport(0, 0, __sz[0], __sz[1]); })();
-                    var tauKrylov3FBO = (typeof tauKrylov3FBO !== "undefined" && tauKrylov3FBO) ? tauKrylov3FBO : lastUsedProgram.cFrameBuffer().bind(["ColAtch0"]);
+                    var tauKrylov3FBO = (typeof tauKrylov3FBO !== "undefined" && tauKrylov3FBO) ? tauKrylov3FBO.bind(["ColAtch0"]) : lastUsedProgram.cFrameBuffer().bind(["ColAtch0"]);
                     tauKrylov3FBO.bindColorBuffer(tauKrylov3Tex, "ColAtch0");
                     lastUsedProgram.uNum("tauMax", false, false).set((tauMaxVeces));
                     lastUsedProgram.uNum("tauMin", false, false).set((tauMinVeces));
                     lastUsedProgram.uNum("nBins", false, false).set((nBins));
                     lastUsedProgram.uNum("tauBatchOffset", false, false).set((tauAdjX1));
                     lastUsedProgram.uNum("tauBatchCount", false, false).set((tauAdjCount1));
+                    if (typeof tauAdjOperatorTex !== "undefined" && tauAdjOperatorTex?.bind)
+                        tauAdjOperatorTex.bind("TexUnit30");
                     lastUsedProgram.bindTexName2TexUnit("tauAdjOperator", "TexUnit30");
                     lastUsedProgram.bindTexName2TexUnit("tauKrylovPrev", "TexUnit25");
                     lastUsedProgram?.drawArrays("TRIANGLES", 0, 6);
-                    void __backupStoreDrawBlock("drawTriangles", "/parseTextC23/tauKrylovStep/", [{ name: "tauKrylov3Tex", tex: tauKrylov3Tex }], [{ kind: "uniform", name: "tauMax", value: (tauMaxVeces) }, { kind: "uniform", name: "tauMin", value: (tauMinVeces) }, { kind: "uniform", name: "nBins", value: (nBins) }, { kind: "uniform", name: "tauBatchOffset", value: (tauAdjX1) }, { kind: "uniform", name: "tauBatchCount", value: (tauAdjCount1) }], lastUsedProgram);
+                    void __backupStoreDrawBlock("drawTriangles", "/parseTextC2/tauKrylovStep/", [{ name: "tauKrylov3Tex", tex: tauKrylov3Tex }], [{ kind: "uniform", name: "tauMax", value: (tauMaxVeces) }, { kind: "uniform", name: "tauMin", value: (tauMinVeces) }, { kind: "uniform", name: "nBins", value: (nBins) }, { kind: "uniform", name: "tauBatchOffset", value: (tauAdjX1) }, { kind: "uniform", name: "tauBatchCount", value: (tauAdjCount1) }], lastUsedProgram);
                     lastUsedProgram?.use?.();
                     (() => { const __sz = [nBins, tauAdjCount1 * tauMaxVeces * 9]; lastUsedProgram?.setViewport(0, 0, __sz[0], __sz[1]); })();
-                    var tauKrylov4FBO = (typeof tauKrylov4FBO !== "undefined" && tauKrylov4FBO) ? tauKrylov4FBO : lastUsedProgram.cFrameBuffer().bind(["ColAtch0"]);
+                    var tauKrylov4FBO = (typeof tauKrylov4FBO !== "undefined" && tauKrylov4FBO) ? tauKrylov4FBO.bind(["ColAtch0"]) : lastUsedProgram.cFrameBuffer().bind(["ColAtch0"]);
                     tauKrylov4FBO.bindColorBuffer(tauKrylov4Tex, "ColAtch0");
                     lastUsedProgram.uNum("tauMax", false, false).set((tauMaxVeces));
                     lastUsedProgram.uNum("tauMin", false, false).set((tauMinVeces));
                     lastUsedProgram.uNum("nBins", false, false).set((nBins));
                     lastUsedProgram.uNum("tauBatchOffset", false, false).set((tauAdjX1));
                     lastUsedProgram.uNum("tauBatchCount", false, false).set((tauAdjCount1));
+                    if (typeof tauAdjOperatorTex !== "undefined" && tauAdjOperatorTex?.bind)
+                        tauAdjOperatorTex.bind("TexUnit30");
                     lastUsedProgram.bindTexName2TexUnit("tauAdjOperator", "TexUnit30");
                     lastUsedProgram.bindTexName2TexUnit("tauKrylovPrev", "TexUnit26");
                     lastUsedProgram?.drawArrays("TRIANGLES", 0, 6);
-                    void __backupStoreDrawBlock("drawTriangles", "/parseTextC23/tauKrylovStep/", [{ name: "tauKrylov4Tex", tex: tauKrylov4Tex }], [{ kind: "uniform", name: "tauMax", value: (tauMaxVeces) }, { kind: "uniform", name: "tauMin", value: (tauMinVeces) }, { kind: "uniform", name: "nBins", value: (nBins) }, { kind: "uniform", name: "tauBatchOffset", value: (tauAdjX1) }, { kind: "uniform", name: "tauBatchCount", value: (tauAdjCount1) }], lastUsedProgram);
+                    void __backupStoreDrawBlock("drawTriangles", "/parseTextC2/tauKrylovStep/", [{ name: "tauKrylov4Tex", tex: tauKrylov4Tex }], [{ kind: "uniform", name: "tauMax", value: (tauMaxVeces) }, { kind: "uniform", name: "tauMin", value: (tauMinVeces) }, { kind: "uniform", name: "nBins", value: (nBins) }, { kind: "uniform", name: "tauBatchOffset", value: (tauAdjX1) }, { kind: "uniform", name: "tauBatchCount", value: (tauAdjCount1) }], lastUsedProgram);
                     lastUsedProgram?.use?.();
                     (() => { const __sz = [nBins, tauAdjCount1 * tauMaxVeces * 9]; lastUsedProgram?.setViewport(0, 0, __sz[0], __sz[1]); })();
-                    var tauKrylov5FBO = (typeof tauKrylov5FBO !== "undefined" && tauKrylov5FBO) ? tauKrylov5FBO : lastUsedProgram.cFrameBuffer().bind(["ColAtch0"]);
+                    var tauKrylov5FBO = (typeof tauKrylov5FBO !== "undefined" && tauKrylov5FBO) ? tauKrylov5FBO.bind(["ColAtch0"]) : lastUsedProgram.cFrameBuffer().bind(["ColAtch0"]);
                     tauKrylov5FBO.bindColorBuffer(tauKrylov5Tex, "ColAtch0");
                     lastUsedProgram.uNum("tauMax", false, false).set((tauMaxVeces));
                     lastUsedProgram.uNum("tauMin", false, false).set((tauMinVeces));
                     lastUsedProgram.uNum("nBins", false, false).set((nBins));
                     lastUsedProgram.uNum("tauBatchOffset", false, false).set((tauAdjX1));
                     lastUsedProgram.uNum("tauBatchCount", false, false).set((tauAdjCount1));
+                    if (typeof tauAdjOperatorTex !== "undefined" && tauAdjOperatorTex?.bind)
+                        tauAdjOperatorTex.bind("TexUnit30");
                     lastUsedProgram.bindTexName2TexUnit("tauAdjOperator", "TexUnit30");
                     lastUsedProgram.bindTexName2TexUnit("tauKrylovPrev", "TexUnit2");
                     lastUsedProgram?.drawArrays("TRIANGLES", 0, 6);
-                    void __backupStoreDrawBlock("drawTriangles", "/parseTextC23/tauKrylovStep/", [{ name: "tauKrylov5Tex", tex: tauKrylov5Tex }], [{ kind: "uniform", name: "tauMax", value: (tauMaxVeces) }, { kind: "uniform", name: "tauMin", value: (tauMinVeces) }, { kind: "uniform", name: "nBins", value: (nBins) }, { kind: "uniform", name: "tauBatchOffset", value: (tauAdjX1) }, { kind: "uniform", name: "tauBatchCount", value: (tauAdjCount1) }], lastUsedProgram);
+                    void __backupStoreDrawBlock("drawTriangles", "/parseTextC2/tauKrylovStep/", [{ name: "tauKrylov5Tex", tex: tauKrylov5Tex }], [{ kind: "uniform", name: "tauMax", value: (tauMaxVeces) }, { kind: "uniform", name: "tauMin", value: (tauMinVeces) }, { kind: "uniform", name: "nBins", value: (nBins) }, { kind: "uniform", name: "tauBatchOffset", value: (tauAdjX1) }, { kind: "uniform", name: "tauBatchCount", value: (tauAdjCount1) }], lastUsedProgram);
                     await tauArnoldiCoeff.use?.();
                     lastUsedProgram = tauArnoldiCoeff;
                     lastUsedProgram?.use?.();
                     (() => { const __sz = [14, tauAdjCount1 * tauMaxVeces * 9]; lastUsedProgram?.setViewport(0, 0, __sz[0], __sz[1]); })();
-                    var tauArnoldiCoeffFBO = (typeof tauArnoldiCoeffFBO !== "undefined" && tauArnoldiCoeffFBO) ? tauArnoldiCoeffFBO : lastUsedProgram.cFrameBuffer().bind(["ColAtch0"]);
+                    var tauArnoldiCoeffFBO = (typeof tauArnoldiCoeffFBO !== "undefined" && tauArnoldiCoeffFBO) ? tauArnoldiCoeffFBO.bind(["ColAtch0"]) : lastUsedProgram.cFrameBuffer().bind(["ColAtch0"]);
                     tauArnoldiCoeffFBO.bindColorBuffer(tauArnoldiCoeffTex, "ColAtch0");
                     lastUsedProgram.uNum("tauMax", false, false).set((tauMaxVeces));
                     lastUsedProgram.uNum("tauMin", false, false).set((tauMinVeces));
@@ -3367,19 +3561,31 @@ import { read as readMat } from "/ExternalCode/mat4js/mat4js.read.js";
                     lastUsedProgram.uNum("tauBatchCount", false, false).set((tauAdjCount1));
                     lastUsedProgram.uNum("tauArnoldiReorth", false, false).set((Math.max(1, Math.min(4, ~~tauArnoldiReorth))));
                     lastUsedProgram.uNum("tauArnoldiResidTol", true, false).set((Math.max(1e-4, Math.min(0.9, tauArnoldiResidTol))));
+                    if (typeof tauKrylov0Tex !== "undefined" && tauKrylov0Tex?.bind)
+                        tauKrylov0Tex.bind("TexUnit23");
                     lastUsedProgram.bindTexName2TexUnit("tauKrylov0", "TexUnit23");
+                    if (typeof tauKrylov1Tex !== "undefined" && tauKrylov1Tex?.bind)
+                        tauKrylov1Tex.bind("TexUnit24");
                     lastUsedProgram.bindTexName2TexUnit("tauKrylov1", "TexUnit24");
+                    if (typeof tauKrylov2Tex !== "undefined" && tauKrylov2Tex?.bind)
+                        tauKrylov2Tex.bind("TexUnit25");
                     lastUsedProgram.bindTexName2TexUnit("tauKrylov2", "TexUnit25");
+                    if (typeof tauKrylov3Tex !== "undefined" && tauKrylov3Tex?.bind)
+                        tauKrylov3Tex.bind("TexUnit26");
                     lastUsedProgram.bindTexName2TexUnit("tauKrylov3", "TexUnit26");
+                    if (typeof tauKrylov4Tex !== "undefined" && tauKrylov4Tex?.bind)
+                        tauKrylov4Tex.bind("TexUnit2");
                     lastUsedProgram.bindTexName2TexUnit("tauKrylov4", "TexUnit2");
+                    if (typeof tauKrylov5Tex !== "undefined" && tauKrylov5Tex?.bind)
+                        tauKrylov5Tex.bind("TexUnit3");
                     lastUsedProgram.bindTexName2TexUnit("tauKrylov5", "TexUnit3");
                     lastUsedProgram?.drawArrays("TRIANGLES", 0, 6);
-                    void __backupStoreDrawBlock("drawTriangles", "/parseTextC23/tauArnoldiCoeff/", [{ name: "tauArnoldiCoeffTex", tex: tauArnoldiCoeffTex }], [{ kind: "uniform", name: "tauMax", value: (tauMaxVeces) }, { kind: "uniform", name: "tauMin", value: (tauMinVeces) }, { kind: "uniform", name: "nBins", value: (nBins) }, { kind: "uniform", name: "tauBatchOffset", value: (tauAdjX1) }, { kind: "uniform", name: "tauBatchCount", value: (tauAdjCount1) }, { kind: "uniform", name: "tauArnoldiReorth", value: (Math.max(1, Math.min(4, ~~tauArnoldiReorth))) }, { kind: "uniform", name: "tauArnoldiResidTol", value: (Math.max(1e-4, Math.min(0.9, tauArnoldiResidTol))) }], lastUsedProgram);
+                    void __backupStoreDrawBlock("drawTriangles", "/parseTextC2/tauArnoldiCoeff/", [{ name: "tauArnoldiCoeffTex", tex: tauArnoldiCoeffTex }], [{ kind: "uniform", name: "tauMax", value: (tauMaxVeces) }, { kind: "uniform", name: "tauMin", value: (tauMinVeces) }, { kind: "uniform", name: "nBins", value: (nBins) }, { kind: "uniform", name: "tauBatchOffset", value: (tauAdjX1) }, { kind: "uniform", name: "tauBatchCount", value: (tauAdjCount1) }, { kind: "uniform", name: "tauArnoldiReorth", value: (Math.max(1, Math.min(4, ~~tauArnoldiReorth))) }, { kind: "uniform", name: "tauArnoldiResidTol", value: (Math.max(1e-4, Math.min(0.9, tauArnoldiResidTol))) }], lastUsedProgram);
                     await tauAdjExp.use?.();
                     lastUsedProgram = tauAdjExp;
                     lastUsedProgram?.use?.();
                     (() => { const __sz = [nBins, tauAdjCount1 * tauMaxVeces * 9]; lastUsedProgram?.setViewport(0, 0, __sz[0], __sz[1]); })();
-                    var tauAdjExpFBO = (typeof tauAdjExpFBO !== "undefined" && tauAdjExpFBO) ? tauAdjExpFBO : lastUsedProgram.cFrameBuffer().bind(["ColAtch0"]);
+                    var tauAdjExpFBO = (typeof tauAdjExpFBO !== "undefined" && tauAdjExpFBO) ? tauAdjExpFBO.bind(["ColAtch0"]) : lastUsedProgram.cFrameBuffer().bind(["ColAtch0"]);
                     tauAdjExpFBO.bindColorBuffer(tauAdjExpTex, "ColAtch0");
                     lastUsedProgram.uNum("tauMax", false, false).set((tauMaxVeces));
                     lastUsedProgram.uNum("tauMin", false, false).set((tauMinVeces));
@@ -3388,20 +3594,34 @@ import { read as readMat } from "/ExternalCode/mat4js/mat4js.read.js";
                     lastUsedProgram.uNum("tauBatchCount", false, false).set((tauAdjCount1));
                     lastUsedProgram.uNum("adjointTauScale", true, false).set((tauEStar * dtSample));
                     lastUsedProgram.uNum("tauExpTerms", false, false).set((Math.max(1, Math.min(4, ~~tauExpTerms))));
+                    if (typeof tauKrylov0Tex !== "undefined" && tauKrylov0Tex?.bind)
+                        tauKrylov0Tex.bind("TexUnit23");
                     lastUsedProgram.bindTexName2TexUnit("tauKrylov0", "TexUnit23");
+                    if (typeof tauKrylov1Tex !== "undefined" && tauKrylov1Tex?.bind)
+                        tauKrylov1Tex.bind("TexUnit24");
                     lastUsedProgram.bindTexName2TexUnit("tauKrylov1", "TexUnit24");
+                    if (typeof tauKrylov2Tex !== "undefined" && tauKrylov2Tex?.bind)
+                        tauKrylov2Tex.bind("TexUnit25");
                     lastUsedProgram.bindTexName2TexUnit("tauKrylov2", "TexUnit25");
+                    if (typeof tauKrylov3Tex !== "undefined" && tauKrylov3Tex?.bind)
+                        tauKrylov3Tex.bind("TexUnit26");
                     lastUsedProgram.bindTexName2TexUnit("tauKrylov3", "TexUnit26");
+                    if (typeof tauKrylov4Tex !== "undefined" && tauKrylov4Tex?.bind)
+                        tauKrylov4Tex.bind("TexUnit2");
                     lastUsedProgram.bindTexName2TexUnit("tauKrylov4", "TexUnit2");
+                    if (typeof tauKrylov5Tex !== "undefined" && tauKrylov5Tex?.bind)
+                        tauKrylov5Tex.bind("TexUnit3");
                     lastUsedProgram.bindTexName2TexUnit("tauKrylov5", "TexUnit3");
+                    if (typeof tauArnoldiCoeffTex !== "undefined" && tauArnoldiCoeffTex?.bind)
+                        tauArnoldiCoeffTex.bind("TexUnit22");
                     lastUsedProgram.bindTexName2TexUnit("tauArnoldiCoeff", "TexUnit22");
                     lastUsedProgram?.drawArrays("TRIANGLES", 0, 6);
-                    void __backupStoreDrawBlock("drawTriangles", "/parseTextC23/tauAdjExp/", [{ name: "tauAdjExpTex", tex: tauAdjExpTex }], [{ kind: "uniform", name: "tauMax", value: (tauMaxVeces) }, { kind: "uniform", name: "tauMin", value: (tauMinVeces) }, { kind: "uniform", name: "nBins", value: (nBins) }, { kind: "uniform", name: "tauBatchOffset", value: (tauAdjX1) }, { kind: "uniform", name: "tauBatchCount", value: (tauAdjCount1) }, { kind: "uniform", name: "adjointTauScale", value: (tauEStar * dtSample) }, { kind: "uniform", name: "tauExpTerms", value: (Math.max(1, Math.min(4, ~~tauExpTerms))) }], lastUsedProgram);
+                    void __backupStoreDrawBlock("drawTriangles", "/parseTextC2/tauAdjExp/", [{ name: "tauAdjExpTex", tex: tauAdjExpTex }], [{ kind: "uniform", name: "tauMax", value: (tauMaxVeces) }, { kind: "uniform", name: "tauMin", value: (tauMinVeces) }, { kind: "uniform", name: "nBins", value: (nBins) }, { kind: "uniform", name: "tauBatchOffset", value: (tauAdjX1) }, { kind: "uniform", name: "tauBatchCount", value: (tauAdjCount1) }, { kind: "uniform", name: "adjointTauScale", value: (tauEStar * dtSample) }, { kind: "uniform", name: "tauExpTerms", value: (Math.max(1, Math.min(4, ~~tauExpTerms))) }], lastUsedProgram);
                     await tauSteadyFP.use?.();
                     lastUsedProgram = tauSteadyFP;
                     lastUsedProgram?.use?.();
                     (() => { const __sz = [nBins, tauAdjCount1 * tauMaxVeces * 9]; lastUsedProgram?.setViewport(0, 0, __sz[0], __sz[1]); })();
-                    var tauSteadyFPFBO = (typeof tauSteadyFPFBO !== "undefined" && tauSteadyFPFBO) ? tauSteadyFPFBO : lastUsedProgram.cFrameBuffer().bind(["ColAtch0"]);
+                    var tauSteadyFPFBO = (typeof tauSteadyFPFBO !== "undefined" && tauSteadyFPFBO) ? tauSteadyFPFBO.bind(["ColAtch0"]) : lastUsedProgram.cFrameBuffer().bind(["ColAtch0"]);
                     tauSteadyFPFBO.bindColorBuffer(tauSteadyFPTex, "ColAtch0");
                     lastUsedProgram.uNum("tauMax", false, false).set((tauMaxVeces));
                     lastUsedProgram.uNum("tauMin", false, false).set((tauMinVeces));
@@ -3410,15 +3630,19 @@ import { read as readMat } from "/ExternalCode/mat4js/mat4js.read.js";
                     lastUsedProgram.uNum("tauBatchCount", false, false).set((tauAdjCount1));
                     lastUsedProgram.uNum("fpLogSpanMax", true, false).set((fpLogSpanMax));
                     lastUsedProgram.uNum("steadyFPGaugeMode", false, false).set(((steadyFPSolverMode === "fourier_zero_mode_like") ? 1 : 0));
+                    if (typeof tauMom1 !== "undefined" && tauMom1?.bind)
+                        tauMom1.bind("TexUnit14");
                     lastUsedProgram.bindTexName2TexUnit("tauMom1", "TexUnit14");
+                    if (typeof tauAdjFieldsTex !== "undefined" && tauAdjFieldsTex?.bind)
+                        tauAdjFieldsTex.bind("TexUnit28");
                     lastUsedProgram.bindTexName2TexUnit("tauAdjFields", "TexUnit28");
                     lastUsedProgram?.drawArrays("TRIANGLES", 0, 6);
-                    void __backupStoreDrawBlock("drawTriangles", "/parseTextC23/tauSteadyFP/", [{ name: "tauSteadyFPTex", tex: tauSteadyFPTex }], [{ kind: "uniform", name: "tauMax", value: (tauMaxVeces) }, { kind: "uniform", name: "tauMin", value: (tauMinVeces) }, { kind: "uniform", name: "nBins", value: (nBins) }, { kind: "uniform", name: "tauBatchOffset", value: (tauAdjX1) }, { kind: "uniform", name: "tauBatchCount", value: (tauAdjCount1) }, { kind: "uniform", name: "fpLogSpanMax", value: (fpLogSpanMax) }, { kind: "uniform", name: "steadyFPGaugeMode", value: ((steadyFPSolverMode === "fourier_zero_mode_like") ? 1 : 0) }], lastUsedProgram);
+                    void __backupStoreDrawBlock("drawTriangles", "/parseTextC2/tauSteadyFP/", [{ name: "tauSteadyFPTex", tex: tauSteadyFPTex }], [{ kind: "uniform", name: "tauMax", value: (tauMaxVeces) }, { kind: "uniform", name: "tauMin", value: (tauMinVeces) }, { kind: "uniform", name: "nBins", value: (nBins) }, { kind: "uniform", name: "tauBatchOffset", value: (tauAdjX1) }, { kind: "uniform", name: "tauBatchCount", value: (tauAdjCount1) }, { kind: "uniform", name: "fpLogSpanMax", value: (fpLogSpanMax) }, { kind: "uniform", name: "steadyFPGaugeMode", value: ((steadyFPSolverMode === "fourier_zero_mode_like") ? 1 : 0) }], lastUsedProgram);
                     await tauAdjCost.use?.();
                     lastUsedProgram = tauAdjCost;
                     lastUsedProgram?.use?.();
                     (() => { const __sz = [tauAdjCount1, tauMaxVeces * 9]; lastUsedProgram?.setViewport(0, 0, __sz[0], __sz[1]); })();
-                    var tauNMCostFBO = (typeof tauNMCostFBO !== "undefined" && tauNMCostFBO) ? tauNMCostFBO : lastUsedProgram.cFrameBuffer().bind(["ColAtch0"]);
+                    var tauNMCostFBO = (typeof tauNMCostFBO !== "undefined" && tauNMCostFBO) ? tauNMCostFBO.bind(["ColAtch0"]) : lastUsedProgram.cFrameBuffer().bind(["ColAtch0"]);
                     tauNMCostFBO.bindColorBuffer(tauNMCost, "ColAtch0");
                     lastUsedProgram.uNum("tauMax", false, false).set((tauMaxVeces));
                     lastUsedProgram.uNum("tauMin", false, false).set((tauMinVeces));
@@ -3430,23 +3654,33 @@ import { read as readMat } from "/ExternalCode/mat4js/mat4js.read.js";
                     lastUsedProgram.uNum("adjointTauScale", true, false).set((tauEStar * dtSample));
                     lastUsedProgram.uNum("useAdjointAFP", false, false).set((!!useAdjointAFP ? 1 : 0));
                     lastUsedProgram.uNum("klReg", true, false).set((tauKLReg));
+                    if (typeof tauMom1 !== "undefined" && tauMom1?.bind)
+                        tauMom1.bind("TexUnit14");
                     lastUsedProgram.bindTexName2TexUnit("tauMom1", "TexUnit14");
+                    if (typeof tauMom2 !== "undefined" && tauMom2?.bind)
+                        tauMom2.bind("TexUnit15");
                     lastUsedProgram.bindTexName2TexUnit("tauMom2", "TexUnit15");
                     lastUsedProgram.bindTexName2TexUnit("tauNMXiFRead", "TexUnit4");
                     lastUsedProgram.bindTexName2TexUnit("tauNMXiSRead", "TexUnit5");
                     lastUsedProgram.bindTexName2TexUnit("tauNMMetaRead", "TexUnit6");
+                    if (typeof tauAdjFieldsTex !== "undefined" && tauAdjFieldsTex?.bind)
+                        tauAdjFieldsTex.bind("TexUnit28");
                     lastUsedProgram.bindTexName2TexUnit("tauAdjFields", "TexUnit28");
+                    if (typeof tauSteadyFPTex !== "undefined" && tauSteadyFPTex?.bind)
+                        tauSteadyFPTex.bind("TexUnit27");
                     lastUsedProgram.bindTexName2TexUnit("tauSteadyFP", "TexUnit27");
+                    if (typeof tauAdjExpTex !== "undefined" && tauAdjExpTex?.bind)
+                        tauAdjExpTex.bind("TexUnit31");
                     lastUsedProgram.bindTexName2TexUnit("tauAdjExp", "TexUnit31");
                     lastUsedProgram?.drawArrays("TRIANGLES", 0, 6);
-                    void __backupStoreDrawBlock("drawTriangles", "/parseTextC23/tauAdjCost/", [{ name: "tauNMCost", tex: tauNMCost }], [{ kind: "uniform", name: "tauMax", value: (tauMaxVeces) }, { kind: "uniform", name: "tauMin", value: (tauMinVeces) }, { kind: "uniform", name: "nBins", value: (nBins) }, { kind: "uniform", name: "tauBatchOffset", value: (tauAdjX1) }, { kind: "uniform", name: "tauBatchCount", value: (tauAdjCount1) }, { kind: "uniform", name: "l2F", value: (afpOptL2F) }, { kind: "uniform", name: "l2S", value: (afpOptL2S) }, { kind: "uniform", name: "adjointTauScale", value: (tauEStar * dtSample) }, { kind: "uniform", name: "useAdjointAFP", value: (!!useAdjointAFP ? 1 : 0) }, { kind: "uniform", name: "klReg", value: (tauKLReg) }], lastUsedProgram);
+                    void __backupStoreDrawBlock("drawTriangles", "/parseTextC2/tauAdjCost/", [{ name: "tauNMCost", tex: tauNMCost }], [{ kind: "uniform", name: "tauMax", value: (tauMaxVeces) }, { kind: "uniform", name: "tauMin", value: (tauMinVeces) }, { kind: "uniform", name: "nBins", value: (nBins) }, { kind: "uniform", name: "tauBatchOffset", value: (tauAdjX1) }, { kind: "uniform", name: "tauBatchCount", value: (tauAdjCount1) }, { kind: "uniform", name: "l2F", value: (afpOptL2F) }, { kind: "uniform", name: "l2S", value: (afpOptL2S) }, { kind: "uniform", name: "adjointTauScale", value: (tauEStar * dtSample) }, { kind: "uniform", name: "useAdjointAFP", value: (!!useAdjointAFP ? 1 : 0) }, { kind: "uniform", name: "klReg", value: (tauKLReg) }], lastUsedProgram);
                     tauAdjX1 += (tauAdjCount1);
                 }
                 await tauNMFinalize.use?.();
                 lastUsedProgram = tauNMFinalize;
                 lastUsedProgram?.use?.();
                 (() => { const __sz = [tauMaxVeces, tauMaxVeces]; lastUsedProgram?.setViewport(0, 0, __sz[0], __sz[1]); })();
-                var tauAFPOptFBO = (typeof tauAFPOptFBO !== "undefined" && tauAFPOptFBO) ? tauAFPOptFBO : lastUsedProgram.cFrameBuffer().bind(["ColAtch0", "ColAtch1", "ColAtch2"]);
+                var tauAFPOptFBO = (typeof tauAFPOptFBO !== "undefined" && tauAFPOptFBO) ? tauAFPOptFBO.bind(["ColAtch0", "ColAtch1", "ColAtch2"]) : lastUsedProgram.cFrameBuffer().bind(["ColAtch0", "ColAtch1", "ColAtch2"]);
                 tauAFPOptFBO.bindColorBuffer(tauXiFFinal, "ColAtch0");
                 tauAFPOptFBO.bindColorBuffer(tauXiSFinal, "ColAtch1");
                 tauAFPOptFBO.bindColorBuffer(tauXiMetaFinal, "ColAtch2");
@@ -3454,12 +3688,20 @@ import { read as readMat } from "/ExternalCode/mat4js/mat4js.read.js";
                 lastUsedProgram.uNum("tauMin", false, false).set((tauMinVeces));
                 lastUsedProgram.bindTexName2TexUnit("tauNMXiFRead", "TexUnit4");
                 lastUsedProgram.bindTexName2TexUnit("tauNMXiSRead", "TexUnit5");
+                if (typeof tauNMCost !== "undefined" && tauNMCost?.bind)
+                    tauNMCost.bind("TexUnit11");
                 lastUsedProgram.bindTexName2TexUnit("tauNMCost", "TexUnit11");
+                if (typeof tauXiFOpt !== "undefined" && tauXiFOpt?.bind)
+                    tauXiFOpt.bind("TexUnit18");
                 lastUsedProgram.bindTexName2TexUnit("tauXiFOpt", "TexUnit18");
+                if (typeof tauXiSOpt !== "undefined" && tauXiSOpt?.bind)
+                    tauXiSOpt.bind("TexUnit19");
                 lastUsedProgram.bindTexName2TexUnit("tauXiSOpt", "TexUnit19");
+                if (typeof tauXiMetaOpt !== "undefined" && tauXiMetaOpt?.bind)
+                    tauXiMetaOpt.bind("TexUnit20");
                 lastUsedProgram.bindTexName2TexUnit("tauXiMetaOpt", "TexUnit20");
                 lastUsedProgram?.drawArrays("TRIANGLES", 0, 6);
-                void __backupStoreDrawBlock("drawTriangles", "/parseTextC23/tauNMFinalize/", [{ name: "tauXiFFinal", tex: tauXiFFinal }, { name: "tauXiSFinal", tex: tauXiSFinal }, { name: "tauXiMetaFinal", tex: tauXiMetaFinal }], [{ kind: "uniform", name: "tauMax", value: (tauMaxVeces) }, { kind: "uniform", name: "tauMin", value: (tauMinVeces) }], lastUsedProgram);
+                void __backupStoreDrawBlock("drawTriangles", "/parseTextC2/tauNMFinalize/", [{ name: "tauXiFFinal", tex: tauXiFFinal }, { name: "tauXiSFinal", tex: tauXiSFinal }, { name: "tauXiMetaFinal", tex: tauXiMetaFinal }], [{ kind: "uniform", name: "tauMax", value: (tauMaxVeces) }, { kind: "uniform", name: "tauMin", value: (tauMinVeces) }], lastUsedProgram);
                 gl.finish();
                 let tauAFPOptFlags = (Array.from(tauAFPOptFBO.readColorAttachment(2, 0, 0, tauMaxVeces, tauMaxVeces, TexExamples.RGBAFloat16, 4)));
                 tauAFPOptDone = (tauAFPOptFlags.every((v, idx, arr) => ((idx % 4) !== 0) || (arr[idx + 1] < 0.5 || arr[idx + 3] > 0.5)));
@@ -3470,67 +3712,91 @@ import { read as readMat } from "/ExternalCode/mat4js/mat4js.read.js";
             lastUsedProgram = tauStats;
             lastUsedProgram?.use?.();
             (() => { const __sz = [1, 1]; lastUsedProgram?.setViewport(0, 0, __sz[0], __sz[1]); })();
-            var tauStatsFBO = (typeof tauStatsFBO !== "undefined" && tauStatsFBO) ? tauStatsFBO : lastUsedProgram.cFrameBuffer().bind(["ColAtch0"]);
+            var tauStatsFBO = (typeof tauStatsFBO !== "undefined" && tauStatsFBO) ? tauStatsFBO.bind(["ColAtch0"]) : lastUsedProgram.cFrameBuffer().bind(["ColAtch0"]);
             tauStatsFBO.bindColorBuffer(tauStatsTex, "ColAtch0");
             lastUsedProgram.uNum("tauMax", false, false).set((tauMaxVeces));
             lastUsedProgram.uNum("tauMin", false, false).set((tauMinVeces));
             lastUsedProgram.uNum("keepPercent", true, false).set((keepTopPercent));
+            if (typeof tauXiMetaFinal !== "undefined" && tauXiMetaFinal?.bind)
+                tauXiMetaFinal.bind("TexUnit27");
             lastUsedProgram.bindTexName2TexUnit("tauXiMetaFinal", "TexUnit27");
             lastUsedProgram?.drawArrays("TRIANGLES", 0, 6);
-            void __backupStoreDrawBlock("drawTriangles", "/parseTextC23/tauStats/", [{ name: "tauStatsTex", tex: tauStatsTex }], [{ kind: "uniform", name: "tauMax", value: (tauMaxVeces) }, { kind: "uniform", name: "tauMin", value: (tauMinVeces) }, { kind: "uniform", name: "keepPercent", value: (keepTopPercent) }], lastUsedProgram);
+            void __backupStoreDrawBlock("drawTriangles", "/parseTextC2/tauStats/", [{ name: "tauStatsTex", tex: tauStatsTex }], [{ kind: "uniform", name: "tauMax", value: (tauMaxVeces) }, { kind: "uniform", name: "tauMin", value: (tauMinVeces) }, { kind: "uniform", name: "keepPercent", value: (keepTopPercent) }], lastUsedProgram);
             await tauMask.use?.();
             lastUsedProgram = tauMask;
             lastUsedProgram?.use?.();
             (() => { const __sz = [tauMaxVeces, tauMaxVeces]; lastUsedProgram?.setViewport(0, 0, __sz[0], __sz[1]); })();
-            var tauMaskFBO = (typeof tauMaskFBO !== "undefined" && tauMaskFBO) ? tauMaskFBO : lastUsedProgram.cFrameBuffer().bind(["ColAtch0"]);
+            var tauMaskFBO = (typeof tauMaskFBO !== "undefined" && tauMaskFBO) ? tauMaskFBO.bind(["ColAtch0"]) : lastUsedProgram.cFrameBuffer().bind(["ColAtch0"]);
             tauMaskFBO.bindColorBuffer(tauMaskTex, "ColAtch0");
             lastUsedProgram.uNum("tauMax", false, false).set((tauMaxVeces));
             lastUsedProgram.uNum("tauMin", false, false).set((tauMinVeces));
+            if (typeof tauXiMetaFinal !== "undefined" && tauXiMetaFinal?.bind)
+                tauXiMetaFinal.bind("TexUnit27");
             lastUsedProgram.bindTexName2TexUnit("tauXiMetaFinal", "TexUnit27");
+            if (typeof tauStatsTex !== "undefined" && tauStatsTex?.bind)
+                tauStatsTex.bind("TexUnit21");
             lastUsedProgram.bindTexName2TexUnit("tauStats", "TexUnit21");
             lastUsedProgram?.drawArrays("TRIANGLES", 0, 6);
-            void __backupStoreDrawBlock("drawTriangles", "/parseTextC23/tauMask/", [{ name: "tauMaskTex", tex: tauMaskTex }], [{ kind: "uniform", name: "tauMax", value: (tauMaxVeces) }, { kind: "uniform", name: "tauMin", value: (tauMinVeces) }], lastUsedProgram);
+            void __backupStoreDrawBlock("drawTriangles", "/parseTextC2/tauMask/", [{ name: "tauMaskTex", tex: tauMaskTex }], [{ kind: "uniform", name: "tauMax", value: (tauMaxVeces) }, { kind: "uniform", name: "tauMin", value: (tauMinVeces) }], lastUsedProgram);
             console.log("-> phase 05 tauFP", (Array.from(tauMaskFBO.readColorAttachment(0, 0, 0, 4, 1, TexExamples.RGBAFloat16, 4))));
             await tauFP.use?.();
             lastUsedProgram = tauFP;
             lastUsedProgram?.use?.();
             (() => { const __sz = [tauMaxVeces, tauMaxVeces]; lastUsedProgram?.setViewport(0, 0, __sz[0], __sz[1]); })();
-            var tauFPFBO = (typeof tauFPFBO !== "undefined" && tauFPFBO) ? tauFPFBO : lastUsedProgram.cFrameBuffer().bind(["ColAtch0"]);
+            var tauFPFBO = (typeof tauFPFBO !== "undefined" && tauFPFBO) ? tauFPFBO.bind(["ColAtch0"]) : lastUsedProgram.cFrameBuffer().bind(["ColAtch0"]);
             tauFPFBO.bindColorBuffer(tauFPTex, "ColAtch0");
             lastUsedProgram.uNum("tauMax", false, false).set((tauMaxVeces));
             lastUsedProgram.uNum("tauMin", false, false).set((tauMinVeces));
             lastUsedProgram.uNum("nBins", false, false).set((nBins));
             lastUsedProgram.uNum("logSpanMax", true, false).set((fpLogSpanMax));
+            if (typeof tauMom1 !== "undefined" && tauMom1?.bind)
+                tauMom1.bind("TexUnit14");
             lastUsedProgram.bindTexName2TexUnit("tauMom1", "TexUnit14");
+            if (typeof tauXiFFinal !== "undefined" && tauXiFFinal?.bind)
+                tauXiFFinal.bind("TexUnit25");
             lastUsedProgram.bindTexName2TexUnit("tauXiFFinal", "TexUnit25");
+            if (typeof tauXiSFinal !== "undefined" && tauXiSFinal?.bind)
+                tauXiSFinal.bind("TexUnit26");
             lastUsedProgram.bindTexName2TexUnit("tauXiSFinal", "TexUnit26");
+            if (typeof tauXiMetaFinal !== "undefined" && tauXiMetaFinal?.bind)
+                tauXiMetaFinal.bind("TexUnit27");
             lastUsedProgram.bindTexName2TexUnit("tauXiMetaFinal", "TexUnit27");
+            if (typeof tauMaskTex !== "undefined" && tauMaskTex?.bind)
+                tauMaskTex.bind("TexUnit22");
             lastUsedProgram.bindTexName2TexUnit("tauModelMask", "TexUnit22");
             lastUsedProgram?.drawArrays("TRIANGLES", 0, 6);
-            void __backupStoreDrawBlock("drawTriangles", "/parseTextC23/tauFP/", [{ name: "tauFPTex", tex: tauFPTex }], [{ kind: "uniform", name: "tauMax", value: (tauMaxVeces) }, { kind: "uniform", name: "tauMin", value: (tauMinVeces) }, { kind: "uniform", name: "nBins", value: (nBins) }, { kind: "uniform", name: "logSpanMax", value: (fpLogSpanMax) }], lastUsedProgram);
+            void __backupStoreDrawBlock("drawTriangles", "/parseTextC2/tauFP/", [{ name: "tauFPTex", tex: tauFPTex }], [{ kind: "uniform", name: "tauMax", value: (tauMaxVeces) }, { kind: "uniform", name: "tauMin", value: (tauMinVeces) }, { kind: "uniform", name: "nBins", value: (nBins) }, { kind: "uniform", name: "logSpanMax", value: (fpLogSpanMax) }], lastUsedProgram);
             console.log("-> phase 05 tauKL", (Array.from(tauFPFBO.readColorAttachment(0, 0, 0, 4, 1, TexExamples.RGBAFloat16, 4))));
             await tauKL.use?.();
             lastUsedProgram = tauKL;
             lastUsedProgram?.use?.();
             (() => { const __sz = [tauMaxVeces, tauMaxVeces]; lastUsedProgram?.setViewport(0, 0, __sz[0], __sz[1]); })();
-            var tauKLFBO = (typeof tauKLFBO !== "undefined" && tauKLFBO) ? tauKLFBO : lastUsedProgram.cFrameBuffer().bind(["ColAtch0"]);
+            var tauKLFBO = (typeof tauKLFBO !== "undefined" && tauKLFBO) ? tauKLFBO.bind(["ColAtch0"]) : lastUsedProgram.cFrameBuffer().bind(["ColAtch0"]);
             tauKLFBO.bindColorBuffer(tauKLTex, "ColAtch0");
             lastUsedProgram.uNum("tauMax", false, false).set((tauMaxVeces));
             lastUsedProgram.uNum("tauMin", false, false).set((tauMinVeces));
             lastUsedProgram.uNum("nBins", false, false).set((nBins));
             lastUsedProgram.uNum("spanMax", true, false).set((modelKLSpanMax));
+            if (typeof tauMom1 !== "undefined" && tauMom1?.bind)
+                tauMom1.bind("TexUnit14");
             lastUsedProgram.bindTexName2TexUnit("tauMom1", "TexUnit14");
+            if (typeof tauXiFFinal !== "undefined" && tauXiFFinal?.bind)
+                tauXiFFinal.bind("TexUnit25");
             lastUsedProgram.bindTexName2TexUnit("tauXiFFinal", "TexUnit25");
+            if (typeof tauXiSFinal !== "undefined" && tauXiSFinal?.bind)
+                tauXiSFinal.bind("TexUnit26");
             lastUsedProgram.bindTexName2TexUnit("tauXiSFinal", "TexUnit26");
+            if (typeof tauXiMetaFinal !== "undefined" && tauXiMetaFinal?.bind)
+                tauXiMetaFinal.bind("TexUnit27");
             lastUsedProgram.bindTexName2TexUnit("tauXiMetaFinal", "TexUnit27");
             lastUsedProgram?.drawArrays("TRIANGLES", 0, 6);
-            void __backupStoreDrawBlock("drawTriangles", "/parseTextC23/tauKL/", [{ name: "tauKLTex", tex: tauKLTex }], [{ kind: "uniform", name: "tauMax", value: (tauMaxVeces) }, { kind: "uniform", name: "tauMin", value: (tauMinVeces) }, { kind: "uniform", name: "nBins", value: (nBins) }, { kind: "uniform", name: "spanMax", value: (modelKLSpanMax) }], lastUsedProgram);
+            void __backupStoreDrawBlock("drawTriangles", "/parseTextC2/tauKL/", [{ name: "tauKLTex", tex: tauKLTex }], [{ kind: "uniform", name: "tauMax", value: (tauMaxVeces) }, { kind: "uniform", name: "tauMin", value: (tauMinVeces) }, { kind: "uniform", name: "nBins", value: (nBins) }, { kind: "uniform", name: "spanMax", value: (modelKLSpanMax) }], lastUsedProgram);
             console.log("-> phase 05 tauScore", (Array.from(tauKLFBO.readColorAttachment(0, 0, 0, 4, 1, TexExamples.RGBAFloat16, 4))));
             await tauScore.use?.();
             lastUsedProgram = tauScore;
             lastUsedProgram?.use?.();
             (() => { const __sz = [tauMaxVeces, tauMaxVeces]; lastUsedProgram?.setViewport(0, 0, __sz[0], __sz[1]); })();
-            var tauScoreFBO = (typeof tauScoreFBO !== "undefined" && tauScoreFBO) ? tauScoreFBO : lastUsedProgram.cFrameBuffer().bind(["ColAtch0"]);
+            var tauScoreFBO = (typeof tauScoreFBO !== "undefined" && tauScoreFBO) ? tauScoreFBO.bind(["ColAtch0"]) : lastUsedProgram.cFrameBuffer().bind(["ColAtch0"]);
             tauScoreFBO.bindColorBuffer(tauScoreTex, "ColAtch0");
             lastUsedProgram.uNum("tauMax", false, false).set((tauMaxVeces));
             lastUsedProgram.uNum("tauMin", false, false).set((tauMinVeces));
@@ -3539,31 +3805,49 @@ import { read as readMat } from "/ExternalCode/mat4js/mat4js.read.js";
             lastUsedProgram.uNum("wSpan", true, false).set((scoreWSpan));
             lastUsedProgram.uNum("klMax", true, false).set((scoreKLMax));
             lastUsedProgram.uNum("scoreMax", true, false).set((scoreMaxCut));
+            if (typeof tauXiMetaFinal !== "undefined" && tauXiMetaFinal?.bind)
+                tauXiMetaFinal.bind("TexUnit27");
             lastUsedProgram.bindTexName2TexUnit("tauXiMetaFinal", "TexUnit27");
+            if (typeof tauMaskTex !== "undefined" && tauMaskTex?.bind)
+                tauMaskTex.bind("TexUnit22");
             lastUsedProgram.bindTexName2TexUnit("tauModelMask", "TexUnit22");
+            if (typeof tauFPTex !== "undefined" && tauFPTex?.bind)
+                tauFPTex.bind("TexUnit23");
             lastUsedProgram.bindTexName2TexUnit("tauFPProxy", "TexUnit23");
+            if (typeof tauKLTex !== "undefined" && tauKLTex?.bind)
+                tauKLTex.bind("TexUnit4");
             lastUsedProgram.bindTexName2TexUnit("tauModelKL", "TexUnit4");
+            if (typeof tauStatsTex !== "undefined" && tauStatsTex?.bind)
+                tauStatsTex.bind("TexUnit21");
             lastUsedProgram.bindTexName2TexUnit("tauStats", "TexUnit21");
             lastUsedProgram?.drawArrays("TRIANGLES", 0, 6);
-            void __backupStoreDrawBlock("drawTriangles", "/parseTextC23/tauScore/", [{ name: "tauScoreTex", tex: tauScoreTex }], [{ kind: "uniform", name: "tauMax", value: (tauMaxVeces) }, { kind: "uniform", name: "tauMin", value: (tauMinVeces) }, { kind: "uniform", name: "wCost", value: (scoreWCost) }, { kind: "uniform", name: "wKL", value: (scoreWKL) }, { kind: "uniform", name: "wSpan", value: (scoreWSpan) }, { kind: "uniform", name: "klMax", value: (scoreKLMax) }, { kind: "uniform", name: "scoreMax", value: (scoreMaxCut) }], lastUsedProgram);
+            void __backupStoreDrawBlock("drawTriangles", "/parseTextC2/tauScore/", [{ name: "tauScoreTex", tex: tauScoreTex }], [{ kind: "uniform", name: "tauMax", value: (tauMaxVeces) }, { kind: "uniform", name: "tauMin", value: (tauMinVeces) }, { kind: "uniform", name: "wCost", value: (scoreWCost) }, { kind: "uniform", name: "wKL", value: (scoreWKL) }, { kind: "uniform", name: "wSpan", value: (scoreWSpan) }, { kind: "uniform", name: "klMax", value: (scoreKLMax) }, { kind: "uniform", name: "scoreMax", value: (scoreMaxCut) }], lastUsedProgram);
             console.log("-> phase 06 tauBest", (Array.from(tauScoreFBO.readColorAttachment(0, 0, 0, 4, 1, TexExamples.RGBAFloat16, 4))));
             await tauBest.use?.();
             lastUsedProgram = tauBest;
             lastUsedProgram?.use?.();
             (() => { const __sz = [1, 1]; lastUsedProgram?.setViewport(0, 0, __sz[0], __sz[1]); })();
-            var tauBestFBO = (typeof tauBestFBO !== "undefined" && tauBestFBO) ? tauBestFBO : lastUsedProgram.cFrameBuffer().bind(["ColAtch0"]);
+            var tauBestFBO = (typeof tauBestFBO !== "undefined" && tauBestFBO) ? tauBestFBO.bind(["ColAtch0"]) : lastUsedProgram.cFrameBuffer().bind(["ColAtch0"]);
             tauBestFBO.bindColorBuffer(tauBestTex, "ColAtch0");
             lastUsedProgram.uNum("tauMax", false, false).set((tauMaxVeces));
             lastUsedProgram.uNum("tauMin", false, false).set((tauMinVeces));
             lastUsedProgram.uNum("useMask", false, false).set(1);
             lastUsedProgram.uNum("useFP", false, false).set((!!useFPFilter ? 1 : 0));
             lastUsedProgram.uNum("useScore", false, false).set((!!useScoreSelection ? 1 : 0));
+            if (typeof tauXiMetaFinal !== "undefined" && tauXiMetaFinal?.bind)
+                tauXiMetaFinal.bind("TexUnit27");
             lastUsedProgram.bindTexName2TexUnit("tauXiMetaFinal", "TexUnit27");
+            if (typeof tauMaskTex !== "undefined" && tauMaskTex?.bind)
+                tauMaskTex.bind("TexUnit22");
             lastUsedProgram.bindTexName2TexUnit("tauModelMask", "TexUnit22");
+            if (typeof tauFPTex !== "undefined" && tauFPTex?.bind)
+                tauFPTex.bind("TexUnit23");
             lastUsedProgram.bindTexName2TexUnit("tauFPProxy", "TexUnit23");
+            if (typeof tauScoreTex !== "undefined" && tauScoreTex?.bind)
+                tauScoreTex.bind("TexUnit5");
             lastUsedProgram.bindTexName2TexUnit("tauModelScore", "TexUnit5");
             lastUsedProgram?.drawArrays("TRIANGLES", 0, 6);
-            void __backupStoreDrawBlock("drawTriangles", "/parseTextC23/tauBest/", [{ name: "tauBestTex", tex: tauBestTex }], [{ kind: "uniform", name: "tauMax", value: (tauMaxVeces) }, { kind: "uniform", name: "tauMin", value: (tauMinVeces) }, { kind: "uniform", name: "useMask", value: 1 }, { kind: "uniform", name: "useFP", value: (!!useFPFilter ? 1 : 0) }, { kind: "uniform", name: "useScore", value: (!!useScoreSelection ? 1 : 0) }], lastUsedProgram);
+            void __backupStoreDrawBlock("drawTriangles", "/parseTextC2/tauBest/", [{ name: "tauBestTex", tex: tauBestTex }], [{ kind: "uniform", name: "tauMax", value: (tauMaxVeces) }, { kind: "uniform", name: "tauMin", value: (tauMinVeces) }, { kind: "uniform", name: "useMask", value: 1 }, { kind: "uniform", name: "useFP", value: (!!useFPFilter ? 1 : 0) }, { kind: "uniform", name: "useScore", value: (!!useScoreSelection ? 1 : 0) }], lastUsedProgram);
             console.log("-> phase 07 tauSindy", (Array.from(tauBestFBO.readColorAttachment(0, 0, 0, 1, 1, TexExamples.RGBAFloat16, 4))));
             await tauSindy.use?.();
             lastUsedProgram = tauSindy;
@@ -3577,22 +3861,30 @@ import { read as readMat } from "/ExternalCode/mat4js/mat4js.read.js";
             }
             lastUsedProgram?.use?.();
             (() => { const __sz = [nBins, 1]; lastUsedProgram?.setViewport(0, 0, __sz[0], __sz[1]); })();
-            var tauSindyInitFBO = (typeof tauSindyInitFBO !== "undefined" && tauSindyInitFBO) ? tauSindyInitFBO : lastUsedProgram.cFrameBuffer().bind(["ColAtch0"]);
+            var tauSindyInitFBO = (typeof tauSindyInitFBO !== "undefined" && tauSindyInitFBO) ? tauSindyInitFBO.bind(["ColAtch0"]) : lastUsedProgram.cFrameBuffer().bind(["ColAtch0"]);
             tauSindyInitFBO.bindColorBuffer(tauSindyInitTex, "ColAtch0");
             lastUsedProgram.uNum("tauMax", false, false).set((tauMaxVeces));
             lastUsedProgram.uNum("nBins", false, false).set((nBins));
             lastUsedProgram.uNum("selectedTau", false, false).set((bestTau));
             lastUsedProgram.uNum("selectedSubseq", false, false).set((bestSubseq));
             lastUsedProgram.uNum("useSelected", false, false).set(1);
+            if (typeof tauMom1 !== "undefined" && tauMom1?.bind)
+                tauMom1.bind("TexUnit14");
             lastUsedProgram.bindTexName2TexUnit("tauMom1", "TexUnit14");
+            if (typeof tauXiF !== "undefined" && tauXiF?.bind)
+                tauXiF.bind("TexUnit18");
             lastUsedProgram.bindTexName2TexUnit("tauXiF", "TexUnit18");
+            if (typeof tauXiS !== "undefined" && tauXiS?.bind)
+                tauXiS.bind("TexUnit19");
             lastUsedProgram.bindTexName2TexUnit("tauXiS", "TexUnit19");
+            if (typeof tauBestTex !== "undefined" && tauBestTex?.bind)
+                tauBestTex.bind("TexUnit17");
             lastUsedProgram.bindTexName2TexUnit("tauBest", "TexUnit17");
             lastUsedProgram?.drawArrays("TRIANGLES", 0, 6);
-            void __backupStoreDrawBlock("drawTriangles", "/parseTextC23/tauSindy/", [{ name: "tauSindyInitTex", tex: tauSindyInitTex }], [{ kind: "uniform", name: "tauMax", value: (tauMaxVeces) }, { kind: "uniform", name: "nBins", value: (nBins) }, { kind: "uniform", name: "selectedTau", value: (bestTau) }, { kind: "uniform", name: "selectedSubseq", value: (bestSubseq) }, { kind: "uniform", name: "useSelected", value: 1 }], lastUsedProgram);
+            void __backupStoreDrawBlock("drawTriangles", "/parseTextC2/tauSindy/", [{ name: "tauSindyInitTex", tex: tauSindyInitTex }], [{ kind: "uniform", name: "tauMax", value: (tauMaxVeces) }, { kind: "uniform", name: "nBins", value: (nBins) }, { kind: "uniform", name: "selectedTau", value: (bestTau) }, { kind: "uniform", name: "selectedSubseq", value: (bestSubseq) }, { kind: "uniform", name: "useSelected", value: 1 }], lastUsedProgram);
             lastUsedProgram?.use?.();
             (() => { const __sz = [nBins, 1]; lastUsedProgram?.setViewport(0, 0, __sz[0], __sz[1]); })();
-            var tauSindyTau1RefFBO = (typeof tauSindyTau1RefFBO !== "undefined" && tauSindyTau1RefFBO) ? tauSindyTau1RefFBO : lastUsedProgram.cFrameBuffer().bind(["ColAtch0"]);
+            var tauSindyTau1RefFBO = (typeof tauSindyTau1RefFBO !== "undefined" && tauSindyTau1RefFBO) ? tauSindyTau1RefFBO.bind(["ColAtch0"]) : lastUsedProgram.cFrameBuffer().bind(["ColAtch0"]);
             tauSindyTau1RefFBO.bindColorBuffer(tauSindyTau1RefTex, "ColAtch0");
             lastUsedProgram.uNum("tauMax", false, false).set((tauMaxVeces));
             lastUsedProgram.uNum("nBins", false, false).set((nBins));
@@ -3600,20 +3892,24 @@ import { read as readMat } from "/ExternalCode/mat4js/mat4js.read.js";
             lastUsedProgram.uNum("selectedSubseq", false, false).set(0);
             lastUsedProgram.uNum("useSelected", false, false).set(1);
             lastUsedProgram?.drawArrays("TRIANGLES", 0, 6);
-            void __backupStoreDrawBlock("drawTriangles", "/parseTextC23/tauSindy/", [{ name: "tauSindyTau1RefTex", tex: tauSindyTau1RefTex }], [{ kind: "uniform", name: "tauMax", value: (tauMaxVeces) }, { kind: "uniform", name: "nBins", value: (nBins) }, { kind: "uniform", name: "selectedTau", value: 1 }, { kind: "uniform", name: "selectedSubseq", value: 0 }, { kind: "uniform", name: "useSelected", value: 1 }], lastUsedProgram);
+            void __backupStoreDrawBlock("drawTriangles", "/parseTextC2/tauSindy/", [{ name: "tauSindyTau1RefTex", tex: tauSindyTau1RefTex }], [{ kind: "uniform", name: "tauMax", value: (tauMaxVeces) }, { kind: "uniform", name: "nBins", value: (nBins) }, { kind: "uniform", name: "selectedTau", value: 1 }, { kind: "uniform", name: "selectedSubseq", value: 0 }, { kind: "uniform", name: "useSelected", value: 1 }], lastUsedProgram);
             lastUsedProgram?.use?.();
             (() => { const __sz = [nBins, 1]; lastUsedProgram?.setViewport(0, 0, __sz[0], __sz[1]); })();
-            var tauSindyFBO = (typeof tauSindyFBO !== "undefined" && tauSindyFBO) ? tauSindyFBO : lastUsedProgram.cFrameBuffer().bind(["ColAtch0"]);
+            var tauSindyFBO = (typeof tauSindyFBO !== "undefined" && tauSindyFBO) ? tauSindyFBO.bind(["ColAtch0"]) : lastUsedProgram.cFrameBuffer().bind(["ColAtch0"]);
             tauSindyFBO.bindColorBuffer(tauSindyTex, "ColAtch0");
             lastUsedProgram.uNum("tauMax", false, false).set((tauMaxVeces));
             lastUsedProgram.uNum("nBins", false, false).set((nBins));
             lastUsedProgram.uNum("selectedTau", false, false).set((bestTau));
             lastUsedProgram.uNum("selectedSubseq", false, false).set((bestSubseq));
             lastUsedProgram.uNum("useSelected", false, false).set(1);
+            if (typeof tauXiF !== "undefined" && tauXiF?.bind)
+                tauXiF.bind("TexUnit25");
             lastUsedProgram.bindTexName2TexUnit("tauXiF", "TexUnit25");
+            if (typeof tauXiS !== "undefined" && tauXiS?.bind)
+                tauXiS.bind("TexUnit26");
             lastUsedProgram.bindTexName2TexUnit("tauXiS", "TexUnit26");
             lastUsedProgram?.drawArrays("TRIANGLES", 0, 6);
-            void __backupStoreDrawBlock("drawTriangles", "/parseTextC23/tauSindy/", [{ name: "tauSindyTex", tex: tauSindyTex }], [{ kind: "uniform", name: "tauMax", value: (tauMaxVeces) }, { kind: "uniform", name: "nBins", value: (nBins) }, { kind: "uniform", name: "selectedTau", value: (bestTau) }, { kind: "uniform", name: "selectedSubseq", value: (bestSubseq) }, { kind: "uniform", name: "useSelected", value: 1 }], lastUsedProgram);
+            void __backupStoreDrawBlock("drawTriangles", "/parseTextC2/tauSindy/", [{ name: "tauSindyTex", tex: tauSindyTex }], [{ kind: "uniform", name: "tauMax", value: (tauMaxVeces) }, { kind: "uniform", name: "nBins", value: (nBins) }, { kind: "uniform", name: "selectedTau", value: (bestTau) }, { kind: "uniform", name: "selectedSubseq", value: (bestSubseq) }, { kind: "uniform", name: "useSelected", value: 1 }], lastUsedProgram);
             console.log("-> phase 05 tauFP", (Array.from(tauMaskFBO.readColorAttachment(0, 0, 0, 4, 1, TexExamples.RGBAFloat16, 4))));
             console.log("-> phase 07 tauFPStat", (Array.from(tauSindyFBO.readColorAttachment(0, 0, 0, 4, 1, TexExamples.RGBAFloat16, 4))));
             await tauFPStat.use?.();
@@ -3628,7 +3924,7 @@ import { read as readMat } from "/ExternalCode/mat4js/mat4js.read.js";
             }
             lastUsedProgram?.use?.();
             (() => { const __sz = [nBins, 1]; lastUsedProgram?.setViewport(0, 0, __sz[0], __sz[1]); })();
-            var tauFPStatFBO = (typeof tauFPStatFBO !== "undefined" && tauFPStatFBO) ? tauFPStatFBO : lastUsedProgram.cFrameBuffer().bind(["ColAtch0"]);
+            var tauFPStatFBO = (typeof tauFPStatFBO !== "undefined" && tauFPStatFBO) ? tauFPStatFBO.bind(["ColAtch0"]) : lastUsedProgram.cFrameBuffer().bind(["ColAtch0"]);
             tauFPStatFBO.bindColorBuffer(tauFPStatTex, "ColAtch0");
             lastUsedProgram.uNum("tauMax", false, false).set((tauMaxVeces));
             lastUsedProgram.uNum("tauMin", false, false).set((tauMinVeces));
@@ -3636,16 +3932,32 @@ import { read as readMat } from "/ExternalCode/mat4js/mat4js.read.js";
             lastUsedProgram.uNum("selectedTau", false, false).set((bestTau));
             lastUsedProgram.uNum("selectedSubseq", false, false).set((bestSubseq));
             lastUsedProgram.uNum("useSelected", false, false).set(1);
+            if (typeof tauMom1 !== "undefined" && tauMom1?.bind)
+                tauMom1.bind("TexUnit14");
             lastUsedProgram.bindTexName2TexUnit("tauMom1", "TexUnit14");
+            if (typeof tauXiFOpt !== "undefined" && tauXiFOpt?.bind)
+                tauXiFOpt.bind("TexUnit18");
             lastUsedProgram.bindTexName2TexUnit("tauXiFOpt", "TexUnit18");
+            if (typeof tauXiSOpt !== "undefined" && tauXiSOpt?.bind)
+                tauXiSOpt.bind("TexUnit19");
             lastUsedProgram.bindTexName2TexUnit("tauXiSOpt", "TexUnit19");
+            if (typeof tauXiMetaOpt !== "undefined" && tauXiMetaOpt?.bind)
+                tauXiMetaOpt.bind("TexUnit20");
             lastUsedProgram.bindTexName2TexUnit("tauXiMetaOpt", "TexUnit20");
+            if (typeof tauXiFFinal !== "undefined" && tauXiFFinal?.bind)
+                tauXiFFinal.bind("TexUnit25");
             lastUsedProgram.bindTexName2TexUnit("tauXiFFinal", "TexUnit25");
+            if (typeof tauXiSFinal !== "undefined" && tauXiSFinal?.bind)
+                tauXiSFinal.bind("TexUnit26");
             lastUsedProgram.bindTexName2TexUnit("tauXiSFinal", "TexUnit26");
+            if (typeof tauXiMetaFinal !== "undefined" && tauXiMetaFinal?.bind)
+                tauXiMetaFinal.bind("TexUnit27");
             lastUsedProgram.bindTexName2TexUnit("tauXiMetaFinal", "TexUnit27");
+            if (typeof tauBestTex !== "undefined" && tauBestTex?.bind)
+                tauBestTex.bind("TexUnit17");
             lastUsedProgram.bindTexName2TexUnit("tauBest", "TexUnit17");
             lastUsedProgram?.drawArrays("TRIANGLES", 0, 6);
-            void __backupStoreDrawBlock("drawTriangles", "/parseTextC23/tauFPStat/", [{ name: "tauFPStatTex", tex: tauFPStatTex }], [{ kind: "uniform", name: "tauMax", value: (tauMaxVeces) }, { kind: "uniform", name: "tauMin", value: (tauMinVeces) }, { kind: "uniform", name: "nBins", value: (nBins) }, { kind: "uniform", name: "selectedTau", value: (bestTau) }, { kind: "uniform", name: "selectedSubseq", value: (bestSubseq) }, { kind: "uniform", name: "useSelected", value: 1 }], lastUsedProgram);
+            void __backupStoreDrawBlock("drawTriangles", "/parseTextC2/tauFPStat/", [{ name: "tauFPStatTex", tex: tauFPStatTex }], [{ kind: "uniform", name: "tauMax", value: (tauMaxVeces) }, { kind: "uniform", name: "tauMin", value: (tauMinVeces) }, { kind: "uniform", name: "nBins", value: (nBins) }, { kind: "uniform", name: "selectedTau", value: (bestTau) }, { kind: "uniform", name: "selectedSubseq", value: (bestSubseq) }, { kind: "uniform", name: "useSelected", value: 1 }], lastUsedProgram);
             if (tauDebugFrames > 0) {
                 let statsSample = (tauStatsFBO.readColorAttachment(0, 0, 0, 1, 1, TexExamples.RGBAFloat16, 4));
                 let bestSample = (tauBestFBO.readColorAttachment(0, 0, 0, 1, 1, TexExamples.RGBAFloat16, 4));
@@ -3725,25 +4037,33 @@ import { read as readMat } from "/ExternalCode/mat4js/mat4js.read.js";
         tauSindy.VAO.bind();
         lastUsedProgram?.use?.();
         (() => { const __sz = [nBins, 1]; lastUsedProgram?.setViewport(0, 0, __sz[0], __sz[1]); })();
-        var tauSindyPreviewFBO = (typeof tauSindyPreviewFBO !== "undefined" && tauSindyPreviewFBO) ? tauSindyPreviewFBO : lastUsedProgram.cFrameBuffer().bind(["ColAtch0"]);
+        var tauSindyPreviewFBO = (typeof tauSindyPreviewFBO !== "undefined" && tauSindyPreviewFBO) ? tauSindyPreviewFBO.bind(["ColAtch0"]) : lastUsedProgram.cFrameBuffer().bind(["ColAtch0"]);
         tauSindyPreviewFBO.bindColorBuffer(tauSindyTex, "ColAtch0");
         lastUsedProgram.uNum("tauMax", false, false).set((tauMaxVeces));
         lastUsedProgram.uNum("nBins", false, false).set((nBins));
         lastUsedProgram.uNum("selectedTau", false, false).set((bestTau));
         lastUsedProgram.uNum("selectedSubseq", false, false).set((bestSubseq));
         lastUsedProgram.uNum("useSelected", false, false).set(1);
+        if (typeof tauMom1 !== "undefined" && tauMom1?.bind)
+            tauMom1.bind("TexUnit14");
         lastUsedProgram.bindTexName2TexUnit("tauMom1", "TexUnit14");
+        if (typeof tauXiF !== "undefined" && tauXiF?.bind)
+            tauXiF.bind("TexUnit25");
         lastUsedProgram.bindTexName2TexUnit("tauXiF", "TexUnit25");
+        if (typeof tauXiS !== "undefined" && tauXiS?.bind)
+            tauXiS.bind("TexUnit26");
         lastUsedProgram.bindTexName2TexUnit("tauXiS", "TexUnit26");
+        if (typeof tauBestTex !== "undefined" && tauBestTex?.bind)
+            tauBestTex.bind("TexUnit17");
         lastUsedProgram.bindTexName2TexUnit("tauBest", "TexUnit17");
         lastUsedProgram?.drawArrays("TRIANGLES", 0, 6);
-        void __backupStoreDrawBlock("drawTriangles", "/parseTextC23/tauSindyPreview/", [{ name: "tauSindyTex", tex: tauSindyTex }], [{ kind: "uniform", name: "tauMax", value: (tauMaxVeces) }, { kind: "uniform", name: "nBins", value: (nBins) }, { kind: "uniform", name: "selectedTau", value: (bestTau) }, { kind: "uniform", name: "selectedSubseq", value: (bestSubseq) }, { kind: "uniform", name: "useSelected", value: 1 }], lastUsedProgram);
+        void __backupStoreDrawBlock("drawTriangles", "/parseTextC2/tauSindyPreview/", [{ name: "tauSindyTex", tex: tauSindyTex }], [{ kind: "uniform", name: "tauMax", value: (tauMaxVeces) }, { kind: "uniform", name: "nBins", value: (nBins) }, { kind: "uniform", name: "selectedTau", value: (bestTau) }, { kind: "uniform", name: "selectedSubseq", value: (bestSubseq) }, { kind: "uniform", name: "useSelected", value: 1 }], lastUsedProgram);
         await tauFPStat.use?.();
         lastUsedProgram = tauFPStat;
         tauFPStat.VAO.bind();
         lastUsedProgram?.use?.();
         (() => { const __sz = [nBins, 1]; lastUsedProgram?.setViewport(0, 0, __sz[0], __sz[1]); })();
-        var tauFPStatPreviewFBO = (typeof tauFPStatPreviewFBO !== "undefined" && tauFPStatPreviewFBO) ? tauFPStatPreviewFBO : lastUsedProgram.cFrameBuffer().bind(["ColAtch0"]);
+        var tauFPStatPreviewFBO = (typeof tauFPStatPreviewFBO !== "undefined" && tauFPStatPreviewFBO) ? tauFPStatPreviewFBO.bind(["ColAtch0"]) : lastUsedProgram.cFrameBuffer().bind(["ColAtch0"]);
         tauFPStatPreviewFBO.bindColorBuffer(tauFPStatTex, "ColAtch0");
         lastUsedProgram.uNum("tauMax", false, false).set((tauMaxVeces));
         lastUsedProgram.uNum("tauMin", false, false).set((tauMinVeces));
@@ -3751,16 +4071,32 @@ import { read as readMat } from "/ExternalCode/mat4js/mat4js.read.js";
         lastUsedProgram.uNum("selectedTau", false, false).set((bestTau));
         lastUsedProgram.uNum("selectedSubseq", false, false).set((bestSubseq));
         lastUsedProgram.uNum("useSelected", false, false).set(1);
+        if (typeof tauMom1 !== "undefined" && tauMom1?.bind)
+            tauMom1.bind("TexUnit14");
         lastUsedProgram.bindTexName2TexUnit("tauMom1", "TexUnit14");
+        if (typeof tauXiFOpt !== "undefined" && tauXiFOpt?.bind)
+            tauXiFOpt.bind("TexUnit18");
         lastUsedProgram.bindTexName2TexUnit("tauXiFOpt", "TexUnit18");
+        if (typeof tauXiSOpt !== "undefined" && tauXiSOpt?.bind)
+            tauXiSOpt.bind("TexUnit19");
         lastUsedProgram.bindTexName2TexUnit("tauXiSOpt", "TexUnit19");
+        if (typeof tauXiMetaOpt !== "undefined" && tauXiMetaOpt?.bind)
+            tauXiMetaOpt.bind("TexUnit20");
         lastUsedProgram.bindTexName2TexUnit("tauXiMetaOpt", "TexUnit20");
+        if (typeof tauXiFFinal !== "undefined" && tauXiFFinal?.bind)
+            tauXiFFinal.bind("TexUnit25");
         lastUsedProgram.bindTexName2TexUnit("tauXiFFinal", "TexUnit25");
+        if (typeof tauXiSFinal !== "undefined" && tauXiSFinal?.bind)
+            tauXiSFinal.bind("TexUnit26");
         lastUsedProgram.bindTexName2TexUnit("tauXiSFinal", "TexUnit26");
+        if (typeof tauXiMetaFinal !== "undefined" && tauXiMetaFinal?.bind)
+            tauXiMetaFinal.bind("TexUnit27");
         lastUsedProgram.bindTexName2TexUnit("tauXiMetaFinal", "TexUnit27");
+        if (typeof tauBestTex !== "undefined" && tauBestTex?.bind)
+            tauBestTex.bind("TexUnit17");
         lastUsedProgram.bindTexName2TexUnit("tauBest", "TexUnit17");
         lastUsedProgram?.drawArrays("TRIANGLES", 0, 6);
-        void __backupStoreDrawBlock("drawTriangles", "/parseTextC23/tauFPStatPreview/", [{ name: "tauFPStatTex", tex: tauFPStatTex }], [{ kind: "uniform", name: "tauMax", value: (tauMaxVeces) }, { kind: "uniform", name: "tauMin", value: (tauMinVeces) }, { kind: "uniform", name: "nBins", value: (nBins) }, { kind: "uniform", name: "selectedTau", value: (bestTau) }, { kind: "uniform", name: "selectedSubseq", value: (bestSubseq) }, { kind: "uniform", name: "useSelected", value: 1 }], lastUsedProgram);
+        void __backupStoreDrawBlock("drawTriangles", "/parseTextC2/tauFPStatPreview/", [{ name: "tauFPStatTex", tex: tauFPStatTex }], [{ kind: "uniform", name: "tauMax", value: (tauMaxVeces) }, { kind: "uniform", name: "tauMin", value: (tauMinVeces) }, { kind: "uniform", name: "nBins", value: (nBins) }, { kind: "uniform", name: "selectedTau", value: (bestTau) }, { kind: "uniform", name: "selectedSubseq", value: (bestSubseq) }, { kind: "uniform", name: "useSelected", value: 1 }], lastUsedProgram);
         gl.bindFramebuffer(gl.FRAMEBUFFER, null);
         gl.disable(gl.DEPTH_TEST);
         await drawTau.use?.();
@@ -3769,20 +4105,47 @@ import { read as readMat } from "/ExternalCode/mat4js/mat4js.read.js";
         drawTau.use?.();
         drawTau.setViewport(...([0, 0, canvas.width, canvas.height]));
         if (useLSView) {
+            drawTau.use?.();
+            if (typeof tauXiMetaFinal !== "undefined" && tauXiMetaFinal?.bind)
+                tauXiMetaFinal.bind("TexUnit16");
             drawTau.bindTexName2TexUnit("tauXiMetaFinal", "TexUnit16");
         }
         else {
+            drawTau.use?.();
+            if (typeof tauXiMetaFinal !== "undefined" && tauXiMetaFinal?.bind)
+                tauXiMetaFinal.bind("TexUnit27");
             drawTau.bindTexName2TexUnit("tauXiMetaFinal", "TexUnit27");
         }
+        drawTau.use?.();
+        if (typeof tauBestTex !== "undefined" && tauBestTex?.bind)
+            tauBestTex.bind("TexUnit17");
         drawTau.bindTexName2TexUnit("tauBest", "TexUnit17");
+        if (typeof tauSindyTex !== "undefined" && tauSindyTex?.bind)
+            tauSindyTex.bind("TexUnit6");
         drawTau.bindTexName2TexUnit("tauSindy", "TexUnit6");
+        if (typeof tauSindyInitTex !== "undefined" && tauSindyInitTex?.bind)
+            tauSindyInitTex.bind("TexUnit7");
         drawTau.bindTexName2TexUnit("tauSindyInit", "TexUnit7");
+        if (typeof tauSindyTau1RefTex !== "undefined" && tauSindyTau1RefTex?.bind)
+            tauSindyTau1RefTex.bind("TexUnit8");
         drawTau.bindTexName2TexUnit("tauSindyTau1Ref", "TexUnit8");
+        if (typeof tauMaskTex !== "undefined" && tauMaskTex?.bind)
+            tauMaskTex.bind("TexUnit22");
         drawTau.bindTexName2TexUnit("tauModelMask", "TexUnit22");
+        if (typeof tauFPTex !== "undefined" && tauFPTex?.bind)
+            tauFPTex.bind("TexUnit23");
         drawTau.bindTexName2TexUnit("tauFPProxy", "TexUnit23");
+        if (typeof tauKLTex !== "undefined" && tauKLTex?.bind)
+            tauKLTex.bind("TexUnit4");
         drawTau.bindTexName2TexUnit("tauModelKL", "TexUnit4");
+        if (typeof tauScoreTex !== "undefined" && tauScoreTex?.bind)
+            tauScoreTex.bind("TexUnit5");
         drawTau.bindTexName2TexUnit("tauModelScore", "TexUnit5");
+        if (typeof tauFPStatTex !== "undefined" && tauFPStatTex?.bind)
+            tauFPStatTex.bind("TexUnit24");
         drawTau.bindTexName2TexUnit("tauFPStationary", "TexUnit24");
+        if (typeof tauStatsTex !== "undefined" && tauStatsTex?.bind)
+            tauStatsTex.bind("TexUnit21");
         drawTau.bindTexName2TexUnit("tauStats", "TexUnit21");
         drawTau.uniforms.tauMax.set((tauMaxVeces));
         drawTau.uniforms.tauMin.set((tauMinVeces));

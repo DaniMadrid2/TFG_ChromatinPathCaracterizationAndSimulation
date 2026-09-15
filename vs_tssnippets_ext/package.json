@@ -1,7 +1,7 @@
 {
   "name": "dnti-snippets-and-shader-dsl-ext",
   "displayName": "DNTI TS Snippets and Shader DSL language support",
-  "version": "1.2.0",
+  "version": "1.2.1-8",
   "description": "VS Code language mode for .snippet.ts and .shaderdsl.ts files syntax highlighting.",
   "publisher": "danimadrid2",
   "main": "./extension.js",
@@ -17,7 +17,7 @@
   ],
   "scripts": {
     "package": "npx @vscode/vsce package --allow-missing-repository",
-    "install-vsix": "code --install-extension .\\dnti-snippets-and-shader-dsl-ext-1.1.3.vsix"
+    "install-vsix": "code --install-extension .\\dnti-snippets-and-shader-dsl-ext-1.2.1-8.vsix"
   },
   "contributes": {
     "commands": [
@@ -28,6 +28,18 @@
       {
         "command": "vsTSSnippets.setShaderDslLanguage",
         "title": "Set Language Mode: Shader DSL"
+      },
+      {
+        "command": "vsTSSnippets.toggleDrawBackupPreview",
+        "title": "Shader DSL: Toggle Draw backUp Preview"
+      },
+      {
+        "command": "vsTSSnippets.exportShaderDslMermaid",
+        "title": "Shader DSL: Export Mermaid Lineage"
+      },
+      {
+        "command": "vsTSSnippets.rescanShaderDslBackupPathReplacements",
+        "title": "Shader DSL: Rescan backUp Path Replacements"
       }
     ],
     "languages": [
