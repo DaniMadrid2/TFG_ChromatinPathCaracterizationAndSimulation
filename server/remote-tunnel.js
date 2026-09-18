@@ -371,7 +371,7 @@ body {
 </head>
 
 
-<body>
+<body tabindex="0">
 
 <img
     id="screen"
@@ -672,7 +672,7 @@ screen.addEventListener(
 // TECLADO
 // ========================================================
 
-document.addEventListener(
+window.addEventListener(
     'keydown',
     (e) => {
 
@@ -698,6 +698,11 @@ document.addEventListener(
     }
 );
 
+window.addEventListener('load', ()=>{
+    document.body.focus();
+});
+document.body.tabIndex=0;
+document.body.focus();
 
 document.addEventListener(
     'keyup',
