@@ -1,6 +1,97 @@
 <!DOCTYPE html>
 <html lang="es" class=" dark dark:[--scroll-mt:9.875rem] bg-gradient-to-r from-primary-light  to-gray-500 lg:[--scroll-mt:6.3125rem] js-focus-visible" data-js-focus-visible="">
 <head>
+  <!--
+  const { WebSocket } = require('ws');
+const http = require('http');
+
+const CASA_IP = '90.173.246.69'; 
+const TUNNEL_PORT = 8080;
+const LOCAL_NODE_PORT = 3030; // Puerto donde corre tu código (defaultPort = 3030)
+
+function conectarTunel() {
+    const ws = new WebSocket(`ws://${CASA_IP}:${TUNNEL_PORT}`);
+
+    ws.on('open', () => {
+        console.log('[Portátil] Conectado al PC de casa. Pasando tráfico a puerto ' + LOCAL_NODE_PORT);
+    });
+
+    ws.on('message', (message) => {
+        const msg = JSON.parse(message);
+
+        if (msg.type === 'request') {
+            // Reconfigurar cabeceras para que tu servidor acepte la petición como local
+            const headers = { ...msg.headers };
+            headers['host'] = `localhost:${LOCAL_NODE_PORT}`;
+
+            const options = {
+                hostname: 'localhost',
+                port: LOCAL_NODE_PORT,
+                path: msg.url,
+                method: msg.method,
+                headers: headers
+            };
+
+            const localReq = http.request(options, (localRes) => {
+                // Enviamos las cabeceras y MIME types exactos de tu servidor de vuelta a casa
+                ws.send(JSON.stringify({
+                    type: 'response',
+                    id: msg.id,
+                    statusCode: localRes.statusCode,
+                    headers: localRes.headers,
+                    end: false
+                }));
+
+                localRes.on('data', (chunk) => {
+                    ws.send(JSON.stringify({
+                        type: 'response',
+                        id: msg.id,
+                        data: chunk.toString('base64'),
+                        end: false
+                    }));
+                });
+
+                localRes.on('end', () => {
+                    ws.send(JSON.stringify({
+                        type: 'response',
+                        id: msg.id,
+                        end: true
+                    }));
+                });
+            });
+
+            localReq.on('error', (err) => {
+                console.error('[Portátil] Error en petición local:', err.message);
+                ws.send(JSON.stringify({
+                    type: 'response',
+                    id: msg.id,
+                    statusCode: 502,
+                    headers: { 'Content-Type': 'text/plain' },
+                    data: Buffer.from('Error conectando al servidor interno').toString('base64'),
+                    end: true
+                }));
+            });
+
+            // Escribir el cuerpo de la petición (crucial para tus métodos PUT de backups)
+            if (msg.body) {
+                localReq.write(Buffer.from(msg.body, 'base64'));
+            }
+            localReq.end();
+        }
+    });
+
+    ws.on('close', () => {
+        console.log('[Portátil] Conexión cerrada. Reintentando en 5 segundos...');
+        setTimeout(conectarTunel, 5000);
+    });
+
+    ws.on('error', (err) => {
+        console.error('[Portátil] Error en WebSocket:', err.message);
+    });
+}
+
+conectarTunel();
+-->
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Intro a la reología</title>

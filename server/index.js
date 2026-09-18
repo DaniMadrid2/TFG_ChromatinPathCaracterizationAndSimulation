@@ -9,7 +9,7 @@ const backupRoot = path.join(projectRoot, 'backups');
 
 const mimeTypes = {
   html: 'text/html; charset=UTF-8',
-  js: 'text/javascript; charset=UTF-8',
+  js: 'application/javascript', // Estándar estricto moderno
   css: 'text/css; charset=UTF-8',
   json: 'application/json',
   svg: 'image/svg+xml',
@@ -18,10 +18,11 @@ const mimeTypes = {
   jpeg: 'image/jpeg',
   gif: 'image/gif',
   wasm: 'application/wasm',
-  mjs: 'text/javascript; charset=UTF-8',
-  mts: 'text/javascript; charset=UTF-8',
+  mjs: 'application/javascript', // Estándar estricto moderno
+  mts: 'application/javascript',
   txt: 'text/plain; charset=UTF-8',
 };
+
 
 const sendError = (res, status, message) => {
   res.writeHead(status, {
@@ -34,16 +35,37 @@ const sendError = (res, status, message) => {
   res.end(message);
 };
 
+// const serveFile = async (res, filePath) => {
+//   const ext = path.extname(filePath).slice(1);
+//   const mime = mimeTypes[ext] || 'application/octet-stream';
+//   const file = await fs.readFile(filePath);
+//   res.writeHead(200, {
+//     'Content-Type': mime,
+//     'Cache-Control': 'no-cache',
+//   });
+//   res.end(file);
+// };
 const serveFile = async (res, filePath) => {
-  const ext = path.extname(filePath).slice(1);
+  // 1. Quitamos cualquier query string (ej: ?v=123 o ?t=abc) que pueda venir en la ruta
+  const cleanPath = filePath.split('?')[0];
+  
+  // 2. Extraemos la extensión y la pasamos estrictamente a minúsculas
+  const ext = path.extname(cleanPath).slice(1).toLowerCase();
+  
+  // 3. Buscamos en tu diccionario. Si no existe, usamos un fallback seguro
   const mime = mimeTypes[ext] || 'application/octet-stream';
-  const file = await fs.readFile(filePath);
+  
+  const file = await fs.readFile(filePath.split('?')[0]); // Leemos el archivo real en disco sin el '?'
+  
   res.writeHead(200, {
     'Content-Type': mime,
     'Cache-Control': 'no-cache',
+    // Añadimos CORS aquí también para asegurar compatibilidad total en local
+    'Access-Control-Allow-Origin': '*', 
   });
   res.end(file);
 };
+
 
 const sendJson = (res, status, payload) => {
   res.writeHead(status, {
@@ -270,7 +292,7 @@ const remapDependencies = (requestPath) => {
 };
 
 http.createServer(async (req, res) => {
-  const base = new URL(req.url, `http://localhost:${port}`);
+  const base = new URL(req.url, `http://0.0.0.0:${port}`);
   let requestPath = decodeURIComponent(base.pathname);
   try {
     if (/^\/api\/backups(?:\/|$)/i.test(requestPath)) {
@@ -290,6 +312,8 @@ http.createServer(async (req, res) => {
     return;
   }
 
+  // ... tu código anterior de resolución de rutas ...
+
   try {
     const stats = await fs.stat(target);
     if (stats.isDirectory()) {
@@ -298,6 +322,17 @@ http.createServer(async (req, res) => {
     }
     await serveFile(res, target);
   } catch (err) {
+    // 1. Averiguamos qué extensión se estaba intentando pedir
+    const ext = path.extname(target).slice(1).toLowerCase();
+
+    // 2. Si NO es un archivo .html (ej: si es .js, .css, .png, etc.), damos un 404 real
+    //    Esto evitará que el navegador reciba un HTML cuando esperaba un script.
+    if (ext && ext !== 'html') {
+      sendError(res, 404, `Not found: ${path.basename(target)}`);
+      return;
+    }
+
+    // 3. Si era una ruta de navegación (o un .html ausente), aplicamos tu fallback de SPA
     const fallback = path.join(projectRoot, 'src', 'index.html');
     if (target !== fallback) {
       try {

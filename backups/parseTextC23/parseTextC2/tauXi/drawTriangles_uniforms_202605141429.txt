@@ -1,1 +1,0 @@
-{"source":"drawTriangles","savedAt":"2026-05-14T12:29:55.984Z","entries":[{"kind":"uniform","name":"tauMax","varName":"tauMax","value":6},{"kind":"uniform","name":"tauMin","varName":"tauMin","value":5},{"kind":"uniform","name":"nBins","varName":"nBins","value":64}]}

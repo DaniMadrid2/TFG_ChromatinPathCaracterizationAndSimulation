@@ -139,3 +139,6 @@ dist
 *.tmp*.*
 
 backups/referenciaCodigoPython/
+backups/parseTextC23/
+backups/parseTextC2/
+backups/parseTextC3/
