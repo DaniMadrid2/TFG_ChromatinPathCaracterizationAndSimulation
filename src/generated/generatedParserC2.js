@@ -2546,8 +2546,8 @@ import { read as readMat } from "/ExternalCode/mat4js/mat4js.read.js";
         }
     };
     let tauSignalData = datosX1;
-    let tauMaxVeces = 6;
-    let tauMinVeces = 5;
+    let tauMaxVeces = 8;
+    let tauMinVeces = 3;
     let nBins = 64;
     let tauEStar = 1.0;
     let dtSample = 1.0;

@@ -524,7 +524,6 @@ async function __c1Main() {
     const __backupStoreDrawBlock = async (drawKind, pathHint, outputTextures, uniformEntries, program) => {
         try {
             const drawName = __backupSafeName(drawKind || "draw");
-            await __backupClearDrawScopeGenerationsIfNeeded(pathHint);
             const generation = __backupNextDrawGeneration(drawKind, pathHint, program);
             const outputs = Array.isArray(outputTextures) ? outputTextures.filter(Boolean) : [];
             const outputSet = new Set(outputs.map(item => item?.tex).filter(Boolean));
@@ -535,6 +534,23 @@ async function __c1Main() {
                 name: entry?.name || "uniform",
                 ...__backupNormalizeValue(entry?.value, entry?.name || "uniform")
             }));
+            const serializedOutputs = outputs.map((output) => {
+                const outputName = output?.name || "output";
+                try {
+                    return { outputName, ok: true, payload: __backupSerializeValue(output?.tex, outputName) };
+                }
+                catch (err) {
+                    return {
+                        outputName,
+                        ok: false,
+                        payload: JSON.stringify({
+                            varName: outputName,
+                            savedAt: new Date().toISOString(),
+                            error: String(err)
+                        })
+                    };
+                }
+            });
             const uniformPayload = JSON.stringify({
                 source: drawKind,
                 savedAt: new Date().toISOString(),
@@ -543,11 +559,20 @@ async function __c1Main() {
                     ...normalizedUniforms
                 ]
             });
+            await __backupClearDrawScopeGenerationsIfNeeded(pathHint);
             const uniformTarget = __backupResolveMultiTarget(pathHint, drawName, "uniforms", generation);
             await __backupPut("/file", uniformTarget.path, uniformPayload, uniformTarget.directoryMode ? { directoryMode: true, suggestedName: uniformTarget.suggestedName } : {});
-            for (const output of outputs) {
-                const outputTarget = __backupResolveMultiTarget(pathHint, drawName, __backupSafeName(output?.name || "output"), generation);
-                await __backupPut("/file", outputTarget.path, __backupSerializeValue(output?.tex, output?.name || "output"), outputTarget.directoryMode ? { directoryMode: true, suggestedName: outputTarget.suggestedName } : {});
+            for (const snapshot of serializedOutputs) {
+                try {
+                    const outputTarget = __backupResolveMultiTarget(pathHint, drawName, __backupSafeName(snapshot.outputName), generation);
+                    await __backupPut("/file", outputTarget.path, snapshot.payload, outputTarget.directoryMode ? { directoryMode: true, suggestedName: outputTarget.suggestedName } : {});
+                    if (!snapshot.ok) {
+                        console.warn("[backUp draw] stored output fallback payload", snapshot.outputName, pathHint);
+                    }
+                }
+                catch (err) {
+                    console.error("[backUp draw] output store failed", snapshot.outputName, pathHint, err);
+                }
             }
             return { ok: true };
         }

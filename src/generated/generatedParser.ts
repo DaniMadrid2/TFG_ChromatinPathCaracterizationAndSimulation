@@ -124,7 +124,7 @@ async function __c1Main(){
     
     
     
-                                                                                                        const __fsTargetC1=canvas as any;
+                                                                                                                const __fsTargetC1=canvas as any;
     const __baseCanvasW=canvas.width;
     const __baseCanvasH=canvas.height;
     const __baseCanvasStyle={
@@ -179,6 +179,8 @@ async function __c1Main(){
     });
     document.addEventListener("fullscreenchange", __applyCanvasFullscreenC1);
     window.addEventListener("resize", __applyCanvasFullscreenC1);
+
+
 
 
 
@@ -636,7 +638,6 @@ const __backupResolveMultiTarget = (pathHint:any, defaultStem:any, suffix:any, g
 const __backupStoreDrawBlock = async (drawKind:any, pathHint:any, outputTextures:any[], uniformEntries:any[], program:any)=>{
     try {
         const drawName = __backupSafeName(drawKind || "draw");
-        await __backupClearDrawScopeGenerationsIfNeeded(pathHint);
         const generation = __backupNextDrawGeneration(drawKind, pathHint, program);
         const outputs = Array.isArray(outputTextures) ? outputTextures.filter(Boolean) : [];
         const outputSet = new Set(outputs.map(item => item?.tex).filter(Boolean));
@@ -647,6 +648,22 @@ const __backupStoreDrawBlock = async (drawKind:any, pathHint:any, outputTextures
             name: entry?.name || "uniform",
             ...__backupNormalizeValue(entry?.value, entry?.name || "uniform")
         }));
+        const serializedOutputs = outputs.map((output:any)=>{
+            const outputName = output?.name || "output";
+            try {
+                return { outputName, ok: true, payload: __backupSerializeValue(output?.tex, outputName) };
+            } catch (err) {
+                return {
+                    outputName,
+                    ok: false,
+                    payload: JSON.stringify({
+                        varName: outputName,
+                        savedAt: new Date().toISOString(),
+                        error: String(err)
+                    })
+                };
+            }
+        });
         const uniformPayload = JSON.stringify({
             source: drawKind,
             savedAt: new Date().toISOString(),
@@ -655,11 +672,19 @@ const __backupStoreDrawBlock = async (drawKind:any, pathHint:any, outputTextures
                 ...normalizedUniforms
             ]
         });
+        await __backupClearDrawScopeGenerationsIfNeeded(pathHint);
         const uniformTarget = __backupResolveMultiTarget(pathHint, drawName, "uniforms", generation);
         await __backupPut("/file", uniformTarget.path, uniformPayload, uniformTarget.directoryMode ? { directoryMode: true, suggestedName: uniformTarget.suggestedName } : {});
-        for (const output of outputs) {
-            const outputTarget = __backupResolveMultiTarget(pathHint, drawName, __backupSafeName(output?.name || "output"), generation);
-            await __backupPut("/file", outputTarget.path, __backupSerializeValue(output?.tex, output?.name || "output"), outputTarget.directoryMode ? { directoryMode: true, suggestedName: outputTarget.suggestedName } : {});
+        for (const snapshot of serializedOutputs) {
+            try {
+                const outputTarget = __backupResolveMultiTarget(pathHint, drawName, __backupSafeName(snapshot.outputName), generation);
+                await __backupPut("/file", outputTarget.path, snapshot.payload, outputTarget.directoryMode ? { directoryMode: true, suggestedName: outputTarget.suggestedName } : {});
+                if(!snapshot.ok){
+                    console.warn("[backUp draw] stored output fallback payload", snapshot.outputName, pathHint);
+                }
+            } catch (err) {
+                console.error("[backUp draw] output store failed", snapshot.outputName, pathHint, err);
+            }
         }
         return { ok: true };
     } catch (err) {

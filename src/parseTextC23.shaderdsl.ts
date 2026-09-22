@@ -1,5 +1,5 @@
 let {
-  tauMaxVeces=6, tauMinVeces=5
+  tauMaxVeces=8, tauMinVeces=3
   nBins=64
   tauEStar=1.0, dtSample=1.0
   recomputeTau=false, tauDebugFrames=4, c2DrawLogFrames=3
