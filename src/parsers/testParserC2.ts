@@ -263,6 +263,7 @@ async function patchGeneratedFiles(outPath: string, baseDir: string) {
     let outCode = await fs.readFile(outPath, "utf8");
     outCode = ensureCommonImports(outCode);
     outCode = patchLocalWebGLManUsage(outCode);
+    //!TODO resolveAxisSnippet se usa dos veces
     const fsSnippet = resolveAxisSnippet(await loadSnippetParts(baseDir, "c2"), 0);
     outCode = injectGeneratedBlocks(outCode, await buildPreSnippet(baseDir, fsSnippet), `})();`);
     outCode = normalizeCanvasTargets(outCode);

@@ -349,7 +349,7 @@ tick {
       //? phase 03_afp - tauAFPOpt multipass - file://./glsl/tau/03_afp/2_tauAFPOpt.frag
       // Entrada: momentos y semilla AFP0 (tauXiFOpt,tauXiSOpt,tauXiMetaOpt).
       // Salida: tauXiFFinal, tauXiSFinal, tauXiMetaFinal.
-      // Llamadas: multipaso dentro del while. Cada iteraci?n hace coste real por v?rtice + paso Nelder-Mead.
+      // Llamadas: multipaso dentro del while. Cada iteración hace coste real por vértice + paso Nelder-Mead.
       // Efecto de variables: Nelder-Mead ya se propaga con el coste del shader adjoint, no con uno simplificado fuera del bucle.
       use tauNMSimplexInit
       drawTriangles -> [tauNMXiF0, tauNMXiS0, tauNMMeta0] size [tauMaxVeces,tauMaxVeces*9] {
