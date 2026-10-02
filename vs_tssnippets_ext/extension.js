@@ -1,4 +1,6 @@
 const vscode = require("vscode");
+const { textureImage } = require("./backupHover");
+const { renderBackupPanel } = require("./backupPanel");
 
 const OPTION_COLORS = [
     { color: "#00F5FF", background: "rgba(0, 245, 255, 0.10)" },
@@ -174,26 +176,29 @@ const backupPreviewStateByDocument = new Map();
 const drawBackupInlayHintsEmitter = new vscode.EventEmitter();
 const drawBackupPreviewDocumentEmitter = new vscode.EventEmitter();
 const drawBackupCodeLensEmitter = new vscode.EventEmitter();
-const SEARCH_EXCLUDE_GLOB = "**/{node_modules,dist,build,out,.git,.next,.turbo,coverage,tmp,.tmp_build}/**";
+const SEARCH_EXCLUDE_GLOB = "**/{node_modules,dist,build,out,generated,backups,.git,.next,.turbo,coverage,tmp,.tmp_build}/**";
 const SHADERDSL_GLOB = "**/*.shaderdsl.ts";
 const BACKUP_PATH_RESCAN_MIN_INTERVAL_MS = 5 * 60 * 1000;
 const searchUriCache = new Map();
+const searchDocumentCache = new Map();
 const TEX2D_DECL_KEYWORD_RE = "(?:new-|in-)?tex2D";
 const DRAW_BACKUP_PREVIEW_SCHEME = "shaderdsl-backup-preview";
 const drawBackupBlockCacheByDocument = new Map();
 const backupDirectoryEntryCache = new Map();
-const backupPathReplaceRegistry = {
-    scannedAt: 0,
-    directives: [],
-    timer: null,
-};
+const backupPathReplaceRegistry = new Map();
+const projectRootCache = new Map();
+let activeProjectSignature = "";
+const backupHoverModeByDocument = new Map();
+const backupHoverFilePage = new Map();
+const backupPanels = new Set();
+const backupPayloadCache = new Map();
+const backupImageCache = new Map();
 
 function activate(context) {
     runtimeContext = context;
     console.log("[vs_tssnippets_ext] activate");
-    void refreshWorkspaceBackupPathReplaceRegistry(false);
-
     const refreshAllEditors = () => {
+        pruneProjectCaches();
         for (const editor of vscode.window.visibleTextEditors) {
             refreshEditorDecorations(editor);
         }
@@ -253,18 +258,8 @@ function activate(context) {
             }
             const text = editor.document.getText();
             const block = findDrawBackupBlockAtPosition(text, editor.selection.active);
-            if (block) {
-                const blockState = getDrawBackupBlockState(editor.document, block);
-                updateDrawBackupBlockState(editor.document, block.key, {
-                    visible: !blockState.visible,
-                    generation: blockState.generation,
-                });
-            } else {
-                const state = getBackupPreviewState(editor.document);
-                state.defaultVisible = !state.defaultVisible;
-                setBackupPreviewState(editor.document, state);
-            }
-            refreshDrawBackupUi(editor);
+            if (block) await showDrawBackupHover(editor, block, "details");
+            else vscode.window.showInformationMessage("Place the cursor in a draw block to inspect its backup.");
         }),
         vscode.commands.registerCommand("vsTSSnippets.toggleDrawBackupPreviewAtBlock", async (documentUriString, blockKey) => {
             const editor = findVisibleEditorByUri(documentUriString);
@@ -324,9 +319,13 @@ function activate(context) {
             if (!block) {
                 return;
             }
-            updateDrawBackupBlockState(editor.document, block.key, { visible: true });
-            refreshDrawBackupUi(editor);
-            await openDrawBackupPreviewDocument(editor, block);
+            return openDrawBackupPanel(editor, block);
+        }),
+        vscode.commands.registerCommand("vsTSSnippets.openDrawBackupImagesAtBlock", async (documentUriString, blockKey) => {
+            const editor = findVisibleEditorByUri(documentUriString);
+            if (!editor || !isParseTextC23Document(editor.document)) return;
+            const block = getCachedDrawBackupBlocks(editor.document).find((item) => item.key === blockKey);
+            if (block) return openDrawBackupPanel(editor, block);
         }),
         vscode.commands.registerCommand("vsTSSnippets.openDrawBackupFileAtBlock", async (documentUriString, blockKey) => {
             const editor = findVisibleEditorByUri(documentUriString);
@@ -337,7 +336,22 @@ function activate(context) {
             if (!block) {
                 return;
             }
-            await openDrawBackupBackingFile(editor, block);
+            return openDrawBackupPanel(editor, block);
+        }),
+        vscode.commands.registerCommand("vsTSSnippets.openDrawBackupBackingFileAtBlock", async (documentUriString, blockKey) => {
+            const editor = findVisibleEditorByUri(documentUriString);
+            if (!editor || !isParseTextC23Document(editor.document)) return;
+            const block = getCachedDrawBackupBlocks(editor.document).find((item) => item.key === blockKey);
+            if (block) return openDrawBackupBackingFile(editor, block);
+        }),
+        vscode.commands.registerCommand("vsTSSnippets.pageDrawBackupFileAtBlock", async (documentUriString, blockKey, fileLabel, page) => {
+            const editor = findVisibleEditorByUri(documentUriString);
+            if (!editor || !isParseTextC23Document(editor.document)) return;
+            const block = getCachedDrawBackupBlocks(editor.document).find((item) => item.key === blockKey);
+            if (!block || !listDisplayedBackupFiles(editor.document, block, getDrawBackupBlockState(editor.document, block))
+                .some((file) => file.label === fileLabel && file.filePath)) return;
+            backupHoverFilePage.set(`${backupHoverKey(editor.document, block)}::${fileLabel}`, Math.max(0, Number(page) || 0));
+            return showDrawBackupHover(editor, block, "files");
         }),
         vscode.commands.registerCommand("vsTSSnippets.toggleDrawBackupScopeAtBlock", async (documentUriString, blockKey) => {
             const editor = findVisibleEditorByUri(documentUriString);
@@ -349,13 +363,11 @@ function activate(context) {
                 return;
             }
             const currentState = getDrawBackupBlockState(editor.document, block);
-            updateDrawBackupBlockState(editor.document, block.key, {
-                visible: true,
+            synchronizeDrawBackupSelection(editor, block, {
                 variantOpenMode: currentState.variantOpenMode === "all" ? "single" : "all",
             });
-            refreshDrawBackupUi(editor);
+            await showDrawBackupHover(editor, block, backupHoverModeByDocument.get(backupHoverKey(editor.document, block)) || "details");
         }),
-        vscode.commands.registerCommand("vsTSSnippets.noop", async () => {}),
         vscode.commands.registerCommand("vsTSSnippets.exportShaderDslMermaid", async () => {
             const editor = vscode.window.activeTextEditor;
             if (!editor || !isParseTextC23Document(editor.document)) {
@@ -368,7 +380,9 @@ function activate(context) {
             await vscode.window.showTextDocument(mermaidDoc, { preview: false });
         }),
         vscode.commands.registerCommand("vsTSSnippets.rescanShaderDslBackupPathReplacements", async () => {
-            await refreshWorkspaceBackupPathReplaceRegistry(true);
+            const editor = vscode.window.activeTextEditor;
+            if (!editor) return;
+            await refreshWorkspaceBackupPathReplaceRegistry(editor.document, true);
             refreshAllEditors();
             vscode.window.showInformationMessage("Shader DSL backUp path replacements rescanned.");
         }),
@@ -410,6 +424,8 @@ function activate(context) {
         }),
         vscode.languages.registerHoverProvider(SHADERDSL_SELECTOR, {
             provideHover(document, position) {
+                const backupHover = provideDrawBackupHover(document, position);
+                if (backupHover) return backupHover;
                 return provideShaderDslTagHover(document, position);
             },
         }),
@@ -420,15 +436,6 @@ function activate(context) {
                     return [];
                 }
                 return buildDrawBackupInlayHints(document, document.getText());
-            },
-        }),
-        vscode.languages.registerCodeLensProvider(SHADERDSL_SELECTOR, {
-            onDidChangeCodeLenses: drawBackupCodeLensEmitter.event,
-            provideCodeLenses(document) {
-                if (!isParseTextC23Document(document)) {
-                    return [];
-                }
-                return buildDrawBackupCodeLenses(document, document.getText());
             },
         }),
         vscode.workspace.registerTextDocumentContentProvider(DRAW_BACKUP_PREVIEW_SCHEME, {
@@ -470,6 +477,15 @@ function activate(context) {
         }),
         vscode.workspace.onDidCloseTextDocument((document) => {
             drawBackupBlockCacheByDocument.delete(document.uri.toString());
+            backupPreviewStateByDocument.delete(document.uri.toString());
+            backupPayloadCache.clear();
+            backupImageCache.clear();
+            for (const key of backupHoverModeByDocument.keys()) {
+                if (key.startsWith(`${document.uri.toString()}::`)) backupHoverModeByDocument.delete(key);
+            }
+            for (const key of backupHoverFilePage.keys()) {
+                if (key.startsWith(`${document.uri.toString()}::`)) backupHoverFilePage.delete(key);
+            }
             drawBackupCodeLensEmitter.fire();
         }),
         vscode.workspace.onDidCreateFiles(invalidateSearchCache),
@@ -488,8 +504,7 @@ function isSearchableCodeDocument(document) {
 }
 
 function getWorkspaceCacheKey(document, family) {
-    const folder = vscode.workspace.getWorkspaceFolder(document.uri);
-    return `${folder ? folder.uri.toString() : "workspace"}::${family}`;
+    return `${getProjectRootPath(document)}::${family}`;
 }
 
 async function getCachedWorkspaceUris(document, family, includeGlob) {
@@ -498,14 +513,110 @@ async function getCachedWorkspaceUris(document, family, includeGlob) {
     if (cached) {
         return cached;
     }
-    const uris = await vscode.workspace.findFiles(includeGlob, SEARCH_EXCLUDE_GLOB);
+    const uris = await vscode.workspace.findFiles(new vscode.RelativePattern(getProjectRootPath(document), includeGlob), SEARCH_EXCLUDE_GLOB);
     searchUriCache.set(key, uris);
     return uris;
 }
 
 function invalidateSearchCache() {
     searchUriCache.clear();
+    searchDocumentCache.clear();
     backupDirectoryEntryCache.clear();
+    backupPayloadCache.clear();
+    backupImageCache.clear();
+    projectRootCache.clear();
+    backupPathReplaceRegistry.clear();
+}
+
+function getProjectRootPath(document) {
+    const fs = require("node:fs");
+    const path = require("node:path");
+    const start = path.dirname(document.uri.fsPath || document.fileName);
+    if (projectRootCache.has(start)) return projectRootCache.get(start);
+    const workspace = getWorkspaceRootPath(document);
+    let directory = start;
+    while (directory.startsWith(workspace)) {
+        try {
+            if (fs.readdirSync(directory).some((name) => /\.shaderdsl\.ts$/i.test(name))) {
+                projectRootCache.set(start, directory);
+                return directory;
+            }
+        } catch {}
+        const parent = path.dirname(directory);
+        if (parent === directory || directory === workspace) break;
+        directory = parent;
+    }
+    projectRootCache.set(start, workspace);
+    return workspace;
+}
+
+function pruneProjectCaches() {
+    const active = new Set(vscode.window.visibleTextEditors
+        .filter((editor) => isSearchableCodeDocument(editor.document))
+        .map((editor) => getProjectRootPath(editor.document)));
+    const signature = [...active].sort().join("|");
+    if (signature !== activeProjectSignature) {
+        activeProjectSignature = signature;
+        backupDirectoryEntryCache.clear();
+        backupPayloadCache.clear();
+        backupImageCache.clear();
+    }
+    for (const key of searchUriCache.keys()) {
+        if (![...active].some((root) => key.startsWith(`${root}::`))) searchUriCache.delete(key);
+    }
+    for (const [root, entry] of backupPathReplaceRegistry) {
+        if (!active.has(root)) {
+            if (entry.timer) clearTimeout(entry.timer);
+            backupPathReplaceRegistry.delete(root);
+        }
+    }
+    for (const [key, cached] of searchDocumentCache) {
+        if (!active.has(cached.root)) searchDocumentCache.delete(key);
+    }
+    for (const [directory, root] of projectRootCache) {
+        if (!active.has(root)) projectRootCache.delete(directory);
+    }
+}
+
+function diskDocumentSnapshot(uri, root) {
+    const fs = require("node:fs");
+    const key = uri.toString();
+    const stat = fs.statSync(uri.fsPath);
+    const cached = searchDocumentCache.get(key);
+    if (cached?.mtimeMs === stat.mtimeMs) {
+        searchDocumentCache.delete(key);
+        searchDocumentCache.set(key, cached);
+        return cached.document;
+    }
+    const text = fs.readFileSync(uri.fsPath, "utf8");
+    const starts = [0];
+    for (let index = 0; index < text.length; index++) if (text[index] === "\n") starts.push(index + 1);
+    const offsetAt = (position) => Math.min(text.length, (starts[position.line] || 0) + position.character);
+    const positionAt = (offset) => {
+        let low = 0;
+        let high = starts.length;
+        while (low + 1 < high) {
+            const middle = (low + high) >>> 1;
+            if (starts[middle] <= offset) low = middle;
+            else high = middle;
+        }
+        return new vscode.Position(low, offset - starts[low]);
+    };
+    const document = {
+        uri, fileName: uri.fsPath, version: stat.mtimeMs, lineCount: starts.length,
+        languageId: /\.shaderdsl\.ts$/i.test(uri.fsPath) ? "parse-text-ts" : /\.snippet\.ts$/i.test(uri.fsPath) ? "ts-snippet" : "typescript",
+        getText(range) { return range ? text.slice(offsetAt(range.start), offsetAt(range.end)) : text; },
+        offsetAt, positionAt,
+        lineAt(line) {
+            const start = starts[line];
+            const end = line + 1 < starts.length ? starts[line + 1] - 1 : text.length;
+            const value = text.slice(start, end).replace(/\r$/, "");
+            return { text: value, range: new vscode.Range(new vscode.Position(line, 0), new vscode.Position(line, value.length)) };
+        },
+    };
+    searchDocumentCache.set(key, { root, mtimeMs: stat.mtimeMs, document });
+    while (searchDocumentCache.size > 24) searchDocumentCache.delete(searchDocumentCache.keys().next().value);
+    return document;
 }
 
 function stripLineComment(line) {
@@ -1174,7 +1285,7 @@ function analyzeDrawBlock(lines, startLine) {
 
 function isParseTextC23Document(document) {
     const fileName = document?.uri?.fsPath || document?.fileName || "";
-    return document?.languageId === "parse-text-ts" && /(?:^|[\\/])parseTextC23\.shaderdsl\.ts$/i.test(fileName);
+    return document?.languageId === "parse-text-ts" && /\.shaderdsl\.ts$/i.test(fileName);
 }
 
 function parseBackupPathReplaceDirective(line) {
@@ -1199,13 +1310,13 @@ function parseBackupPathReplaceDirective(line) {
     }
 }
 
-async function refreshWorkspaceBackupPathReplaceRegistry(force = false) {
+async function refreshWorkspaceBackupPathReplaceRegistry(document, force = false) {
+    const root = getProjectRootPath(document);
+    const current = backupPathReplaceRegistry.get(root);
     const now = Date.now();
-    if (!force && backupPathReplaceRegistry.directives.length && (now - backupPathReplaceRegistry.scannedAt) < BACKUP_PATH_RESCAN_MIN_INTERVAL_MS) {
-        return backupPathReplaceRegistry.directives;
-    }
+    if (!force && current && now - current.scannedAt < BACKUP_PATH_RESCAN_MIN_INTERVAL_MS) return current.directives;
     const directives = [];
-    const uris = await vscode.workspace.findFiles(SHADERDSL_GLOB, SEARCH_EXCLUDE_GLOB);
+    const uris = await vscode.workspace.findFiles(new vscode.RelativePattern(root, SHADERDSL_GLOB), SEARCH_EXCLUDE_GLOB);
     for (const uri of uris) {
         try {
             const bytes = await vscode.workspace.fs.readFile(uri);
@@ -1225,29 +1336,29 @@ async function refreshWorkspaceBackupPathReplaceRegistry(force = false) {
             }
         } catch {}
     }
-    backupPathReplaceRegistry.scannedAt = now;
-    backupPathReplaceRegistry.directives = directives;
+    backupPathReplaceRegistry.set(root, { scannedAt: now, directives, timer: null });
     return directives;
 }
 
-function scheduleWorkspaceBackupPathReplaceRegistryRefresh(force = false, delayMs = 300) {
-    if (backupPathReplaceRegistry.timer) {
-        clearTimeout(backupPathReplaceRegistry.timer);
-    }
-    backupPathReplaceRegistry.timer = setTimeout(async () => {
-        backupPathReplaceRegistry.timer = null;
-        await refreshWorkspaceBackupPathReplaceRegistry(force);
+function scheduleWorkspaceBackupPathReplaceRegistryRefresh(document, force = false, delayMs = 300) {
+    const root = getProjectRootPath(document);
+    const current = backupPathReplaceRegistry.get(root) || { scannedAt: 0, directives: [], timer: null };
+    if (current.timer) clearTimeout(current.timer);
+    current.timer = setTimeout(async () => {
+        current.timer = null;
+        await refreshWorkspaceBackupPathReplaceRegistry(document, force);
         for (const editor of vscode.window.visibleTextEditors) {
-            refreshEditorDecorations(editor);
+            if (getProjectRootPath(editor.document) === root) refreshEditorDecorations(editor);
         }
     }, delayMs);
+    backupPathReplaceRegistry.set(root, current);
 }
 
-function ensureWorkspaceBackupPathReplaceRegistryFresh() {
+function ensureWorkspaceBackupPathReplaceRegistryFresh(document) {
+    const current = backupPathReplaceRegistry.get(getProjectRootPath(document));
     const now = Date.now();
-    if ((now - backupPathReplaceRegistry.scannedAt) >= BACKUP_PATH_RESCAN_MIN_INTERVAL_MS) {
-        scheduleWorkspaceBackupPathReplaceRegistryRefresh(false, 50);
-    }
+    if (!current || now - current.scannedAt >= BACKUP_PATH_RESCAN_MIN_INTERVAL_MS)
+        scheduleWorkspaceBackupPathReplaceRegistryRefresh(document, false, 50);
 }
 
 function handleShaderDslBackupPathReplaceEdit(event) {
@@ -1257,11 +1368,11 @@ function handleShaderDslBackupPathReplaceEdit(event) {
     }
     const touchedDirective = event.contentChanges.some((change) => /backUpPathReplace|parseTextC23|parseTextC2|parseTextC3/.test(change.text || ""));
     if (touchedDirective) {
-        scheduleWorkspaceBackupPathReplaceRegistryRefresh(true, 150);
+        scheduleWorkspaceBackupPathReplaceRegistryRefresh(document, true, 150);
     }
 }
 
-function applyRegisteredBackupPathReplacements(relativeDir) {
+function applyRegisteredBackupPathReplacements(relativeDir, document) {
     const normalized = normalizeBackupHintToRelativeDirectory(relativeDir, "parseTextC23");
     const variants = new Map();
     const [rootSegment, ...restSegments] = normalized.split("/").filter(Boolean);
@@ -1270,7 +1381,7 @@ function applyRegisteredBackupPathReplacements(relativeDir) {
         label: rootSegment || normalized,
         relativeDir: normalized,
     });
-    for (const directive of backupPathReplaceRegistry.directives) {
+    for (const directive of backupPathReplaceRegistry.get(getProjectRootPath(document))?.directives || []) {
         let replaced = normalized;
         try {
             replaced = normalized.replace(directive.regex, directive.replacement);
@@ -1345,9 +1456,13 @@ function getDrawBackupBlockState(document, block) {
             : normalizeBackupHintToRelativeDirectory(block.backUpPathHint, `parseTextC23/${block.programName}`),
         Math.max(1, Number.parseInt(blockState.generation, 10) || 1),
     );
+    const requestedGeneration = Math.max(1, Number.parseInt(blockState.generation, 10) || 1);
+    const generation = backupDirectoryHasDrawFiles(document, block, requestedGeneration, defaultVariantDirectory)
+        ? requestedGeneration
+        : listAvailableBackupGenerationsForBlock(document, block, defaultVariantDirectory)[0];
     return {
         visible: Object.prototype.hasOwnProperty.call(blockState, "visible") ? !!blockState.visible : !!state.defaultVisible,
-        generation: Math.max(1, Number.parseInt(blockState.generation, 10) || 1),
+        generation,
         variantDirectory: defaultVariantDirectory,
         variantOpenMode: blockState.variantOpenMode === "all" ? "all" : "single",
     };
@@ -1425,7 +1540,7 @@ function collectDrawBackupBlocks(text) {
             currentProgram = useMatch[1];
         }
         const drawInfo = parseDrawHeaderInfo(code);
-        if (!currentProgram || !drawInfo?.outputs?.length) {
+        if (!drawInfo) {
             continue;
         }
         const blockInfo = analyzeDrawBlock(lines, lineNo);
@@ -1438,10 +1553,14 @@ function collectDrawBackupBlocks(text) {
                 break;
             }
         }
+        if (!backupPathHint) {
+            lineNo = Math.max(lineNo, blockInfo.endLine);
+            continue;
+        }
         blocks.push({
             key: "",
             drawKind: drawInfo.drawKind,
-            programName: currentProgram,
+            programName: currentProgram || drawInfo.drawKind,
             outputs: drawInfo.outputs,
             startLine: lineNo,
             endLine: blockInfo.endLine,
@@ -1472,9 +1591,9 @@ function findDrawBackupBlockByKey(text, blockKey) {
     return collectDrawBackupBlocks(text).find((block) => block.key === blockKey) || null;
 }
 
-function getBackupVariantOptionsForBlock(block) {
+function getBackupVariantOptionsForBlock(block, document) {
     const baseRelativeDir = normalizeBackupHintToRelativeDirectory(block.backUpPathHint, `parseTextC23/${block.programName}`);
-    const baseOptions = applyRegisteredBackupPathReplacements(baseRelativeDir);
+    const baseOptions = applyRegisteredBackupPathReplacements(baseRelativeDir, document);
     const expanded = [];
     for (const option of baseOptions) {
         expanded.push({
@@ -1529,7 +1648,9 @@ function getFallbackBackupVariantDirectories(relativeDir) {
 function resolveEffectiveBackupVariantDirectory(document, block, preferredVariantDirectory, generation = 1) {
     const preferred = normalizeBackupHintToRelativeDirectory(preferredVariantDirectory || block.backUpPathHint, `parseTextC23/${block.programName}`);
     for (const candidate of getFallbackBackupVariantDirectories(preferred)) {
-        if (backupDirectoryHasDrawFiles(document, block, generation, candidate)) {
+        if (backupDirectoryHasDrawFiles(document, block, generation, candidate) ||
+            listAvailableBackupGenerationsForBlock(document, block, candidate).some((available) =>
+                available !== 1 && backupDirectoryHasDrawFiles(document, block, available, candidate))) {
             return candidate;
         }
     }
@@ -1546,7 +1667,7 @@ function listAvailableBackupGenerations(document, text = document.getText()) {
         }
         generations.add(1);
         for (const entry of fs.readdirSync(baseDir, { withFileTypes: true })) {
-            if (entry.isDirectory() && /^[2-9]\d*$/.test(entry.name)) {
+            if (entry.isDirectory() && /^(?:[2-9]|[1-9]\d+)$/.test(entry.name)) {
                 generations.add(Number.parseInt(entry.name, 10));
             }
         }
@@ -1556,32 +1677,25 @@ function listAvailableBackupGenerations(document, text = document.getText()) {
 
 function listAvailableBackupGenerationsForBlock(document, block, variantDirectory) {
     const fs = require("node:fs");
-    const generations = new Set([1]);
+    const generations = new Set();
     const baseDir = getBackupDirectoryForBlock(document, block, 1, variantDirectory);
     if (!fs.existsSync(baseDir)) {
         return [1];
     }
+    if (backupDirectoryHasDrawFiles(document, block, 1, variantDirectory)) generations.add(1);
     for (const entry of fs.readdirSync(baseDir, { withFileTypes: true })) {
-        if (entry.isDirectory() && /^[2-9]\d*$/.test(entry.name)) {
-            generations.add(Number.parseInt(entry.name, 10));
+        if (entry.isDirectory() && /^(?:[2-9]|[1-9]\d+)$/.test(entry.name)) {
+            const generation = Number(entry.name);
+            if (Number.isSafeInteger(generation) && backupDirectoryHasDrawFiles(document, block, generation, variantDirectory)) {
+                generations.add(generation);
+            }
         }
     }
-    return Array.from(generations).sort((a, b) => a - b);
+    return generations.size ? Array.from(generations).sort((a, b) => a - b) : [1];
 }
 
 function findLatestBackupFile(directory, drawKind, suffix) {
-    const fs = require("node:fs");
-    if (!fs.existsSync(directory)) {
-        return null;
-    }
-    const matcher = new RegExp(`^${escapeRegExp(drawKind)}_${escapeRegExp(suffix)}_\\d{12,14}\\.txt$`, "i");
-    const files = fs.readdirSync(directory)
-        .filter((name) => matcher.test(name))
-        .sort((a, b) => a.localeCompare(b));
-    if (!files.length) {
-        return null;
-    }
-    return require("path").join(directory, files[files.length - 1]);
+    return findLatestBackupFilesByDrawKind(directory, drawKind).find((entry) => entry.suffix === suffix)?.filePath || null;
 }
 
 function findLatestBackupFilesByDrawKind(directory, drawKind) {
@@ -1594,6 +1708,8 @@ function findLatestBackupFilesByDrawKind(directory, drawKind) {
     const directoryStat = fs.statSync(directory);
     const cached = backupDirectoryEntryCache.get(directoryKey);
     if (cached && cached.mtimeMs === directoryStat.mtimeMs) {
+        backupDirectoryEntryCache.delete(directoryKey);
+        backupDirectoryEntryCache.set(directoryKey, cached);
         return cached.entries;
     }
     const matcher = new RegExp(`^${escapeRegExp(drawKind)}_(.+?)_(\\d{12,14})\\.txt$`, "i");
@@ -1619,12 +1735,21 @@ function findLatestBackupFilesByDrawKind(directory, drawKind) {
         mtimeMs: directoryStat.mtimeMs,
         entries,
     });
+    while (backupDirectoryEntryCache.size > 128) backupDirectoryEntryCache.delete(backupDirectoryEntryCache.keys().next().value);
     return entries;
 }
 
 function tryReadBackupJsonPayload(filePath) {
     const fs = require("node:fs");
     try {
+        const stat = fs.statSync(filePath);
+        const mtimeMs = stat.mtimeMs;
+        const cached = backupPayloadCache.get(filePath);
+        if (cached?.mtimeMs === mtimeMs) {
+            backupPayloadCache.delete(filePath);
+            backupPayloadCache.set(filePath, cached);
+            return cached.parsed;
+        }
         const rawLines = fs.readFileSync(filePath, "utf8").split(/\r?\n/);
         for (let index = rawLines.length - 1; index >= 0; index--) {
             const line = rawLines[index].trim();
@@ -1632,8 +1757,35 @@ function tryReadBackupJsonPayload(filePath) {
                 continue;
             }
             const payload = JSON.parse(line);
-            return { payload, jsonLineIndex: index, lines: rawLines };
+            const parsed = { payload, jsonLineIndex: index, lines: rawLines };
+            if (stat.size <= 512 * 1024) {
+                backupPayloadCache.set(filePath, { mtimeMs, parsed });
+                while (backupPayloadCache.size > 6) backupPayloadCache.delete(backupPayloadCache.keys().next().value);
+            }
+            return parsed;
         }
+    } catch {
+        return null;
+    }
+}
+
+function getBackupTexturePreview(filePath) {
+    const fs = require("node:fs");
+    try {
+        const mtimeMs = fs.statSync(filePath).mtimeMs;
+        const cached = backupImageCache.get(filePath);
+        if (cached?.mtimeMs === mtimeMs) {
+            backupImageCache.delete(filePath);
+            backupImageCache.set(filePath, cached);
+            return cached.preview;
+        }
+        const value = tryReadBackupJsonPayload(filePath)?.payload?.value;
+        const image = textureImage(value);
+        if (!image) return null;
+        const preview = { image, size: `${value.w} x ${value.h} | ${value.dim} canal(es)` };
+        backupImageCache.set(filePath, { mtimeMs, preview });
+        while (backupImageCache.size > 12) backupImageCache.delete(backupImageCache.keys().next().value);
+        return preview;
     } catch {
         return null;
     }
@@ -1974,37 +2126,245 @@ async function openDrawBackupPreviewDocument(editor, block) {
 
 function listDisplayedBackupFiles(document, block, state) {
     const directory = getBackupDirectoryForBlock(document, block, state.generation, state.variantDirectory);
+    const entries = findLatestBackupFilesByDrawKind(directory, block.drawKind);
+    const bySuffix = new Map(entries.map((entry) => [entry.suffix, entry.filePath]));
     const files = [];
-    const uniformFile = findLatestBackupFile(directory, block.drawKind, "uniforms");
-    if (uniformFile) {
-        files.push({ label: "uniforms", filePath: uniformFile });
-    }
+    files.push({ label: "uniforms", filePath: bySuffix.get("uniforms") || null });
     if (state.variantOpenMode === "all") {
-        for (const entry of findLatestBackupFilesByDrawKind(directory, block.drawKind).filter((entry) => entry.suffix !== "uniforms")) {
+        const outputs = entries.filter((entry) => entry.suffix !== "uniforms");
+        outputs.sort((a, b) => {
+            const ai = block.outputs.indexOf(a.suffix);
+            const bi = block.outputs.indexOf(b.suffix);
+            return (ai < 0 ? Infinity : ai) - (bi < 0 ? Infinity : bi) || a.suffix.localeCompare(b.suffix);
+        });
+        for (const entry of outputs) {
             files.push({ label: entry.suffix, filePath: entry.filePath });
+        }
+        for (const outputName of block.outputs) {
+            if (!bySuffix.has(outputName)) files.push({ label: outputName, filePath: null });
         }
         return files;
     }
     for (const outputName of block.outputs) {
-        const textureFile = findLatestBackupFile(directory, block.drawKind, outputName);
-        if (textureFile) {
-            files.push({ label: outputName, filePath: textureFile });
-        }
+        files.push({ label: outputName, filePath: bySuffix.get(outputName) || null });
     }
     return files;
+}
+
+function openDrawBackupPanel(editor, block) {
+    const document = editor.document;
+    const initial = getDrawBackupBlockState(document, block);
+    const selection = {
+        variantDirectory: initial.variantDirectory,
+        generation: initial.generation,
+        variantOpenMode: initial.variantOpenMode,
+        selectedFile: block.outputs[0] || "uniforms",
+    };
+    const panel = vscode.window.createWebviewPanel(
+        "shaderdsl.backup",
+        `backUp: ${block.outputs.join(", ") || block.programName}`,
+        { viewColumn: vscode.ViewColumn.Beside, preserveFocus: false },
+        { enableScripts: true, retainContextWhenHidden: false },
+    );
+    backupPanels.add(panel);
+    panel.onDidDispose(() => {
+        backupPanels.delete(panel);
+    });
+    const render = () => {
+        const variants = [...new Map(getBackupVariantOptionsForBlock(block, document).map((item) =>
+            [item.relativeDir, { relativeDir: item.relativeDir, label: item.label.replace(/ open in all$/, "") }])).values()];
+        const generations = listAvailableBackupGenerationsForBlock(document, block, selection.variantDirectory);
+        if (!generations.includes(selection.generation)) selection.generation = generations[0];
+        const files = listDisplayedBackupFiles(document, block, selection).map((file) => {
+            if (!file.filePath) return file;
+            if (file.label === "uniforms") {
+                return { ...file, text: buildUniformBackupCommentLines(document, block, file.filePath).join("\n") };
+            }
+            const preview = getBackupTexturePreview(file.filePath);
+            if (preview) return { ...file, ...preview };
+            const parsed = tryReadBackupJsonPayload(file.filePath);
+            return { ...file, text: parsed?.lines?.join("\n") || require("node:fs").readFileSync(file.filePath, "utf8") };
+        });
+        if (!files.some((file) => file.label === selection.selectedFile && file.filePath)) {
+            selection.selectedFile = files.find((file) => file.filePath)?.label || "";
+        }
+        panel.webview.html = renderBackupPanel({
+            title: block.outputs.join(", ") || block.programName,
+            variants,
+            generations,
+            scope: selection.variantOpenMode,
+            generation: selection.generation,
+            variantDirectory: selection.variantDirectory,
+            selectedFile: selection.selectedFile,
+            files,
+        });
+    };
+    panel.webview.onDidReceiveMessage(async (message) => {
+        if (message?.type === "select") {
+            if (message.field === "path" && getBackupVariantOptionsForBlock(block, document).some((item) => item.relativeDir === message.value)) {
+                selection.variantDirectory = message.value;
+                selection.generation = 1;
+            } else if (message.field === "scope" && ["single", "all"].includes(message.value)) {
+                selection.variantOpenMode = message.value;
+            } else if (message.field === "generation") {
+                const requested = Number(message.value);
+                if (listAvailableBackupGenerationsForBlock(document, block, selection.variantDirectory).includes(requested)) selection.generation = requested;
+            }
+            render();
+        } else if (message?.type === "file") {
+            selection.selectedFile = message.value;
+        } else if (message?.type === "open") {
+            const file = listDisplayedBackupFiles(document, block, selection).find((item) => item.label === message.value && item.filePath);
+            if (file) await showBackupFile(file.filePath);
+        }
+    });
+    render();
+    return panel;
+}
+
+async function showBackupFile(filePath) {
+    const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(filePath));
+    await vscode.window.showTextDocument(doc, { preview: false, preserveFocus: false, viewColumn: vscode.ViewColumn.Beside });
+}
+
+function backupHoverKey(document, block) {
+    return `${document.uri.toString()}::${block.key}`;
+}
+
+function backupHoverLink(label, command, document, block) {
+    const args = encodeURIComponent(JSON.stringify([document.uri.toString(), block.key]));
+    return `[${label}](command:${command}?${args})`;
+}
+
+function backupHoverPageLink(label, document, block, fileLabel, page) {
+    const args = encodeURIComponent(JSON.stringify([document.uri.toString(), block.key, fileLabel, page]));
+    return `[${label}](command:vsTSSnippets.pageDrawBackupFileAtBlock?${args})`;
+}
+
+function backupHoverCode(text) {
+    const fence = "`".repeat(Math.max(3, ...Array.from(String(text).matchAll(/`+/g), (match) => match[0].length + 1)));
+    return `${fence}\n${text}\n${fence}`;
+}
+
+function backupHoverNumber(value) {
+    return value === null ? "n/a" : Number(value).toPrecision(5);
+}
+
+function buildDrawBackupHover(document, block, mode) {
+    const state = getDrawBackupBlockState(document, block);
+    const files = listDisplayedBackupFiles(document, block, state);
+    const md = new vscode.MarkdownString("", true);
+    md.isTrusted = { enabledCommands: [
+        "vsTSSnippets.openDrawBackupPreviewAtBlock",
+        "vsTSSnippets.openDrawBackupBackingFileAtBlock",
+    ] };
+    md.appendMarkdown([
+        backupHoverLink("Open", "vsTSSnippets.openDrawBackupPreviewAtBlock", document, block),
+        backupHoverLink("Open File", "vsTSSnippets.openDrawBackupBackingFileAtBlock", document, block),
+    ].join(" | ") + "\n\n---\n\n");
+    if (!files.some((file) => file.filePath)) {
+        md.appendMarkdown("No backup files for this path and generation.");
+        return new vscode.Hover(md);
+    }
+    if (mode === "files") {
+        for (const file of files) {
+            md.appendMarkdown(`**${file.label.replace(/([\\`*_{}[\]()#+.!|>~-])/g, "\\$1")}** | ${file.filePath ? require("node:path").basename(file.filePath) : "missing"}\n\n`);
+            if (!file.filePath) continue;
+            const fs = require("node:fs");
+            try {
+                const fd = fs.openSync(file.filePath, "r");
+                try {
+                    const size = fs.fstatSync(fd).size;
+                    const pageCount = Math.max(1, Math.ceil(size / 65536));
+                    const pageKey = `${backupHoverKey(document, block)}::${file.label}`;
+                    const page = Math.min(pageCount - 1, backupHoverFilePage.get(pageKey) || 0);
+                    const offset = page * 65536;
+                    const length = Math.min(size - offset, 65536);
+                    const bytes = Buffer.alloc(length);
+                    fs.readSync(fd, bytes, 0, length, offset);
+                    const visible = bytes.toString("utf8").replace(/\r/g, "");
+                    if (pageCount > 1) {
+                        const navigation = [
+                            page > 0 ? backupHoverPageLink("Previous", document, block, file.label, page - 1) : "Previous",
+                            `Page ${page + 1}/${pageCount}`,
+                            page + 1 < pageCount ? backupHoverPageLink("Next", document, block, file.label, page + 1) : "Next",
+                        ];
+                        md.appendMarkdown(navigation.join(" | ") + "\n\n");
+                    }
+                    md.appendMarkdown(backupHoverCode(visible) + "\n\n");
+                } finally {
+                    fs.closeSync(fd);
+                }
+            } catch {
+                md.appendMarkdown("The backup file was replaced while this hover was loading.\n\n");
+            }
+        }
+        return new vscode.Hover(md);
+    }
+    for (const file of files) {
+        md.appendMarkdown(`**${file.label.replace(/([\\`*_{}[\]()#+.!|>~-])/g, "\\$1")}**\n\n`);
+        if (!file.filePath) {
+            md.appendMarkdown("Backup output is missing.\n\n");
+            continue;
+        }
+        if (file.label === "uniforms") {
+            if (mode !== "images") md.appendMarkdown(backupHoverCode(buildUniformBackupCommentLines(document, block, file.filePath).join("\n")) + "\n\n");
+            else md.appendMarkdown("Uniform values are available in Details.\n\n");
+            continue;
+        }
+        const preview = getBackupTexturePreview(file.filePath);
+        if (!preview) {
+            const parsed = tryReadBackupJsonPayload(file.filePath);
+            md.appendMarkdown(backupHoverCode(parsed?.lines?.join("\n") || "No texture data in this file.") + "\n\n");
+            continue;
+        }
+        const { image } = preview;
+        md.appendMarkdown(`${preview.size}\n\n`);
+        md.appendMarkdown(`![${file.label}](${image.uri})\n\n`);
+        const legend = image.ranges.map((range) => `${range.name}: ${backupHoverNumber(range.min)} to ${backupHoverNumber(range.max)}`).join(" | ");
+        md.appendMarkdown(`Color scale: ${legend}. Each color channel maps its minimum to 0 and maximum to 255; a constant nonzero channel uses 255. R is grayscale, RG is red/green, and RGB uses red/green/blue. RGBA alpha uses its original 0-1 value over a checkerboard.\n\n`);
+    }
+    return new vscode.Hover(md);
+}
+
+function provideDrawBackupHover(document, position) {
+    if (!isParseTextC23Document(document)) return null;
+    const line = document.lineAt(position.line).text;
+    const token = line.match(/\bbackUp\s*:/);
+    const onBackup = token && position.character >= token.index && position.character <= token.index + token[0].length;
+    if (!onBackup) return null;
+    const block = getCachedDrawBackupBlocks(document).find((item) => position.line >= item.startLine && position.line <= item.endLine);
+    if (!block) return null;
+    return buildDrawBackupHover(document, block, "details");
+}
+
+async function showDrawBackupHover(editor, block, mode) {
+    backupHoverModeByDocument.set(backupHoverKey(editor.document, block), mode);
+    let target = editor.document.lineAt(block.endLine).range.end;
+    for (let lineNo = block.startLine; lineNo <= block.endLine; lineNo++) {
+        const match = editor.document.lineAt(lineNo).text.match(/\bbackUp\s*:/);
+        if (match) {
+            target = new vscode.Position(lineNo, match.index + 2);
+            break;
+        }
+    }
+    editor.selection = new vscode.Selection(target, target);
+    editor.revealRange(new vscode.Range(target, target));
+    return vscode.commands.executeCommand("editor.action.showHover");
 }
 
 async function openDrawBackupBackingFile(editor, block) {
     const state = getDrawBackupBlockState(editor.document, block);
     const files = listDisplayedBackupFiles(editor.document, block, state);
-    if (!files.length) {
+    const available = files.filter((file) => file.filePath);
+    if (!available.length) {
         vscode.window.showInformationMessage("No backup file exists yet for this draw block.");
         return;
     }
-    let target = files[0];
-    if (files.length > 1) {
+    let target = available[0];
+    if (available.length > 1) {
         const picked = await vscode.window.showQuickPick(
-            files.map((item) => ({
+            available.map((item) => ({
                 label: item.label,
                 description: item.filePath,
                 filePath: item.filePath,
@@ -2019,12 +2379,7 @@ async function openDrawBackupBackingFile(editor, block) {
         }
         target = { label: picked.label, filePath: picked.filePath };
     }
-    const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(target.filePath));
-    await vscode.window.showTextDocument(doc, {
-        preview: false,
-        preserveFocus: false,
-        viewColumn: vscode.ViewColumn.Beside,
-    });
+    await showBackupFile(target.filePath);
 }
 
 function buildDrawBackupPreviewOptions(editor, text) {
@@ -2032,45 +2387,25 @@ function buildDrawBackupPreviewOptions(editor, text) {
 }
 
 function buildDrawBackupInlayHints(document, text) {
-    ensureWorkspaceBackupPathReplaceRegistryFresh();
+    ensureWorkspaceBackupPathReplaceRegistryFresh(document);
     return getCachedDrawBackupBlocks(document, text).map((block) => {
         const position = document.lineAt(block.endLine).range.end;
-        const state = getDrawBackupBlockState(document, block);
-        const showHideLabel = state.visible ? "Hide<" : "Show";
         const hint = new vscode.InlayHint(position, [
             {
-                value: `  ${showHideLabel}`,
-                tooltip: state.visible ? "Hide this draw backUp preview" : "Show this draw backUp preview",
+                value: "  Open",
+                tooltip: "Show backup details here",
                 command: {
-                    title: "Toggle Draw backUp Preview",
-                    command: "vsTSSnippets.toggleDrawBackupPreviewAtBlock",
-                    arguments: [document.uri.toString(), block.key],
-                },
-            },
-            {
-                value: " | Open",
-                tooltip: "Open the full draw backUp preview document",
-                command: {
-                    title: "Open Draw backUp Preview",
+                    title: "Show Draw backUp Details",
                     command: "vsTSSnippets.openDrawBackupPreviewAtBlock",
                     arguments: [document.uri.toString(), block.key],
                 },
             },
             {
                 value: " | Open File",
-                tooltip: "Open one of the concrete backup files behind this preview",
+                tooltip: "Open a backup file in the editor",
                 command: {
                     title: "Open Draw backUp File",
-                    command: "vsTSSnippets.openDrawBackupFileAtBlock",
-                    arguments: [document.uri.toString(), block.key],
-                },
-            },
-            {
-                value: " | Options",
-                tooltip: "Open the draw backUp options menu",
-                command: {
-                    title: "Show Draw backUp Options",
-                    command: "vsTSSnippets.showDrawBackupOptionsAtBlock",
+                    command: "vsTSSnippets.openDrawBackupBackingFileAtBlock",
                     arguments: [document.uri.toString(), block.key],
                 },
             },
@@ -2091,25 +2426,6 @@ function makeCodeLens(line, command, title, args = []) {
     );
 }
 
-function makeTextCodeLens(line, title) {
-    return makeCodeLens(line, "vsTSSnippets.noop", title, []);
-}
-
-function pushDrawBackupTextCodeLenses(lenses, document, block, state, startLine) {
-    const text = buildDrawBackupCommentText(
-        document,
-        block,
-        state.generation,
-        state.variantDirectory,
-        state.variantOpenMode,
-    );
-    const lines = text.split(/\r?\n/);
-    for (let index = 0; index < lines.length; index++) {
-        const line = Math.min(startLine + index, Math.max(0, document.lineCount - 1));
-        lenses.push(makeTextCodeLens(line, lines[index]));
-    }
-}
-
 function buildDrawBackupCodeLenses(document, text) {
     const blocks = getCachedDrawBackupBlocks(document, text);
     const lenses = [];
@@ -2124,9 +2440,6 @@ function buildDrawBackupCodeLenses(document, text) {
             makeCodeLens(rowLine, "vsTSSnippets.toggleDrawBackupScopeAtBlock", `Scope: ${scopeLabel}`, [document.uri.toString(), block.key]),
             makeCodeLens(rowLine, "vsTSSnippets.selectDrawBackupGenerationAtBlock", `Gen: ${generationLabel}`, [document.uri.toString(), block.key]),
         );
-        if (state.visible) {
-            pushDrawBackupTextCodeLenses(lenses, document, block, state, block.endLine + 1);
-        }
     }
     return lenses;
 }
@@ -2152,11 +2465,10 @@ async function showDrawBackupGenerationPicker(editor, block) {
     if (!picked) {
         return;
     }
-    updateDrawBackupBlockState(editor.document, block.key, {
-        visible: true,
+    synchronizeDrawBackupSelection(editor, block, {
         generation: picked.generation,
     });
-    refreshDrawBackupUi(editor);
+    await showDrawBackupHover(editor, block, backupHoverModeByDocument.get(backupHoverKey(editor.document, block)) || "details");
 }
 
 async function showDrawBackupOptionsPicker(editor, block) {
@@ -2178,10 +2490,10 @@ async function showDrawBackupOptionsPicker(editor, block) {
 }
 
 async function showDrawBackupVariantPicker(editor, block) {
-    await refreshWorkspaceBackupPathReplaceRegistry(false);
+    await refreshWorkspaceBackupPathReplaceRegistry(editor.document, false);
     const currentState = getDrawBackupBlockState(editor.document, block);
     const picked = await vscode.window.showQuickPick(
-        getBackupVariantOptionsForBlock(block).map((option) => ({
+        getBackupVariantOptionsForBlock(block, editor.document).map((option) => ({
             label: option.label,
             description: option.relativeDir === currentState.variantDirectory && option.openMode === currentState.variantOpenMode
                 ? "current"
@@ -2197,12 +2509,11 @@ async function showDrawBackupVariantPicker(editor, block) {
     if (!picked) {
         return;
     }
-    updateDrawBackupBlockState(editor.document, block.key, {
-        visible: true,
+    synchronizeDrawBackupSelection(editor, block, {
         variantDirectory: picked.relativeDir,
         variantOpenMode: picked.openMode,
     });
-    refreshDrawBackupUi(editor);
+    await showDrawBackupHover(editor, block, backupHoverModeByDocument.get(backupHoverKey(editor.document, block)) || "details");
 }
 
 function refreshDrawBackupUi(editor) {
@@ -2213,6 +2524,38 @@ function refreshDrawBackupUi(editor) {
         if (document.uri.scheme === DRAW_BACKUP_PREVIEW_SCHEME) {
             drawBackupPreviewDocumentEmitter.fire(document.uri);
         }
+    }
+}
+
+function synchronizeDrawBackupSelection(editor, block, patch) {
+    const desiredPath = patch.variantDirectory
+        ? buildDrawBackupVariantBaseLabel({ variantDirectory: patch.variantDirectory }, block)
+        : null;
+    const seen = new Set();
+    for (const visibleEditor of vscode.window.visibleTextEditors) {
+        const document = visibleEditor.document;
+        const uri = document.uri.toString();
+        if (!isParseTextC23Document(document) || seen.has(uri)) continue;
+        seen.add(uri);
+        const state = getBackupPreviewState(document);
+        for (const item of getCachedDrawBackupBlocks(document)) {
+            const previous = state.blocks[item.key] || {};
+            let variantDirectory = previous.variantDirectory || "";
+            if (desiredPath) {
+                const choice = getBackupVariantOptionsForBlock(item, document).find((option) =>
+                    buildDrawBackupVariantBaseLabel({ variantDirectory: option.relativeDir }, item) === desiredPath &&
+                    option.openMode === (patch.variantOpenMode || "single"));
+                if (choice) variantDirectory = choice.relativeDir;
+            }
+            state.blocks[item.key] = {
+                ...previous,
+                generation: patch.generation ?? previous.generation ?? 1,
+                variantOpenMode: patch.variantOpenMode ?? previous.variantOpenMode ?? "single",
+                variantDirectory,
+            };
+        }
+        setBackupPreviewState(document, state);
+        refreshDrawBackupUi(visibleEditor);
     }
 }
 
@@ -4614,6 +4957,7 @@ function findDslDefinition(document, symbol) {
 
 async function getSearchDocuments(currentDocument, options = {}) {
     const family = options.family || "code";
+    const projectRoot = getProjectRootPath(currentDocument);
     const includeGlobs = family === "dsl-first"
         ? ["**/*.shaderdsl.ts", "**/*.snippet.ts"]
         : ["**/*.shaderdsl.ts", "**/*.snippet.ts", "**/*.ts", "**/*.tsx", "**/*.js", "**/*.mjs", "**/*.cjs"];
@@ -4623,6 +4967,7 @@ async function getSearchDocuments(currentDocument, options = {}) {
 
     for (const doc of vscode.workspace.textDocuments) {
         if (!isSearchableCodeDocument(doc)) continue;
+        if (getProjectRootPath(doc) !== projectRoot) continue;
         const key = doc.uri.toString();
         if (seen.has(key)) continue;
         docs.push(doc);
@@ -4637,7 +4982,8 @@ async function getSearchDocuments(currentDocument, options = {}) {
                 continue;
             }
             try {
-                const doc = await vscode.workspace.openTextDocument(uri);
+                const open = vscode.workspace.textDocuments.find((document) => document.uri.toString() === key);
+                const doc = open || diskDocumentSnapshot(uri, projectRoot);
                 docs.push(doc);
                 seen.add(key);
             } catch {}

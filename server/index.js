@@ -151,7 +151,7 @@ const removeNumericGenerationDirectories = async (dir) => {
   } catch {
     return;
   }
-  const numericDirectories = entries.filter((entry) => entry.isDirectory() && /^[2-9]\d*$/.test(entry.name));
+  const numericDirectories = entries.filter((entry) => entry.isDirectory() && /^(?:[2-9]|[1-9]\d+)$/.test(entry.name));
   await Promise.all(numericDirectories.map(async (entry) => {
     const fullPath = path.join(dir, entry.name);
     await removeDirectoryContents(fullPath);

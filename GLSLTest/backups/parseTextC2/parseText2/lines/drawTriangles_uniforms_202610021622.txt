@@ -1,0 +1,1 @@
+{"source":"drawTriangles","savedAt":"2026-10-02T14:22:38.180Z","entries":[{"kind":"uniform","name":"offsetX","varName":"offsetX","value":0},{"kind":"uniform","name":"offsetY","varName":"offsetY","value":0}]}

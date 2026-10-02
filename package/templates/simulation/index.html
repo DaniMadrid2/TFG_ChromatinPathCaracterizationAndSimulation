@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Campos Shader DSL</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; background: #101d23; color: #eff7f4; font: 16px system-ui; }
+    main { max-width: 1180px; margin: 0 auto; padding: 24px; }
+    h1 { margin: 0 0 8px; font-size: 25px; }
+    p { margin: 0 0 22px; color: #b8cbc8; }
+    .fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; }
+    canvas { display: block; width: 100%; height: auto; aspect-ratio: 1; background: #102933; cursor: crosshair; }
+    @media (max-width: 760px) { .fields { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Dos campos acoplados</h1>
+    <p>Haz clic izquierdo en cualquiera de los campos para inyectar ese campo.</p>
+    <div class="fields">
+      <canvas id="field-c1" width="512" height="512"></canvas>
+      <canvas id="field-c2" width="512" height="512"></canvas>
+    </div>
+  </main>
+  <script type="module" src="./generated/generatedParserC1.js"></script>
+  <script type="module" src="./generated/generatedParserC2.js"></script>
+</body>
+</html>

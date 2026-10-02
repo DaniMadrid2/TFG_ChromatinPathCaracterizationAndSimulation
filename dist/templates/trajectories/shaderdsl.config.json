@@ -1,0 +1,5 @@
+{
+  "snippets": [
+    { "file": "parser_snippets/shared/drawResult.snippet.ts", "at": "post" }
+  ]
+}

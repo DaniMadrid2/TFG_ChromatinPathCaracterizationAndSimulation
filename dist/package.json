@@ -1,0 +1,26 @@
+{
+  "name": "dnti_shaderdsl",
+  "version": "0.1.0",
+  "description": "Shader DSL parser and browser bundle generator",
+  "main": "runner.cjs",
+  "bin": {
+    "dnti_shaderdsl": "./cli.cjs"
+  },
+  "files": [
+    "cli.cjs",
+    "runner.cjs",
+    "watch.cjs",
+    "initializer.cjs",
+    "parser.cjs",
+    "lib",
+    "templates",
+    "README.md",
+    "EXTENSION_SYNTAX_PENDING.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "esbuild": "0.28.2"
+  }
+}

@@ -1,0 +1,1 @@
+drawTrajectory(canvas, renderCanvas, trajectory);

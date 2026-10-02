@@ -1,0 +1,1707 @@
+import {Camera2D, createCanvas, createLayer, GameObject, ImgLoader, ModernCtx, Scene,MouseManager, ListenerManager, openFullscreen, keypress, mousepos, mouseclick, KeyManager, W, H, MCTX} from "../Game/Game.js";
+import { Matrix2D, MatrixStack2D, Vector2D, Vector3D } from "../Matrix/Matrix.js";
+import {loadShaders, loadShadersFromString} 
+    from "../opengl/opengl.js"
+import {Funcion, Arrow, Field,Axis,Axis2D,Funcion2D,Funcion3D,MatrixObject,axisprops,addMapStyle,mapstyle, setMapStyle,
+    Waiter, Changer, PosChanger, NearPosChanger, ChangerArr, MathFs, KeyWaiter, TimeWaiter, LogerW,
+    Easer, Handler, PosChangerByRotation,
+    EaserConstant, Ellipse
+ } from "../MathRender/MathRender.js"
+import {addFunc, start, startAsync, stop, Timer} from "../Start/start.js"
+import { MathJaxLoader } from "../MathJax/MathJax.js";
+
+import { Axis3DGroup, MeshRenderingProgram, MeshFillerProgram } from "./webglCapsules.js";
+import { Camera3D } from "../Game3D/Game3D.js";
+import { WebGLMan, WebProgram, BindableTexture, parseTexUnitType, TexExamples } from "./webglMan.js";
+
+// export class DetailedParser{
+//     static context:{
+//             vars:any[],
+//             lookUpNames:{obj:any,names:any[]}[]&
+//                 {add:(obj:any,...names)=>void},
+//             blockName:string[],
+//         };
+//     static parse(str:string, gl: WebGL2RenderingContext) {
+//         DetailedParser.context={
+//             vars:[],
+//             lookUpNames:[] as any,
+//             blockName:[],
+//         };
+//         DetailedParser.context.lookUpNames.add=
+//             (obj:any,...names)=>{(DetailedParser.ctx.lookUpNames).push({obj,names})};
+
+        
+//         let lines=(str as any)
+//         .replaceAll("//.*$","")
+//         .replace(/\n(?!\n)/gm, " ") //only 1 \n
+//         .replaceAll("\t","    ")
+//         .split(/[(\n{2..});]/gm) as string[];
+//         let isBlock=false;
+//         for (let i = 0; i < lines.length; i++) {
+//             const line = lines[i];
+
+//             let result;
+//             //name{
+//             if(result=line.match(/^\s*([a-zA-Z]+)\{\s*$/)){
+//                 isBlock=true;
+//                 DetailedParser.ctx.blockName.push(result[1]);
+//             }
+//             //}
+//             if(isBlock&&(result=line.match(/^\s*\}\s*$/))){
+//                 isBlock=false;
+//                 DetailedParser.ctx.blockName.pop();
+//                 continue;
+//             }
+            
+//             //run only 1 parse
+//             if(DetailedParser.parseObjectDef(line)) continue;
+//             if(DetailedParser.parseFncCall(line)) continue;
+//         }
+//     }
+//     static get ctx(){
+//         return DetailedParser.context;
+//     }
+//     static parseObjectDef(line:string):boolean{
+
+//         return false;
+//     }
+//     static parseFncCall(line:string):boolean{
+
+//         return false;
+//     }
+// }
+
+
+//casos de uso, pedido, se lo lleva el camarero
+
+
+//GoogleAI
+
+// Simulación de registros omitidos por brevedad...
+
+
+
+export class DetailedParser {
+    // 1. Definimos el contexto estático global de forma limpia
+    static GlobalContext = {
+        // Clases del usuario (de tus imports)
+        MeshRenderingProgram,
+        MeshFillerProgram,
+        Axis3DGroup,
+        Camera3D,
+        Vector3D,
+        KeyManager,
+        openFullscreen,
+        addFunc,
+        W, H, gl: null as WebGL2RenderingContext|null,
+        keypress, mousepos, mouseclick,
+        cam: undefined as Camera2D|Camera3D,
+        WebProgram, WebGLMan, TexExamples,
+    };
+    
+    // 2. Usamos el nombre completo de la clase para acceder a GlobalContext
+    static ObjectRegistry: Record<string, (params: Map<string | number, any>, gl: WebGL2RenderingContext) => any> = {
+        'Program': (params, gl) => {
+            if(!WebGLMan.stWebGLMan.gl)
+                WebGLMan.setGL(gl);
+            let program=DetailedParser.gctx.WebGLMan.program(-1, params.get(0)||params.get("firstAlias"));
+            
+            DetailedParser.lastUsedProgram=program;
+            return program;
+        },
+        'MeshProgram': (params, gl) => {
+            let program=new DetailedParser.gctx.MeshRenderingProgram(gl, 
+                params.get('input'), 
+                params.get(0)[0], 
+                params.get(0)[1]
+            ).includeInWebManList()
+            
+            DetailedParser.lastUsedProgram=program;
+            return program;
+        },
+        'MeshFillerProgram': async (params, gl) => {
+            let program=new DetailedParser.gctx.MeshFillerProgram(gl, 
+                params.get(0), 
+            ).includeInWebManList()
+
+            // console.log("generating FillerProgram", params)
+            if(params.get(1)){    
+                program.generateProgram(params.get(1) as string, DetailedParser.ctx.vars, DetailedParser.GlobalContext)
+                await program.loadProgram()
+            }
+
+            if(!DetailedParser.lastFillerProgram){
+                DetailedParser.lastFillerProgram=program;
+            }
+            return program;
+        },
+        'Axis3DGroup': (params, gl) => 
+            new DetailedParser.gctx.Axis3DGroup(gl, 
+                params.get('axisLength'), 
+                params.get('drawArrows'), 
+                params.get('heights'), 
+                params.get('radii'), 
+                params.get('planes')
+            ).includeInWebManList(),
+        'Camera3D': (params, gl) => {
+            let cam=new DetailedParser.gctx.Camera3D(
+                params.get('pos'), params.get("fov"),
+                params.get("aspectRatio")||params.get("ratio"),
+                params.get("near"), params.get("far"),
+                params.get("walkspeed")||params.get("speed")
+            );
+            if(!DetailedParser.gctx.cam){
+                DetailedParser.gctx.cam=cam;
+            }
+            return cam;
+        }
+        
+    };
+
+    // --- Utilidad interna para procesar el cuerpo de las funciones matemáticas ---
+    static prepareMathFunction = (callbackString) => {
+        // 1. Detectar variables entre llaves {varName}
+        const contextVars = [...new Set(callbackString.match(/\{(\w+)\}/g) || [])]
+            .map(v => (v as any).replace(/[{}]/g, ""));
+
+        // 2. Limpiar cuerpo (Quitar llaves: {camera3D} -> camera3D)
+        let bodyPrepared = callbackString.replace(/{(\w+)}/g, '$1');
+
+        // 3. Parsear Función Flecha
+        const arrowMatch = bodyPrepared.match(/^(?:\(([^)]*)\)|([^=\s]+))\s*=>\s*([\s\S]*)$/);
+        let userArgs = ['x', 'y'], body = bodyPrepared;
+
+        if (arrowMatch) {
+            const argsStr = arrowMatch[1] || arrowMatch[2] || "";
+            userArgs = argsStr ? argsStr.split(',').map(a => a.trim()) : [];
+            body = arrowMatch[3].trim();
+            if (body.startsWith('{') && body.endsWith('}')) {
+                body = body.substring(1, body.length - 1).trim();
+            }
+        }
+
+        // 4. Parser de Potencias Avanzado (Soporta ?. y paréntesis balanceados)
+        function replacePowers(str) {
+            while (str.indexOf('**') !== -1) {
+                let index = str.indexOf('**');
+                let left = index - 1, base = "", pCount = 0;
+                if (str[left] === ')') {
+                    let j = left;
+                    for (; j >= 0; j--) {
+                        if (str[j] === ')') pCount++;
+                        if (str[j] === '(') pCount--;
+                        if (pCount === 0) break;
+                    }
+                    base = str.substring(j, left + 1);
+                } else {
+                    let match = str.substring(0, index).match(/([\w\.\$\?]+)$/);
+                    base = match ? match[0] : "";
+                }
+                let right = index + 2, exponent = "", epCount = 0;
+                if (str[right] === '(') {
+                    let j = right;
+                    for (; j < str.length; j++) {
+                        if (str[j] === '(') epCount++;
+                        if (str[j] === ')') epCount--;
+                        if (epCount === 0) break;
+                    }
+                    exponent = str.substring(right, j + 1);
+                } else {
+                    let match = str.substring(right).match(/^([\w\.\$\?]+)/);
+                    exponent = match ? match[0] : "";
+                }
+                str = str.replace(base + "**" + exponent, `Math.pow(${base},${exponent})`);
+            }
+            return str;
+        }
+
+        let cleanBody = replacePowers(body);
+        cleanBody = cleanBody.replace(/(?<!\.)\b(sin|cos|tan|exp|floor|ceil|min|max|round|random|abs|pow|sqrt|atan2|log|PI)\b/g, 'Math.$1');
+
+        try {
+            const finalArgs = [...userArgs, ...contextVars];
+            const hasLogic = cleanBody.includes('return') || cleanBody.includes('if') || cleanBody.includes(';');
+            const finalBody = hasLogic ? cleanBody : `return ${cleanBody}`;
+
+            const compiledFunc = new Function(...finalArgs, finalBody);
+            
+            // Retornamos el wrapper que inyecta el contexto en cada llamada
+            return (...callArgs) => {
+                // if(Math.random()<0.00001){
+                // console.log(DetailedParser.getVar(contextVars[0]).position)
+                // }
+                const currentContextValues = contextVars.map(varName => DetailedParser.getVar(varName));
+                return compiledFunc(...callArgs, ...currentContextValues);
+            };
+        } catch (e) {
+            throw new Error(`Error sintáctico en función matemática: ${e.message} -> ${cleanBody}`);
+        }
+    };
+
+
+    static FunctionRegistry: Record<string, (params: Map<string | number, any>, gl: WebGL2RenderingContext) => any> = {
+        
+        'createIdealMesh': (params, gl) => {
+            // 1. Re-ensamblar callback
+            let allParts = [];
+            let k = 1;
+            while (params.has(k)) { allParts.push(params.get(k)); k++; }
+            let callbackString = allParts.join(' ').trim().replace(/;$/, "");
+
+            try {
+                const func = DetailedParser.prepareMathFunction(callbackString);
+                if (!DetailedParser.lastUsedProgram) return;
+
+                // Llama a createIdealTexture (Crea y rellena)
+                let texture = DetailedParser.lastUsedProgram.createIdealTexture(params.get(0), func);
+                
+                const texID = params.get(0).toString().match(/\d+/);
+                (texture as any).lastPreparedFunc=callbackString;
+                DetailedParser.ctx.vars.set("texture" + (texID ? texID : ""), texture);
+                (DetailedParser.ctx.vars.get("texture" + (texID ? texID : "")) as any)
+                .func=func;
+                // console.log(`createIdealMesh: Textura ${params.get(0)} creada y guardada.`);
+                return texture;
+            } catch (e) {
+                console.error(e.message);
+            }
+        },
+
+        'fillMeshTexture': (params, gl) => {
+            // params(0) es la textura ya existente, params(1...n) es el callback
+            const targetTexture = DetailedParser.getVar(params.get(0));
+            if (!targetTexture) {
+                console.error(`fillMeshTexture: No se encontró la variable ${params.get(0)}`);
+                return;
+            }
+            const texID=targetTexture.unit;
+
+            let allParts = [];
+            let k = 1;
+            while (params.has(k)) { allParts.push(params.get(k)); k++; }
+            let callbackString = allParts.join(' ').trim().replace(/;$/, "");
+
+            if((targetTexture as any).lastPreparedFunc!=callbackString){
+                const func = DetailedParser.prepareMathFunction(callbackString);
+                (targetTexture as any).func=func;
+                (targetTexture as any).lastPreparedFunc=callbackString;
+            }
+
+            try {
+                let func=(DetailedParser.ctx.vars.get("texture" + (texID ? texID : "")) as any)
+                .func;
+                if(!func)
+                    func = DetailedParser.prepareMathFunction(callbackString);
+                
+                if (!DetailedParser.lastUsedProgram) return;
+
+                // Llama a fillMeshTexture (Solo rellena una textura existente)
+                DetailedParser.lastUsedProgram.fillMeshTexture(targetTexture, func);
+                // console.log(`fillMeshTexture: Textura ${params.get(0)} actualizada.`);
+            } catch (e) {
+                console.error(e.message);
+            }
+        },
+        'draw': (params, gl) => {
+            const obj = DetailedParser.getVar(params.get(0));
+            // console.log(params.get(0),params.get(1),params.get(2));
+            if (obj && DetailedParser.getVar("camera3D")) {
+                DetailedParser.lastUsedProgram.use();
+                DetailedParser.getVar("camera3D").calculateMatrices();
+                DetailedParser.lastUsedProgram.draw(0,0,params.get(1),params.get(2), params.get(3))
+                // const camera = (DetailedParser.gctx as any).camera; 
+                // if (camera) {
+                //     obj.draw(0, 0, DetailedParser.gctx.W, DetailedParser.gctx.H, camera);
+                // }
+            }
+        },
+        'viewport': (params, gl) => {
+            let program=DetailedParser.lastUsedProgram;
+            let viewPort;
+            let p0txt=params.get(0);
+            if(!p0txt.startsWith("{")){
+                p0txt="{"+p0txt+"}";
+            }
+            let p0=DetailedParser.parseValue(p0txt);
+            let p1=params.get(1);
+            if(p0?.isWebProgram?.()){
+                program=p0;
+                Array.isArray(p1)
+                    viewPort=p1;
+            }else if(Array.isArray(p0)){
+                viewPort=params.get(0);
+            }
+            if(!viewPort) return;
+            program.use();
+            program.setViewport(...viewPort);
+        },
+        'depthTest': (params, gl) => {
+            if (DetailedParser.lastUsedProgram) {
+                // Asumimos que lastUsedProgram tiene la propiedad isDepthTest
+                DetailedParser.lastUsedProgram.isDepthTest = params.get(0);
+            }
+        },
+        'start': (params, gl) => {
+            // console.log("started")
+            start();
+        },
+        'startAsync': (params, gl) => {
+            // console.log("started")
+            startAsync();
+        },
+        'log': (params, gl) => {
+            // console.log("[Log]",...[params.get(0),params.get(1)].filter((x,i)=>i==0||!!x) );
+        },
+        'let': (params, gl) => {
+            let a=params.get("match0");
+            let b=params.get(params.get("match0"));
+            // console.log("Let variable",a,b)
+            if(b===undefined){
+                DetailedParser.ctx.vars.set(a,null);
+                return;
+            }
+            DetailedParser.ctx.vars.set(a.trim(),b);
+            // console.log(a,"now is",b,Object.fromEntries(DetailedParser.ctx.vars));
+            return;
+        },
+        'lduse': async (params, gl) => {
+            // Manejamos 'use programName' aquí
+            const obj = DetailedParser.getVar(params.get(0));
+            if (obj && typeof obj.use === 'function' && typeof obj.loadProgram === 'function') {
+                await obj.loadProgram();
+                obj.use();
+                DetailedParser.lastUsedProgram = obj;
+                // console.log(`[RegUse] Usando y cargando programa: ${params.get(0)}`);
+                return obj;
+            }
+        },
+        'use': async (params, gl) => {
+            // Manejamos 'use programName' aquí
+            const obj = DetailedParser.getVar(params.get(0));
+            if (obj && typeof obj.use === 'function') {
+                obj.use();
+                DetailedParser.lastUsedProgram = obj;
+                // console.log(`[RegUse] Usando programa: ${params.get(0)}`);
+                return obj;
+            }
+        },
+        ...['uMat4', 'uMat3', 'uMat2', 'uVec', 'uNum', 'uFloat', 'uInt'].reduce((acc, fnName) => {
+            acc[fnName] = (params, gl) => {
+                const program = DetailedParser.lastUsedProgram;
+                if (!program) return;
+
+                const name = params.get(0);
+                let args = [name];
+
+                // Configuración de argumentos según el tipo de uniform
+                if (fnName === 'uVec') {
+                    args = [name, params.get("dim") ?? params.get("dimension"),
+                        params.get("isFloat") ?? true, params.get("isUnsignedInt") ?? false];
+                } else if (fnName === 'uNum') {
+                    args = [name, 
+                        params.get("isFloat") ?? true, params.get("isUnsignedInt") ?? false];
+                }
+
+                //program.uVec|uInt ->
+                const uniformObj = program[fnName](...args);
+                DetailedParser.ctx.vars.set(`u_${name}`, uniformObj);
+
+                // Si hay un valor extra (posicional o al final), ejecutar .set()
+                // Buscamos el primer índice después de los argumentos de configuración
+                const potentialValueIdx = args.length;
+                if (params.has(2)) {
+                    uniformObj.set(params.get(potentialValueIdx));
+                }
+
+                return uniformObj;
+            };
+            return acc;
+        }, {}),
+
+        // --- Operaciones de Buffer ---
+        'cFrameBuffer': (params, gl) => {
+            return DetailedParser.lastUsedProgram?.cFrameBuffer();
+        },
+        'unbindFrameBuffer': (params, gl) => {
+            return DetailedParser.lastUsedProgram?.unbindFrameBuffer();
+        },
+        'unbindFBO': (params, gl) => {
+            return DetailedParser.lastUsedProgram?.unbindFBO();
+        },
+
+        // --- Dibujo Avanzado ---
+        'drawArrays': (params, gl) => {
+            const program = DetailedParser.lastUsedProgram;
+            if (!program) return;
+
+            const modeStr = params.get(0) || "TRIANGLES";
+            const mode = gl[modeStr.toUpperCase()] || gl.TRIANGLES;
+
+            // Alias: off=0, vCount|length|vertexCount=3
+            const vaoOff = params.get('off') ?? params.get(1) ?? 0;
+            const vertexCount = params.get('vCount') ?? params.get('length') ?? params.get('vertexCount') ?? params.get(2);
+            const instanceCount = params.get('instances') ?? params.get('instanceCount') ?? params.get(3) ?? 1;
+
+            return program.drawArrays(mode, vaoOff, vertexCount, instanceCount);
+        },
+
+        'drawElements': (params, gl) => {
+            const program = DetailedParser.lastUsedProgram;
+            if (!program) return;
+
+            const modeStr = params.get(0) || "TRIANGLES";
+            const mode = gl[modeStr.toUpperCase()] || gl.TRIANGLES;
+
+            // Alias: elCount|elementCount
+            const elementCount = params.get('elCount') ?? params.get('elementCount') ?? params.get(1) ?? (program.VAO?.eboLength);
+
+            // Alias: type (UB, US, UI)
+            const rawType = params.get('type') ?? params.get(2) ?? "US";
+            const typeMap = { "UB": "UNSIGNED_BYTE", "US": "UNSIGNED_SHORT", "UI": "UNSIGNED_INT" };
+            const type = typeMap[rawType] || rawType || "UNSIGNED_SHORT";
+
+            // Alias: off|eboOff
+            const eboOff = params.get('off') ?? params.get('eboOff') ?? params.get(3) ?? 0;
+            const instanceCount = params.get('instances') ?? params.get('instanceCount') ?? params.get(4) ?? 0;
+
+            return program.drawElements(mode, elementCount, type, eboOff, instanceCount);
+        },
+        'texture2DArray': (params, gl) => {
+            let sx=0, sy=0, sz=0;
+            let sizeParam=params.get(4);
+            if(Array.isArray(sizeParam)){
+                if(sizeParam[0]!==undefined) sx=sizeParam[0];
+                if(sizeParam[1]!==undefined) sy=sizeParam[1];
+                if(sizeParam[2]!==undefined) sz=sizeParam[2];
+            }
+            let datatxt=params.get(1);
+            if(!datatxt.startsWith("{")){
+                datatxt="{"+datatxt+"}";
+            }
+            // console.log("parsed texture2DArray",sx,sy,sz,"last used",DetailedParser.lastUsedProgram)
+            return DetailedParser.lastUsedProgram
+            ?.texture2DArray?.({format: DetailedParser.gctx.TexExamples[params.get(0)], 
+                data:DetailedParser.parseValue(datatxt), 
+                name:params.get(2),
+                texUnit:params.get(3), 
+                    size:[sx,sy,sz]
+            })
+        }
+    };
+
+    static context: {
+        vars: Map<string, any>,
+        lookUpNames: any[] & { add: (obj: any, ...names: string[]) => void },
+        blockName: string[],
+        isBlockAsync: boolean,
+        blockParams: ({
+            name: string,
+            start: string, 
+            end: string, 
+            type: string,
+            value?: undefined, 
+        } | {
+            name: string,
+            value: string, 
+            type: string,
+            start?: undefined, 
+            end?: undefined, 
+        })[],
+        lastUsedProgram: WebProgram|null,
+        thiscontext: any,
+    };
+    static get lastUsedProgram(){
+        return (DetailedParser.context as any).lastUsedProgram;
+    }
+    static set lastUsedProgram(p){
+        (DetailedParser.context as any).lastUsedProgram=p;
+    }
+    static get lastFillerProgram(){
+        return (DetailedParser.context as any).lastFillerProgram;
+    }
+    static set lastFillerProgram(p){
+        (DetailedParser.context as any).lastFillerProgram=p;
+    }
+    static getVar(name: string){
+        return DetailedParser.context.vars.get(name);
+    }
+
+
+    /**
+     * Une las líneas si la sangría aumenta Y la línea actual no parece un comando independiente.
+     * @param lines Array de líneas ya limpias (sin comentarios/tabs expandidos).
+     * @returns Array de líneas donde las continuaciones están unidas por un espacio.
+     */
+    static joinIndentedLines(lines: string[]): string[] {
+        if (lines.length <= 1) return lines;
+
+        const result: string[] = [];
+        let previousLine = lines[0];
+
+        for (let i = 1; i < lines.length; i++) {
+            const currentLine = lines[i];
+
+            const previousIndentMatch = previousLine.match(/^(\s*)/);
+            const currentIndentMatch = currentLine.match(/^(\s*)/);
+
+            const previousIndent = previousIndentMatch ? previousIndentMatch[1].length : 0;
+            const currentIndent = currentIndentMatch ? currentIndentMatch[1].length : 0;
+
+            // Heurística: ¿La línea actual parece ser un comando completo por sí misma?
+            // Si empieza por minúscula y contiene espacios (como 'draw meshProgram'), lo consideramos un comando.
+            // const looksLikeOwnCommand = /^[a-z_]\w*\s/.test(currentLine.trim());
+
+
+            // console.log("a chainear",currentLine,previousIndent,currentIndent)
+            // Requerimiento: Si la línea actual tiene ESTRICTAMENTE más sangría Y NO es un comando propio
+            if (currentIndent > previousIndent && currentLine.trim().length > 0
+                && !(previousLine.trim().endsWith("{")||previousLine.trim().endsWith("}"))) {
+                // Unimos la línea actual a la anterior con un espacio
+                previousLine += " " + currentLine;
+                
+            } else {
+                // Si la sangría es menor o igual += previousLine.
+                result.push(previousLine);
+                previousLine = currentLine;
+            }
+        }
+        result.push(previousLine);
+        return result;
+    }
+
+    static parseBlockParams(raw: string | undefined) {
+        if (!raw) return null;
+
+        return raw.split(',')
+            .map(p => p.trim())
+            .map(p => {
+                // dt=0:{nCromatins-5}
+                const rangeMatch = p.match(/^(\w+)\s*=\s*(.+?):(.+)$/);
+                if (rangeMatch) {
+                    return {
+                        name: rangeMatch[1],
+                        start: rangeMatch[2],
+                        end: rangeMatch[3],
+                        type: "range"
+                    };
+                }
+
+                // x={xs}
+                const simpleMatch = p.match(/^(\w+)\s*=\s*(.+)$/);
+                if (simpleMatch) {
+                    return {
+                        name: simpleMatch[1],
+                        value: simpleMatch[2],
+                        type: "list"
+                    };
+                }
+
+                return null;
+            })
+            .filter(Boolean);
+    }
+
+
+
+    static currentBlockContent: string[] = []; // Acumulador de líneas del bloque actual
+
+    /**
+     * Método principal para parsear y ejecutar la configuración del script.
+     */
+    static async parse(str: string, gl: WebGL2RenderingContext, thiscontext) {
+        DetailedParser.gctx.gl = gl;
+        DetailedParser.context = {
+            vars: new Map(),
+            lookUpNames: [] as any,
+            blockName: [],
+            isBlockAsync: false,
+            blockParams: [] as any,
+            lastUsedProgram: null,
+            thiscontext
+        };
+
+        let processedStr = (str as any)
+            .replaceAll(/\/\/.*$/gm, "")
+            .replaceAll("\t", "    ");
+
+        let lines = processedStr.split('\n');
+        lines = DetailedParser.joinIndentedLines(lines);
+
+        let inEvalBlock = false;
+        let evalBlockContent = "";
+
+        let tickActions: (() => void)[] = [];
+
+        /* ===============================
+        IF STACK
+        =============================== */
+        type IfFrame = { condition: string; negate?: boolean };
+        let ifStack: IfFrame[] = [];
+
+        const currentIfConditions = () =>
+            ifStack.map(f =>
+                f.negate ? `!(${f.condition})` : `(${f.condition})`
+            );
+
+        /* ===============================
+        UNIFORMS STATE
+        =============================== */
+        let inUniforms = false;
+        let uniformsProgram: any = null;
+
+        for (let i = 0; i < lines.length; i++) {
+            const rawLine = lines[i];
+            const line = rawLine.trim();
+            if (!line) continue;
+
+            const currentBlock = DetailedParser.ctx.blockName.at(-1);
+
+            /* ===============================
+            << >> EVAL BLOCKS
+            =============================== */
+            if (line.startsWith("<<")) {
+                inEvalBlock = true;
+                evalBlockContent = "";
+                continue;
+            }
+
+            if (line.endsWith(">>") && inEvalBlock) {
+                inEvalBlock = false;
+                const content = evalBlockContent.trim();
+                DetailedParser.executeEvalBlock(content);
+                continue;
+            }
+
+            if (inEvalBlock) {
+                evalBlockContent += rawLine + "\n";
+                continue;
+            }
+
+            /* ===============================
+            UNIFORMS BLOCK START
+            =============================== */
+            const uniMatch = line.match(/^uniforms(?:\s+(\w+))?\s*\{$/);
+            if (uniMatch) {
+                inUniforms = true;
+                uniformsProgram =
+                    uniMatch[1]
+                        ? DetailedParser.ctx.vars.get(uniMatch[1])
+                        : DetailedParser.ctx.lastUsedProgram;
+
+                // console.log("[uniforms] program:", uniformsProgram);
+                continue;
+            }
+
+            if (line === "}" && inUniforms) {
+                inUniforms = false;
+                uniformsProgram = null;
+                continue;
+            }
+
+            if (inUniforms) {
+                const m = line.match(/^(\w+)\s*=\s*(.+?)([iuf]?)$/);
+                if (!m) continue;
+
+                let [, name, rawValue, suffix] = m;
+                const value = DetailedParser.parseValue(rawValue);
+                suffix||="f";
+
+                // console.log("[uniforms] set", name, value, suffix);
+
+                if (Array.isArray(value)) {
+                    uniformsProgram.uVec(name, value.length, value, suffix === "f", suffix === "u")
+                    .set(value);
+                } else {
+                    uniformsProgram.uNum(
+                        name,
+                        suffix === "f",
+                        suffix === "u"
+                    ).set(value);
+                }
+                continue;
+            }
+
+            
+            /* ===============================
+            IF / ELSE IF / ELSE
+            =============================== */
+            const ifMatch = line.match(/^if\s*\((.+)\)\s*\{$/);
+            if (ifMatch) {
+                // console.log("[Parse] ifMatch",ifMatch);
+                ifStack.push({ condition: ifMatch[1] });
+                continue;
+            }
+
+            const elseIfMatch = line.match(/^else\s+if\s*\((.+)\)\s*\{$/);
+            if (elseIfMatch) {
+                // console.log("[Parse] ElseIfMatch",ifMatch);
+                ifStack.pop();
+                ifStack.push({ condition: elseIfMatch[1] });
+                continue;
+            }
+
+            const elseMatch = line.match(/^(?:\}\s*)?else\s*\{$/);
+            if (elseMatch) {
+                const last = ifStack.pop();
+                if (last) {
+                    ifStack.push({ condition: last.condition, negate: true });
+                }
+                continue;
+            }
+
+            /* ===============================
+            BLOCK START (generic)
+            =============================== */
+            // Regex actualizado: opcionalmente busca "async", luego el nombre del bloque
+            const blockMatch = line.match(
+                /^(?:(async)\s+)?(\w+)\s*(?:\((.*?)\))?\s*\{$/
+            );
+
+            if (blockMatch) {
+                const isAsync = blockMatch[1] === "async"; // Captura si existe la palabra async
+                const blockName = blockMatch[2];           // El nombre del bloque ahora es el segundo grupo
+                const rawParams = blockMatch[3];           // Los parámetros ahora son el tercer grupo
+
+                // Guardamos el nombre del bloque
+                DetailedParser.ctx.blockName.push(blockName);
+                DetailedParser.ctx.isBlockAsync = isAsync; 
+
+                DetailedParser.ctx.blockParams = DetailedParser.parseBlockParams(rawParams);
+
+                ifStack = [];
+                tickActions = [];
+                continue;
+            }
+
+
+
+            /* ===============================
+            BLOCK END
+            =============================== */
+            if (line === "}" && currentBlock) {
+                if (ifStack.length > 0) {
+                    ifStack.pop();
+                    continue;
+                }
+
+                const closed = DetailedParser.ctx.blockName.pop();
+
+                if (closed === "tick" || closed === "draw") {
+                    const captured = [...tickActions];
+                    let time = 0;
+
+                    // Definimos la función de ejecución interna para evitar duplicar código
+                    const executeActions = async (dt: number) => {
+                        if (closed === "tick") {
+                            time += dt;
+                            DetailedParser.ctx.vars.set("u_time", time);
+                        }
+                        DetailedParser.ctx.vars.set("dt", dt);
+
+                        if (DetailedParser.ctx.isBlockAsync) {
+                            for (const a of captured) await a();
+                        } else {
+                            for (const a of captured) a();
+                        }
+                    };
+
+                    // Se añade como async siempre, pero el await interno depende de DetailedParser.ctx.isBlockAsync
+                    DetailedParser.gctx.addFunc(async (dt: number) => {
+                        await executeActions(dt);
+                    });
+                }
+
+                if (closed !== "tick" && closed !== "draw") {
+                    const actions = [...tickActions];
+                    const params = DetailedParser.ctx.blockParams;
+
+                    DetailedParser.gctx.addFunc(async (dt: number) => {
+                        if (!params) {
+                            if (DetailedParser.ctx.isBlockAsync) {
+                                for (const a of actions) await a();
+                            } else {
+                                actions.forEach(a => a());
+                            }
+                            return;
+                        }
+
+                        // Generamos bucles recursivos con soporte Async
+                        const recurse = async (idx: number) => {
+                            if (idx === params.length) {
+                                if (DetailedParser.ctx.isBlockAsync) {
+                                    for (const a of actions) await a();
+                                } else {
+                                    actions.forEach(a => a());
+                                }
+                                return;
+                            }
+
+                            const p = params[idx];
+
+                            if (p.type === "range") {
+                                const start = DetailedParser.parseValue(p.start);
+                                const end = DetailedParser.parseValue(p.end);
+
+                                for (let v = start; v <= end; v++) {
+                                    DetailedParser.ctx.vars.set(p.name, v);
+                                    DetailedParser.ctx.isBlockAsync ? await recurse(idx + 1) : recurse(idx + 1);
+                                }
+                            }
+
+                            if (p.type === "list") {
+                                const list = DetailedParser.parseValue(p.value);
+                                if (!Array.isArray(list)) return;
+
+                                for (const v of list) {
+                                    DetailedParser.ctx.vars.set(p.name, v);
+                                    DetailedParser.ctx.isBlockAsync ? await recurse(idx + 1) : recurse(idx + 1);
+                                }
+                            }
+                        };
+
+                        await recurse(0);
+                    });
+
+                    DetailedParser.ctx.isBlockAsync = false;
+                    DetailedParser.ctx.blockParams = null;
+                }
+
+                continue;
+            }
+
+
+
+
+            /* ===============================
+            INSIDE BLOCK
+            =============================== */
+            if (currentBlock) {
+                const action = await DetailedParser.compileJsBlock(
+                    rawLine.trimStart(),
+                    currentIfConditions()
+                );
+                // console.log("[Parse] lineAdded",line,currentIfConditions(),currentBlock);
+                if (action) tickActions.push(action);
+                continue;
+            }
+
+            /* ===============================
+            NORMAL LINE
+            =============================== */
+            if (await DetailedParser.parseObjectDef(line)) continue;
+            if (DetailedParser.parseFncCall(line)) continue;
+        }
+    }
+
+
+    static prepareAction(line: string): (() => void) | null {
+        // Caso B: Métodos encadenados
+        if (line.includes('.') && /^([a-z_]\w*)\./.test(line)) {
+            return DetailedParser.prepareChainAction(line);
+        }
+
+        // Caso A: Comandos simples (ej: let var={val}, draw cmd...)
+        const simpleMatch = line.match(/^([a-z_]\w*)\s+(.*)$/);
+        if (simpleMatch) {
+            const cmdName = simpleMatch[1];
+            const paramsString = simpleMatch[2];
+            
+            const reg = DetailedParser.ObjectRegistry[cmdName] || DetailedParser.FunctionRegistry[cmdName];
+            
+            if (reg) {
+                return () => {
+                    const params: Map<string | number, any> = new Map();
+                    
+                    // TOKENIZACIÓN (Igual a tu segunda lógica)
+                    // Captura: "comillas", 'simples' o bloques sin espacios (incluye {..})
+                    const tokenRegex = /"([^"]*)"|'([^']*)'|([^\s'"]+)/g;
+                    let tokenMatch;
+                    let index = 0;      // Contador para parámetros posicionales (0, 1, 2...)
+                    let matchIndex = 0; // Contador para nombres de parámetros (match0, match1...)
+
+                    while ((tokenMatch = tokenRegex.exec(paramsString)) !== null) {
+                        const token = tokenMatch[1] ?? tokenMatch[2] ?? tokenMatch[3];
+                        const raw = tokenMatch[0];
+
+                        // Detección de key=value
+                        const paramMatch = raw.match(/^([a-zA-Z_]\w*)=([\s\S]+)$/);
+                        
+                        if (paramMatch) {
+                            const key = paramMatch[1];
+                            // Quitamos comillas externas si las hay en el valor
+                            const valRaw = paramMatch[2].replace(/^["']|["']$/g, "");
+                            const val = DetailedParser.parseValue(valRaw);
+                            
+                            params.set(key, val);
+                            params.set("match" + matchIndex++, key);
+                        } else {
+                            // Parámetro posicional
+                            const val = DetailedParser.parseValue(token);
+                            params.set(index++, val);
+                        }
+                    }
+
+                    // Ejecución con los params procesados
+                    reg(params, DetailedParser.gctx.gl!);
+                };
+            }
+        }
+
+        return null;
+    }
+
+
+
+    private static createSimpleAction(cmd: string, args: string[]): () => void {
+        return () => {
+            const params = new Map();
+            args.forEach((arg, idx) => params.set(idx, DetailedParser.parseValue(arg)));
+            
+            // Ejecutamos desde el registro correspondiente
+            if (DetailedParser.ObjectRegistry[cmd]) {
+                DetailedParser.ObjectRegistry[cmd](params, DetailedParser.gctx.gl!);
+            } else if (DetailedParser.FunctionRegistry[cmd]) {
+                DetailedParser.FunctionRegistry[cmd](params, DetailedParser.gctx.gl!);
+            }
+        };
+    }
+
+    private static createCallAction(line: string): () => void {
+        const frozenLine = line; // "camera.tick({dt})" o "meshProgram.draw(...)"
+        return () => {
+            // En cada frame, llamamos a parseFncCall con la línea original
+            // parseFncCall usará parseValue, que a su vez resolverá las {variables} 
+            DetailedParser.parseFncCall(frozenLine);
+        };
+    }
+    static async chooseActionForLine(code: string){
+        const line = code.trim().replace(/;$/, "");
+
+        // --- 1. Definición de objeto (compile time)
+        if (await DetailedParser.parseObjectDef(line)) {
+            return null;
+        }
+
+        // Extraemos primera palabra
+        const firstWordMatch = line.match(/^([a-zA-Z_]\w*)/);
+        const firstWord = firstWordMatch?.[1];
+
+        // --- 2. Comando simple (registry)
+        if (
+            firstWord &&
+            // !line.includes("(") &&
+            (DetailedParser.ObjectRegistry[firstWord] ||
+            DetailedParser.FunctionRegistry[firstWord])
+        ) {
+            return DetailedParser.prepareAction(line);
+        }
+
+        // --- 3. Cadena de métodos (obj.method().method())
+        if (
+            /^[a-zA-Z_]\w*\./.test(line)
+        ) {
+            const chain = DetailedParser.prepareChainAction(line);
+            if (chain) return chain;
+        }
+
+        // --- 4. Fallback: llamada directa
+        return DetailedParser.createCallAction(line);
+    }
+    static async compileJsBlock(code: string, ifConditions: string[] = []) {
+
+        const action = await DetailedParser.chooseActionForLine(code);
+
+        // console.log("[CompileJS] "+code+" | "+action)
+        const conditionFn = new Function(
+            'gctx',
+            'vars',
+            'thiscontext',
+            `
+            with(thiscontext) {
+                with(gctx){
+                    with(vars) {
+                        return ${ifConditions.length
+                            ? ifConditions.map(c => `(${c})`).join("&&")
+                            : "true"};
+                    }
+                }
+            }
+            `
+        );
+
+        // if(ifConditions)
+        // console.log("conditioning",ifConditions)
+        return async () => {
+            let ok = false;
+            try {
+                ok = conditionFn(
+                    DetailedParser.gctx,
+                    Object.fromEntries(DetailedParser.ctx.vars),
+                    DetailedParser.ctx.thiscontext || {}
+                );
+            } catch (e) {
+                console.error("[CompileJS] condición inválida", ifConditions, e);
+                return;
+            }
+
+            if (!ok) return;
+            if (action) await action();
+        };
+    }
+
+
+
+    static executeEvalBlock(code: string) {
+        const scope = {
+                    ...DetailedParser.ctx.thiscontext,
+                    ...DetailedParser.gctx,
+                    ...Object.fromEntries(DetailedParser.ctx.vars),
+                    Math
+                };
+        try {
+            new Function('gctx', 'scope', 'thiscontext', 
+                `with(gctx){ with(scope){ with(thiscontext){ ${code} } } }`
+            )(
+                DetailedParser.gctx, scope,
+                DetailedParser.ctx.thiscontext||{}
+            );
+        } catch (e) {
+            console.error("Error en eval inmediato:", e);
+        }
+    }
+
+
+
+
+    static get ctx() { return DetailedParser.context; }
+    static get gctx() { return DetailedParser.GlobalContext; }
+     /**
+     * Función auxiliar para parsear valores (vec3(), {W}, [], "string", 1024x1024)
+     * Convierte la representación en cadena del DSL a un valor de JavaScript real.
+     */
+    static parseValue(valueString: string): any {
+        valueString = (valueString+"").trimStart();
+
+        // console.log("[parseValue] Entrada:", valueString);
+
+        /* ============================================================
+        1. ARRAYS JSON: [1, 2, 3]
+        ============================================================ */
+        if (valueString.startsWith('[') && valueString.endsWith(']')) {
+            valueString="{"+valueString+"}"
+        }
+        /* ============================================================
+        2. SIZES N-DIMENSIONALES: separación por 'x'
+        SOLO si está precedida por [0-9] o '}'
+        ============================================================ */
+        const parts: string[] = [];
+        let current = "";
+        let depthBraces = 0;
+
+        for (let i = 0; i < valueString.length; i++) {
+            const ch = valueString[i];
+            const prev = valueString[i - 1];
+
+            // Seguimiento de llaves para no romper expresiones
+            if (ch === "{") depthBraces++;
+            if (ch === "}") depthBraces--;
+
+            // Condición EXACTA que pediste: ([0-9]|})x
+            const isSplitX =
+                ch === "x" &&
+                depthBraces === 0 &&
+                (/[0-9]/.test(prev) || prev === "}");
+
+
+            if (isSplitX) {
+                parts.push(current.trim());
+                current = "";
+                continue;
+            }
+
+            current += ch;
+        }
+
+        if (current.trim() !== "") {
+            parts.push(current.trim());
+        }
+
+        // Validamos que realmente sea un size ND
+        if (parts.length >= 2) {
+            const allValid = parts.every(p =>
+                !isNaN(Number(p)) ||
+                (p.startsWith("{") && p.endsWith("}"))
+            );
+
+            if (allValid) {
+                const res = parts.map(p => DetailedParser.parseValue(p));
+                // console.log("[parseValue] Size ND detectado (regla ([0-9]|})x):", res);
+                return res;
+            }
+        }
+
+        /* ============================================================
+        3. EXPRESIONES ENTRE {} → evaluación dinámica
+        Soporta:
+        - variables
+        - Math (cos, sin, tan, etc.)
+        - paréntesis
+        - operadores JS
+        ============================================================ */
+        if (valueString.startsWith('{') && valueString.endsWith('}')) {
+            const expression = valueString.slice(1, -1);
+            // console.log("[parseValue] Evaluando expresión:", expression);
+
+            
+            try {
+                let scope = {
+                    ...DetailedParser.ctx.thiscontext,
+                    ...DetailedParser.gctx,
+                    ...Object.fromEntries(DetailedParser.ctx.vars),
+                    Math
+                };
+
+                // Evaluación completa
+                const fn = new Function(
+                    "scope",
+                    `
+                    with(scope) {
+                        return ${expression};
+                    }
+                `
+                );
+                const res = fn(scope);
+                // console.log("[parseValue] Resultado expresión:", res);
+                return res;
+
+            } catch (e) {
+                // console.error("[parseValue] Error evaluando expresión:", expression, e);
+                return undefined;
+            }
+        }
+
+        /* ============================================================
+        4. CONSTRUCTORES vec3(...)
+        ============================================================ */
+        if (valueString.startsWith('vec3(') && valueString.endsWith(')')) {
+            const inner = valueString.slice(5, -1).trim();
+
+            const components = inner
+                .split(',')
+                .map(c => c.trim())
+                .filter(Boolean)
+                .map(c => DetailedParser.parseValue(c));
+
+            let x: number, y: number, z: number;
+
+            if (components.length === 1) {
+                x = y = z = Number(components[0]);
+            } else if (components.length === 2) {
+                x = Number(components[0]);
+                y = z = Number(components[1]);
+            } else {
+                x = Number(components[0]);
+                y = Number(components[1]);
+                z = Number(components[2]);
+            }
+
+            const v = new DetailedParser.gctx.Vector3D(x, y, z);
+            // console.log("[parseValue] vec3 creado:", v);
+            return v;
+        }
+        if (valueString.startsWith('\"') && valueString.endsWith('\"')) {
+            return valueString.slice(1,-1);
+        }
+
+        /* ============================================================
+        5. NÚMEROS Y BOOLEANOS
+        ============================================================ */
+        if (!isNaN(Number(valueString)) && valueString !== '') {
+            return Number(valueString);
+        }
+
+        if (valueString === 'true') return true;
+        if (valueString === 'false') return false;
+
+        /* ============================================================
+        6. DEFAULT → string literal
+        ============================================================ */
+        // console.log("[parseValue] String literal:", valueString);
+        return valueString;
+    }
+
+
+
+    /**
+     * Parsea líneas de definición de objetos o variables:
+     * MeshProgram input=TexUnit20 1024x1024
+     * a=createIdealMesh ...
+     */
+    static async parseObjectDef(line: string) {
+
+        // console.log("--------------------------------------------------");
+        // console.log("[parseObjectDef] Línea recibida:", line);
+
+        // line=line.replace(/^let\s*/,"");
+        // =====================================================
+        // FASE 0 — helpers locales
+        // =====================================================
+
+        const IDENT = /^[a-zA-Z_]\w*$/;
+        let isEscapedFunction=false;
+
+        // =====================================================
+        // FASE 1 — extracción de alias y core
+        // =====================================================
+
+        const extractAliasesAndCore = (rawLine: string) => {
+            let aliases: string[] = [];
+            let core = rawLine.trim();
+
+            // alias izquierda
+            const leftMatch = core.match(
+                /^\s*([a-zA-Z_]\w*(?:\s*\|=\s*[a-zA-Z_]\w*)*)\s*=/
+            );
+
+            if (leftMatch) {
+                const leftAliases = leftMatch[1]
+                    .split(/\|=/)
+                    .map(s => s.trim());
+
+                // console.log("[Alias] Detectados a la izquierda:", leftAliases);
+
+                aliases.push(...leftAliases);
+                core = core.slice(leftMatch[0].length).trim();
+            }
+
+            // alias derecha
+            const rightMatch = core.match(/\|=\s*([^=]+)$/);
+            if (rightMatch) {
+                const rightAliases = rightMatch[1]
+                    .split(',')
+                    .map(s => s.trim());
+
+                // console.log("[Alias] Detectados a la derecha:", rightAliases);
+
+                aliases.push(...rightAliases);
+                core = core.slice(0, rightMatch.index!).trim();
+            }
+
+            aliases = [...new Set(aliases)];
+
+            // console.log("[Core] Línea core:", core);
+
+            return { aliases, core };
+        };
+
+        const { aliases, core } = extractAliasesAndCore(line);
+        if (!core) {
+            // console.log("[Abort] Core vacío");
+            return false;
+        }
+
+        // =====================================================
+        // FASE 2 — destructuring
+        // =====================================================
+
+        let destructuredVars: string[] | null = null;
+
+        const destructMatch = core.match(/^\[\s*([^\]]+)\s*\]\s*=/);
+        let workingCore = core;
+
+        if (destructMatch) {
+            destructuredVars = destructMatch[1]
+                .split(',')
+                .map(v => v.trim())
+                .filter(v => IDENT.test(v));
+
+            // console.log("[Destructuring] Variables:", destructuredVars);
+
+            workingCore = core.slice(destructMatch[0].length).trim();
+            // console.log("[Destructuring] Core restante:", workingCore);
+        }
+
+        // =====================================================
+        // FASE 3 — parseo general
+        // =====================================================
+        const trimmed = workingCore.trim();
+
+        if (!trimmed) {
+            // console.log("[Abort] Línea vacía tras limpiar");
+            return false;
+        }
+
+        let identifier = "";
+        let paramsString = "";
+        let hasEqualsSign = false;
+
+        // FUNCIÓN ESCAPADA → $funcName$(...)
+        if (trimmed.startsWith("$")) {
+            const secondDollar = trimmed.indexOf("$", 1);
+            isEscapedFunction=true;
+
+            // Debe existir $func$(
+            if (secondDollar > 1 && trimmed[secondDollar + 1] === "(") {
+                identifier = trimmed.slice(1, secondDollar);
+                paramsString = trimmed.slice(secondDollar + 1).trim();
+
+                // console.log("[EscapedFunc] Detectada función escapada:", identifier);
+                // console.log("[EscapedFunc] Params string:", paramsString);
+            } else {
+                // console.log("[Abort] '$' detectado pero no es función escapada válida");
+                return false;
+            }
+
+        // IDENTIFICADOR NORMAL (escapa todo excepto la primera palabra)
+        } else {
+            let i = 0;
+            while (
+                i < trimmed.length &&
+                trimmed[i] !== " " &&
+                trimmed[i] !== "="
+            ) {
+                i++;
+            }
+
+            identifier = trimmed.slice(0, i);
+            let rest = trimmed.slice(i).trim();
+
+            if (rest.startsWith("=")) {
+                hasEqualsSign = true;
+                rest = rest.slice(1).trim();
+            }
+
+            paramsString = rest;
+        }
+
+        // console.log("[Parse] Identificador:", identifier);
+        // console.log("[Parse] Tiene '=':", hasEqualsSign);
+        // console.log("[Parse] Params string:", paramsString);
+
+        // =====================================================
+        // FASE 3.1 — función escapada $func$
+        // =====================================================
+
+
+        if (isEscapedFunction) {
+            const funcName = identifier;
+            const globalFunc = DetailedParser.gctx[funcName]||DetailedParser.ctx.thiscontext[funcName];
+
+            // console.log("[EscapedFunc] Detectada función escapada:", funcName);
+
+            if (typeof globalFunc !== "function") {
+                // console.log("[Error] Función escapada no existe en gctx");
+                return false;
+            }
+
+            // console.log("[EscapedFunc] Raw paramsString:", paramsString);
+            let argsRaw = paramsString.trim();
+
+            // quitar paréntesis exteriores si envuelven toda la expresión
+            if (argsRaw.startsWith("(") && argsRaw.endsWith(")")) {
+                argsRaw = argsRaw.slice(1, -1).trim();
+            }
+
+            // split por comas respetando {} y ()
+            const rawArgs = argsRaw.length === 0
+                ? []
+                : argsRaw.split(/,(?![^{]*})(?![^(]*\))/);
+
+            const args = rawArgs.map(arg => {
+                const cleaned = arg.trim();
+                // console.log("[EscapedFunc] Arg detectado:", cleaned);
+                return this.parseValue(cleaned);
+            });
+            // console.log("[EscapedFunc] Argumentos parseados:", args);
+
+
+            const result = await globalFunc(...args);
+
+            // console.log("[EscapedFunc] Resultado ejecución:", result);
+
+            if (destructuredVars && Array.isArray(result)) {
+                destructuredVars.forEach((v, i) => {
+                    // console.log(`[Assign] ${v} = result[${i}]`, );
+                    this.ctx.vars.set(v, result[i]);
+                });
+            } else {
+                for (const name of aliases) {
+                    // console.log(`[Assign] ${name} = resultado`);
+                    this.ctx.vars.set(name, result);
+                }
+            }
+            return true;
+        }
+
+        // =====================================================
+        // FASE 4 — ObjectRegistry / FunctionRegistry
+        // =====================================================
+
+        let classNameOrFunc = identifier;
+        const params: Map<string | number, any> = new Map();
+        let funcsToCallInObj: string[] = [];
+
+        if (hasEqualsSign) {
+            const funcNameMatch = paramsString.match(/^([A-Z_a-z]\w*)/);
+            if (funcNameMatch) {
+                classNameOrFunc = funcNameMatch[1];
+                paramsString = paramsString.slice(classNameOrFunc.length).trim();
+            }
+        }
+        params.set("aliases",aliases);
+        params.set("firstAlias",aliases[0]);
+
+        // console.log("[Exec] Clase / Función:", classNameOrFunc);
+        // console.log("[Exec] Params string limpio:", paramsString);
+
+
+        // =====================================================
+        // TOKENIZACIÓN
+        // =====================================================
+
+        const tokenRegex = /"([^"]*)"|'([^']*)'|([^\s'"]+)/g;
+        let tokenMatch;
+        let index = 0; //count of unnamed params
+        let matchindex = 0; //count of key of param
+
+        while ((tokenMatch = tokenRegex.exec(paramsString)) !== null) {
+            const token = tokenMatch[1] ?? tokenMatch[2] ?? tokenMatch[3];
+            const raw = tokenMatch[0];
+
+            if (raw.startsWith(".")) {
+                // console.log("[Chain] Función encadenada:", raw);
+                funcsToCallInObj.push(raw);
+                continue;
+            }
+
+            const paramMatch = raw.match(/^([a-zA-Z_]\w*)=(.+)$/);
+            if (paramMatch) {
+                const val = this.parseValue(
+                    paramMatch[2].replace(/^["']|["']$/g, "")
+                );
+                // console.log(`[Param] ${paramMatch[1]} =`, val);
+                params.set(paramMatch[1], val);
+                params.set("match"+matchindex++, paramMatch[1]);
+            } else {
+                const val = this.parseValue(token);
+                // console.log(`[Param] posicional[${index}] =`, val);
+                params.set(index++, val);
+            }
+        }
+
+        // =====================================================
+        // EJECUCIÓN
+        // =====================================================
+
+        const objReg = DetailedParser.ObjectRegistry[classNameOrFunc];
+        const objFunc = DetailedParser.FunctionRegistry[classNameOrFunc];
+
+        if (!objReg && !objFunc) {
+            // console.log("[Error] No existe en ningún registry");
+            return false;
+        }
+
+        // console.log(
+            "[Exec] Ejecutando vía",
+            objReg ? "ObjectRegistry" : "FunctionRegistry"
+        );
+
+        let result = await (objReg
+            ? objReg(params, DetailedParser.gctx.gl!)
+            : objFunc(params, DetailedParser.gctx.gl!));
+
+
+        const isClassInstanciation = /^[A-Z]/.test(identifier);
+        let varName;
+        if (hasEqualsSign) { 
+            varName = identifier; 
+            const funcNameMatch = paramsString.match(/^([A-Z_a-z]\w*)/); 
+            if (funcNameMatch) { 
+                classNameOrFunc = funcNameMatch[1]; 
+                paramsString = paramsString.substring(classNameOrFunc.length).trim(); 
+                params.set("altName", varName); 
+            } 
+        } else if (isClassInstanciation) { 
+            varName = identifier.charAt(0).toLowerCase() + identifier.slice(1); 
+            if (this.ctx.vars.has(varName)) { 
+                let counter = 1; 
+                while (this.ctx.vars.has(varName + counter)) { 
+                    counter++; 
+                } 
+                varName = varName + counter; 
+            } 
+        }
+        // console.log("added VarName",varName)
+        aliases.push(varName);
+        // console.log("[Alias] Alias finales:", aliases);
+        // if(!isEscapedFunction){
+        //     this.ctx.vars.set(identifier[0].toLowerCase()+identifier.slice(1), result);
+        // }
+        // console.log("[Exec] Resultado inicial:", result);
+
+        // =====================================================
+        // CHAINING
+        // =====================================================
+
+        for (const call of funcsToCallInObj) {
+            const m = call.match(/^\.(\w+)\((.*)\)$/);
+            if (m && typeof result?.[m[1]] === "function") {
+                const args = m[2]
+                    .split(/,(?![^{]*})/)
+                    .map(a => this.parseValue(a.trim()));
+                // console.log(`[Chain] Ejecutando .${m[1]} con args`, args);
+                result[m[1]](...args);
+            }
+        }
+
+        // console.log("[Exec] Resultado:", result);
+
+        // =====================================================
+        // ASIGNACIÓN FINAL
+        // =====================================================
+
+        // console.log(destructuredVars,Array.isArray(result))
+        if (destructuredVars && Array.isArray(result)) {
+            destructuredVars.forEach((v, i) => {
+                // console.log(`[Assign] ${v} = result[${i}]`);
+                this.ctx.vars.set(v, result[i]);
+            });
+        } else {
+            for (const name of aliases) {
+                if(name===undefined) return;
+                // console.log(`[Assign] ${name} = resultado`);
+                this.ctx.vars.set(name, result);
+            }
+        }
+
+        // console.log("[parseObjectDef] Finalizado correctamente");
+        return true;
+    }
+
+
+
+    
+    static executeChain(baseObj: any, chainParts: string[]): any {
+        let currentObj = baseObj;
+
+        for (let part of chainParts) {
+            if (currentObj == null) return undefined;
+            part = part.trim(); // Limpiar espacios/saltos de línea accidentales
+
+            // Regex para capturar nombre y el bloque de argumentos completo
+            const callMatch = part.match(/^(\w+)\s*\(([\s\S]*)\)$/);
+
+            if (callMatch) {
+                const [, name, argsRaw] = callMatch;
+                const target = currentObj[name];
+
+                if (typeof target !== "function") {
+                    console.error(`[Chain] ${name} no es función`, currentObj);
+                    return undefined;
+                }
+
+                const args = [];
+                if (argsRaw.trim()) {
+                    let currentArg = "";
+                    let depth = 0; 
+                    // Seguimiento de TODO tipo de anidación
+                    for (let i = 0; i < argsRaw.length; i++) {
+                        const char = argsRaw[i];
+                        if (char === "(" || char === "[" || char === "{") depth++;
+                        if (char === ")" || char === "]" || char === "}") depth--;
+                        
+                        if (char === "," && depth === 0) {
+                            args.push(DetailedParser.parseValue(currentArg.trim()));
+                            currentArg = "";
+                        } else {
+                            currentArg += char;
+                        }
+                    }
+                    if (currentArg.trim()) {
+                        args.push(DetailedParser.parseValue(currentArg.trim()));
+                    }
+                }
+
+                // Ejecución
+                currentObj = target.apply(currentObj, args);
+            } else {
+                // Acceso a propiedad (para casos como gl.COLOR_BUFFER_BIT)
+                if (!(part in currentObj)) {
+                    return undefined;
+                }
+                currentObj = currentObj[part];
+            }
+        }
+        return currentObj;
+    }
+
+
+
+    static splitChain(methodsString: string): string[] {
+        return methodsString
+            .split(/\.(?![^\[\(\{]*[\]\)\}])/)
+            .map(p => p.trim())
+            .filter(Boolean);
+    }
+
+    
+    /**
+     * Parsea llamadas a funciones o métodos encadenados:
+     * meshProgram.initUniforms().setPerXPerY(1,0)
+     */
+    static parseFncCall(line: string): boolean {
+        const cleanLine = line.trim().replace(/;$/, "").replace("\n","");
+
+        const callRegex = /^([a-z_]\w*)(?:\.[a-zA-Z_]\w*(?:\s*\([\s\S]*?\))?)+$/i;
+        const match = cleanLine.match(callRegex);
+        if (!match) return false;
+
+        const objectName = match[1];
+        const baseObj = this.getVar(objectName);
+        if (!baseObj) return false;
+
+        // quitamos "obj."
+        const chainString = cleanLine.slice(objectName.length + 1);
+
+        const chainParts = this.splitChain(chainString);
+
+        // console.log(
+            "[parseFncCall]",
+            objectName,
+            chainParts
+        );
+
+        this.executeChain(baseObj, chainParts);
+        return true;
+    }
+
+
+
+    static prepareChainAction(line: string) {
+        const cleanLine = line.trim().replace(/;$/, "");
+        const match = cleanLine.match(/^([a-z_]\w*)\.(.+)$/);
+        if (!match) return null;
+
+        const [, objectName, chainString] = match;
+        const chainParts = this.splitChain(chainString);
+
+        return () => {
+            const baseObj = DetailedParser.getVar(objectName)??DetailedParser.gctx[objectName]??DetailedParser.ctx.thiscontext[objectName];
+            if (!baseObj) {
+                console.warn(`[Chain] Objeto base no encontrado: ${objectName}`);
+                return;
+            }
+
+            DetailedParser.executeChain(baseObj, chainParts);
+        };
+    }
+
+
+
+
+
+}
+
+
+
+

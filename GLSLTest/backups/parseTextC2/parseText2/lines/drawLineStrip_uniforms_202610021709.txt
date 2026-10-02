@@ -1,0 +1,1 @@
+{"source":"drawLineStrip","savedAt":"2026-10-02T15:09:39.795Z","entries":[{"kind":"uniform","name":"offsetX","varName":"offsetX","value":0},{"kind":"uniform","name":"offsetY","varName":"offsetY","value":0}]}

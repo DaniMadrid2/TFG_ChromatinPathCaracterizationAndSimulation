@@ -486,3 +486,11 @@ compute tauXi -> [tauXiF, tauXiS, tauXiMeta] {
 Función readFBO
 
 let exampleArray = readFBO tauMomFBO ColAtch1 [0,0,4,1] TexExamples.RGBAFloat16 dim=4
+
+
+
+
+# Build package
+npm run build:package
+npm install -g ./dist
+dnti_shaderdsl --help

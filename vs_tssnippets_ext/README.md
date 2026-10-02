@@ -28,13 +28,14 @@ Extensión local de VS Code para dos modos de lenguaje:
 Desde la carpeta `vs_tssnippets_ext`:
 
 ```powershell
+npm ci
 npm run package
 ```
 
 Eso genera un `.vsix` con el nombre real del paquete y su versión, por ejemplo:
 
 ```text
-dnti-snippets-and-shader-dsl-ext-1.1.3.vsix
+dnti-snippets-and-shader-dsl-ext-1.2.2-0.vsix
 ```
 
 Luego puedes instalarlo con una de estas dos formas:
@@ -42,7 +43,7 @@ Luego puedes instalarlo con una de estas dos formas:
 ### Opción 1. Desde terminal
 
 ```powershell
-code --install-extension .\dnti-snippets-and-shader-dsl-ext-1.1.3.vsix
+code --install-extension .\dnti-snippets-and-shader-dsl-ext-1.2.2-0.vsix
 ```
 
 ### Opción 2. Desde VS Code
@@ -70,3 +71,9 @@ Ambos comparten parte del sistema de decoraciones, hover y navegación simbólic
 
 - `ts-snippet` resalta los placeholders `$[...]$` y los bloques `//$n - Begin/End`
 - `parse-text-ts` resalta la sintaxis del DSL y detecta elementos como `program`, `resource`, `rebind`, `uniforms`, `tex2D`, `texture2DArray` y bloques con `defineTag`
+
+## Draw backup inspector
+
+In any `.shaderdsl.ts` file, hover over `backUp:` in a supported `draw*` block for a temporary image preview; hovering does not open a tab. Use `Open` after the block to open the dockable inspector, then drag its tab between editor groups. HTML selectors for path, scope, iteration and file appear only in that inspector, and each inspector keeps its own selection. The base directory is the first iteration; numbered directories are later iterations. All valid texture matrices render as images with per-channel value ranges. `Open File` opens the selected backing file in the editor.
+
+The extension scans shader DSL files only within the current document's project directory. Code searches use bounded in-memory snapshots instead of opening every match as a VS Code document; the snapshot cache is pruned when its project has no visible editor.

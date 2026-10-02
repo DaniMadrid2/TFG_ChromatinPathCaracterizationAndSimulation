@@ -1,0 +1,11 @@
+{
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "parse": "dnti_shaderdsl parse parseTextC1.shaderdsl.ts parseTextC2.shaderdsl.ts",
+    "serve": "node server.cjs"
+  },
+  "dependencies": {
+    "dnti_shaderdsl": "file:../dist"
+  }
+}

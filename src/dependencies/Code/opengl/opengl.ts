@@ -15,7 +15,7 @@ export function __prepareMathFunction(callbackString: string) {
     let prepared = (callbackString || "").trim().replace(/;$/, "");
     prepared = prepared.replace(/\{(\w+)\}/g, "($1)");
     prepared = prepared.replace(/(?<!\.)\b(sin|cos|tan|exp|floor|ceil|min|max|round|random|abs|pow|sqrt|atan2|log|PI)\b/g, "Math.$1");
-    return eval(prepared);
+    return new Function(`"use strict"; return (${prepared});`)();
 }
 
 // Parser helper (compatibilidad): monta bloques globales por prioridad/orden.
