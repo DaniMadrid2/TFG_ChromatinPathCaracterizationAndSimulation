@@ -1,0 +1,352 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>HomeConnector Viewer v23</title>
+<style>
+html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#111;color:#ddd;font-family:Arial}
+#screenContainer{position:relative;width:100%;height:100%;display:flex;align-items:center;justify-content:center;background:#000}
+#screen{width:100%;height:100%;object-fit:contain;display:block;user-select:none;-webkit-user-drag:none;image-rendering:auto}
+#status{position:absolute;top:8px;left:8px;z-index:30;padding:5px 8px;background:#202020cc;border-radius:4px;font:12px monospace}
+#toolbar{position:absolute;top:8px;right:8px;z-index:30;display:flex;gap:6px}
+button{font:12px Arial;padding:6px 10px;border:1px solid #555;border-radius:4px;background:#222;color:#ddd;cursor:pointer}
+button:active{background:#444}
+#consolePanel{position:absolute;left:8px;right:8px;bottom:8px;max-height:35%;overflow:auto;background:#000e;color:#ddd;padding:7px;border:1px solid #444;border-radius:4px;z-index:20;font:12px/1.35 Consolas,monospace;white-space:pre-wrap;word-break:break-word;display:none}
+.log{color:#ddd}.info{color:#8fc7ff}.warn{color:#e6c85c}.error{color:#ff7777}
+#resourcesPanel{position:absolute;right:14px;bottom:14px;z-index:25;display:none;gap:16px;align-items:center;padding:12px 14px;background:#090909e8;border:1px solid #444;border-radius:14px;backdrop-filter:blur(5px);box-shadow:0 8px 30px #0008}
+.resourceCard{width:118px;height:118px;position:relative;display:grid;place-items:center}
+.resourceRing{width:112px;height:112px;transform:rotate(-90deg);overflow:visible}
+.resourceRing circle{fill:none;stroke-width:9}
+.resourceTrack{stroke:#222}
+.resourceOther{stroke:#171717}
+.resourceFree{stroke:#fff}
+.resourceChrome{stroke:#ff8a00}
+.resourceText{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;line-height:1}
+.resourceText .chromeValue{font:700 21px/1 Arial;color:#fff}
+.resourceText .freeValue{font:700 17px/1 Arial;color:#fff;margin-top:8px}
+.resourceText .slash{display:none}
+.resourceLabel{position:absolute;left:0;right:0;bottom:-19px;text-align:center;font:700 11px Arial;color:#fff;letter-spacing:.8px}
+@media(max-width:620px){#resourcesPanel{right:6px;bottom:6px;gap:5px;padding:8px 5px}.resourceCard{width:92px;height:92px}.resourceRing{width:88px;height:88px}.resourceText .chromeValue{font-size:17px}.resourceText .freeValue{font-size:14px;margin-top:5px}.resourceLabel{bottom:-15px;font-size:9px}}
+</style>
+</head>
+<body>
+<div id="screenContainer">
+  <canvas id="screen" width="1280" height="720"></canvas>
+  <div id="status">Conectando con portátil...</div>
+  <div id="toolbar"><button id="refreshBtn" type="button">↻ REFRESCAR</button></div>
+  <div id="consolePanel"></div>
+  <div id="resourcesPanel" aria-hidden="true">
+    <div class="resourceCard" data-resource="cpu">
+      <svg class="resourceRing" viewBox="0 0 120 120" aria-hidden="true">
+        <circle class="resourceTrack" cx="60" cy="60" r="50"></circle>
+        <circle class="resourceOther" cx="60" cy="60" r="50"></circle>
+        <circle class="resourceFree" cx="60" cy="60" r="50"></circle>
+        <circle class="resourceChrome" cx="60" cy="60" r="50"></circle>
+      </svg><div class="resourceText"><span class="chromeValue">0%</span><span class="freeValue">0%</span></div><div class="resourceLabel">CPU</div>
+    </div>
+    <div class="resourceCard" data-resource="memory">
+      <svg class="resourceRing" viewBox="0 0 120 120" aria-hidden="true">
+        <circle class="resourceTrack" cx="60" cy="60" r="50"></circle>
+        <circle class="resourceOther" cx="60" cy="60" r="50"></circle>
+        <circle class="resourceFree" cx="60" cy="60" r="50"></circle>
+        <circle class="resourceChrome" cx="60" cy="60" r="50"></circle>
+      </svg><div class="resourceText"><span class="chromeValue">0%</span><span class="freeValue">0%</span></div><div class="resourceLabel">MEMORIA</div>
+    </div>
+    <div class="resourceCard" data-resource="gpu">
+      <svg class="resourceRing" viewBox="0 0 120 120" aria-hidden="true">
+        <circle class="resourceTrack" cx="60" cy="60" r="50"></circle>
+        <circle class="resourceOther" cx="60" cy="60" r="50"></circle>
+        <circle class="resourceFree" cx="60" cy="60" r="50"></circle>
+        <circle class="resourceChrome" cx="60" cy="60" r="50"></circle>
+      </svg><div class="resourceText"><span class="chromeValue">0%</span><span class="freeValue">0%</span></div><div class="resourceLabel">GPU</div>
+    </div>
+  </div>
+</div>
+<script>
+"use strict";
+const screen=document.getElementById("screen");
+const box=document.getElementById("screenContainer");
+const statusEl=document.getElementById("status");
+const consolePanel=document.getElementById("consolePanel");
+let ws=null,reconnect=500,latest=null,decoding=false,mouseButtons=0,viewerSocketOpen=false;
+let currentUrl=null;
+const refreshBtn=document.getElementById("refreshBtn");
+const resourcesPanel=document.getElementById("resourcesPanel");
+let resourcesVisible=false;
+const resourceCircles={};
+for(const card of resourcesPanel.querySelectorAll(".resourceCard")){
+  const r=card.querySelector(".resourceRing");
+  const circumference=2*Math.PI*50;
+  for(const c of card.querySelectorAll("circle:not(.resourceTrack)")){c.style.strokeDasharray=`${circumference} ${circumference}`;c.style.strokeDashoffset=circumference;}
+  resourceCircles[card.dataset.resource]={card,circumference,chrome:card.querySelector(".resourceChrome"),free:card.querySelector(".resourceFree"),other:card.querySelector(".resourceOther"),chromeValue:card.querySelector(".chromeValue"),freeValue:card.querySelector(".freeValue")};
+}
+
+function open(){return ws&&ws.readyState===WebSocket.OPEN}
+function send(m){if(!open())return;try{ws.send(JSON.stringify(m))}catch{}}
+function status(t){statusEl.textContent=t}
+function clearConsole(){
+  consolePanel.textContent="";
+}
+function toggleConsole(){
+  consolePanel.style.display=consolePanel.style.display==="none"?"block":"none";
+}
+function consoleRemote(m){
+  const d=document.createElement("div"), level=m.level||"log";
+  d.className=level==="error"?"error":(level==="warn"||level==="warning"?"warn":(level==="info"?"info":"log"));
+  // Mostrar únicamente el texto emitido por Chromium, sin prefijos ni URL.
+  d.textContent=String(m.text??"");
+  const stickToBottom=consolePanel.scrollHeight-consolePanel.scrollTop-consolePanel.clientHeight<24;
+  consolePanel.appendChild(d);
+  while(consolePanel.childNodes.length>300)consolePanel.removeChild(consolePanel.firstChild);
+  if(stickToBottom)consolePanel.scrollTop=consolePanel.scrollHeight;
+}
+function resourceParts(chrome,system){
+  chrome=Math.max(0,Math.min(100,Number(chrome)||0));
+  system=Math.max(0,Math.min(100,Number(system)||0));
+  // El sobrante blanco es capacidad libre del PC. El tramo oscuro es el
+  // consumo de otros procesos: uso total del PC menos Chromium.
+  const free=Math.max(0,100-system);
+  const other=Math.max(0,Math.min(100-free,system-chrome));
+  chrome=Math.min(chrome,system);
+  return {chrome,other,free};
+}
+function setRingSegment(el,start,length,circ){
+  const gap=0.65;
+  const visible=Math.max(0,length-gap);
+  el.style.strokeDasharray=`${visible*circ/100} ${circ-visible*circ/100}`;
+  el.style.strokeDashoffset=`-${start*circ/100}`;
+}
+function renderResources(m){
+  const values={cpu:resourceParts(m.chromium?.cpu,m.system?.cpu),memory:resourceParts(m.chromium?.memory,m.system?.memory),gpu:resourceParts(m.chromium?.gpu,m.system?.gpu)};
+  for(const [name,v] of Object.entries(values)){
+    const r=resourceCircles[name];if(!r)continue;
+    setRingSegment(r.chrome,0,v.chrome,r.circumference);
+    setRingSegment(r.other,v.chrome,v.other,r.circumference);
+    setRingSegment(r.free,v.chrome+v.other,v.free,r.circumference);
+    r.chromeValue.textContent=Math.round(v.chrome)+"%";
+    r.freeValue.textContent=Math.round(v.free)+"%";
+  }
+}
+function toggleResources(){
+  resourcesVisible=!resourcesVisible;
+  resourcesPanel.style.display=resourcesVisible?"flex":"none";
+  resourcesPanel.setAttribute("aria-hidden",resourcesVisible?"false":"true");
+}
+
+function connect(){
+  if(ws&&(ws.readyState===0||ws.readyState===1))return;
+  const p=location.protocol==="https:"?"wss:":"ws:";
+  ws=new WebSocket(p+"//"+location.host);
+  ws.onopen=()=>{reconnect=500;viewerSocketOpen=true;status("Conectado al portátil · esperando casa...");send({type:"viewerReady",version:"v23"});send({type:"ping"})};
+  ws.onclose=()=>{viewerSocketOpen=false;status("Sin conexión con portátil");setTimeout(connect,reconnect);reconnect=Math.min(reconnect*1.7,5000)};
+  ws.onerror=()=>{if(!viewerSocketOpen)status("Error conectando con portátil")};
+  ws.onmessage=e=>{
+    let m;try{m=JSON.parse(e.data)}catch{return}
+    if(m.type==="status"){if(!viewerSocketOpen){status("Sin conexión con portátil");}else if(m.control&&m.video){status("Portátil conectado · casa OK");}else if(m.control){status("Portátil conectado · casa control OK · vídeo esperando...");}else{status("Portátil conectado · esperando casa...");}return}
+    if(m.type==="consoleClear"){clearConsole();return}
+    if(m.type==="console"){consoleRemote(m);return}
+    if(m.type==="resources"){renderResources(m);return}
+    if(m.type==="refreshAck"){console.log("[Viewer] REFRESH ACK",m);status(m.ok===false?"Refresh fallido · revisar casa/portátil":"Refresh recibido · ejecutando");return}
+    if(m.type==="viewerReadyAck"){console.log("[Viewer] Portátil reconoce viewer",m);return}
+    if(m.type==="frame"){frameSeen=true;latest=m;if(!renderedFrames)console.log("[Viewer] Primer frame recibido", {bytes:m.data?.length||0});decodeLatest()}
+  };
+}
+const ctx=screen.getContext("2d",{alpha:false});
+let videoW=1280,videoH=720,renderedFrames=0,lastMouseX=0,lastMouseY=0;
+async function decodeLatest(){
+  if(decoding||!latest)return;
+  decoding=true;
+  const f=latest; latest=null;
+  if(!decodeLatest._logged){decodeLatest._logged=true;console.log("[Viewer] INTENTANDO DECODIFICAR FRAME",{bytes:f?.data?.length||0,frame:f?.frame||null});}
+  let blobUrl=null;
+  try{
+    const b=atob(f.data),u=new Uint8Array(b.length);
+    for(let i=0;i<b.length;i++)u[i]=b.charCodeAt(i);
+    const blob=new Blob([u],{type:"image/jpeg"});
+    if("createImageBitmap" in window){
+      const im=await createImageBitmap(blob);
+      videoW=im.width||1280; videoH=im.height||720;
+      screen.width=videoW; screen.height=videoH;
+      ctx.drawImage(im,0,0,videoW,videoH);
+      im.close?.();
+    }else{
+      blobUrl=URL.createObjectURL(blob);
+      await new Promise((resolve,reject)=>{
+        const im=new Image();
+        im.onload=()=>{
+          videoW=im.naturalWidth||1280; videoH=im.naturalHeight||720;
+          screen.width=videoW; screen.height=videoH;
+          ctx.drawImage(im,0,0,videoW,videoH);
+          resolve();
+        };
+        im.onerror=()=>reject(new Error("JPEG no decodificable"));
+        im.src=blobUrl;
+      });
+    }
+    renderedFrames++;
+    status(`Conectado · frame ${renderedFrames} · ${videoW}x${videoH}`);
+  }catch(err){
+    console.error("[Viewer] Error decodificando frame:",err);
+    status("Frame recibido · error de decodificación");
+  }finally{
+    if(blobUrl)URL.revokeObjectURL(blobUrl);
+    decoding=false;
+    if(latest)decodeLatest();
+  }
+}
+
+const toolbar=document.getElementById("toolbar");
+let lastRefreshDispatch=0;
+function requestRefresh(e){
+  if(e){e.preventDefault();e.stopPropagation();}
+  const now=Date.now();
+  if(now-lastRefreshDispatch<300)return;
+  lastRefreshDispatch=now;
+  const requestId=now;
+  clearConsole();
+  status("Solicitando refresco #"+requestId+"...");
+  console.log("[Viewer] REFRESH DETECTADO",{requestId,event:e?.type||"direct",ws:ws?ws.readyState:"none"});
+  if(!open()){console.warn("[Viewer] REFRESH NO ENVIADO: WebSocket cerrado");status("Sin conexión con portátil");return;}
+  try{ws.send(JSON.stringify({type:"refresh",requestId}));console.log("[Viewer] REFRESH ENVIADO AL PORTÁTIL",requestId);}catch(err){console.error("[Viewer] REFRESH ERROR",err);}
+}
+document.addEventListener("pointerdown",e=>{if(e.target===refreshBtn||refreshBtn.contains(e.target))requestRefresh(e)},true);
+document.addEventListener("mousedown",e=>{if(e.target===refreshBtn||refreshBtn.contains(e.target))requestRefresh(e)},true);
+document.addEventListener("click",e=>{if(e.target===refreshBtn||refreshBtn.contains(e.target))requestRefresh(e)},true);
+let frameSeen=false;
+let frameRequestTimer=setInterval(()=>{
+  if(!frameSeen && open()){send({type:"requestFrame",reason:"viewer-no-frame"});}
+},1500);
+toolbar.addEventListener("pointerdown",e=>e.stopPropagation());
+toolbar.addEventListener("mousedown",e=>e.stopPropagation());
+toolbar.addEventListener("mouseup",e=>e.stopPropagation());
+
+function xy(e){
+  const r=screen.getBoundingClientRect();
+  if(!r.width||!r.height)return{x:0,y:0,valid:false};
+  const scale=Math.min(r.width/videoW,r.height/videoH);
+  const dw=videoW*scale, dh=videoH*scale;
+  const ox=r.left+(r.width-dw)/2, oy=r.top+(r.height-dh)/2;
+  return{
+    x:Math.max(0,Math.min(videoW-1,(e.clientX-ox)/scale)),
+    y:Math.max(0,Math.min(videoH-1,(e.clientY-oy)/scale)),
+    valid:true
+  };
+}
+function modifiers(e){
+  return (e.altKey?1:0)|(e.ctrlKey?2:0)|(e.metaKey?4:0)|(e.shiftKey?8:0);
+}
+function input(e,event,extra={}){
+  const p=xy(e);
+  if(!p.valid)return;
+  lastMouseX=p.x;lastMouseY=p.y;
+  send({type:"input",event,x:p.x,y:p.y,...extra,timestamp:Date.now()});
+}
+
+// Mapeo completo PointerEvent -> CDP.
+// CDP exige indicar el botón en mousePressed/mouseReleased; no existe un
+// "click" sintético aquí. Soportamos left/right/middle/back/forward.
+function pointerButtonName(button){
+  return ({0:"left",1:"middle",2:"right",3:"back",4:"forward"})[button]||"left";
+}
+function pointerButtonMask(button){
+  return ({0:1,1:4,2:2,3:8,4:16})[button]||0;
+}
+
+box.addEventListener("pointermove",e=>{
+  if(e.pointerType!=="mouse")return;
+  // Durante un drag no coalescemos movimientos en el viewer: casa.js recibirá
+  // la trayectoria completa entre mousePressed y mouseReleased.
+  // Durante movimiento sin botones sí se puede reducir tráfico.
+  // Durante un drag no dependemos de e.buttons: mantenemos nuestro propio
+  // estado de botones para garantizar que todos los mouseMoved llevan buttons=1.
+  input(e,"mouseMoved",{buttons:mouseButtons,button:mouseButtons===1?"left":mouseButtons===2?"right":mouseButtons===4?"middle":mouseButtons===8?"back":mouseButtons===16?"forward":"none",modifiers:modifiers(e)});
+});
+box.addEventListener("pointerdown",e=>{
+  if(e.pointerType!=="mouse"||e.target.closest("#toolbar"))return;
+  const button=pointerButtonName(e.button);
+  const mask=pointerButtonMask(e.button);
+  mouseButtons|=mask;
+  try{box.setPointerCapture(e.pointerId)}catch{}
+  // Posición exacta antes de pulsar.
+  input(e,"mouseMoved",{buttons:mouseButtons,button:mouseButtons===1?"left":mouseButtons===2?"right":mouseButtons===4?"middle":mouseButtons===8?"back":mouseButtons===16?"forward":"none",modifiers:modifiers(e)});
+  input(e,"mousePressed",{button,buttons:mouseButtons,clickCount:Number(e.detail)||1,modifiers:modifiers(e)});
+  e.preventDefault();
+});
+box.addEventListener("pointerup",e=>{
+  if(e.pointerType!=="mouse"||e.target.closest("#toolbar"))return;
+  const button=pointerButtonName(e.button);
+  const mask=pointerButtonMask(e.button);
+  // El move final sigue llevando el botón pulsado; después se libera.
+  input(e,"mouseMoved",{buttons:mouseButtons,button:mouseButtons===1?"left":mouseButtons===2?"right":mouseButtons===4?"middle":mouseButtons===8?"back":mouseButtons===16?"forward":"none",modifiers:modifiers(e)});
+  mouseButtons&=~mask;
+  input(e,"mouseReleased",{button,buttons:mouseButtons,clickCount:Number(e.detail)||1,modifiers:modifiers(e)});
+  try{box.releasePointerCapture(e.pointerId)}catch{}
+  e.preventDefault();
+});
+box.addEventListener("pointercancel",e=>{
+  const b=mouseButtons;
+  for(const [mask,button] of [[1,"left"],[2,"right"],[4,"middle"],[8,"back"],[16,"forward"]]){
+    if(b&mask)send({type:"input",event:"mouseReleased",x:lastMouseX,y:lastMouseY,button,buttons:0,clickCount:1,modifiers:modifiers(e),timestamp:Date.now()});
+  }
+  mouseButtons=0;
+  try{box.releasePointerCapture(e.pointerId)}catch{}
+});
+// El viewer nunca ejecuta un click local: solo transmite mousePressed/mouseReleased.
+box.addEventListener("click",e=>{e.preventDefault();e.stopPropagation()},true);
+box.addEventListener("contextmenu",e=>e.preventDefault());
+box.addEventListener("wheel",e=>{
+  e.preventDefault();
+  input(e,"mouseWheel",{deltaX:e.deltaX,deltaY:e.deltaY,modifiers:modifiers(e),buttons:mouseButtons});
+},{passive:false});
+
+function keyModifiers(e){
+  return (e.altKey?1:0)|(e.ctrlKey?2:0)|(e.metaKey?4:0)|(e.shiftKey?8:0);
+}
+function sendKey(e,event){
+  const special=new Set(["Shift","Control","Alt","Meta","Delete","Enter","Escape","Tab","Backspace","Home","End","PageUp","PageDown","ArrowUp","ArrowDown","ArrowLeft","ArrowRight","Insert","F1","F2","F3","F4","F5","F6","F7","F8","F9","F10","F11","F12"]);
+  const text=(event==="keyDown"&&!special.has(e.key)&&e.key.length===1&&!e.ctrlKey&&!e.altKey&&!e.metaKey)?e.key:"";
+  send({
+    type:"input",event,key:e.key,code:e.code,text,
+    keyCode:Number(e.keyCode)||0,
+    modifiers:keyModifiers(e),
+    autoRepeat:!!e.repeat,
+    timestamp:Date.now()
+  });
+}
+
+// Capture=true y preventDefault evitan que Ctrl+W, Ctrl+R, F5, etc. los
+// ejecute el navegador del portátil. Se envían al Chromium remoto.
+window.addEventListener("keydown",e=>{
+  if(e.key==="F1"){
+    e.preventDefault();e.stopPropagation();
+    if(!e.repeat)toggleResources();
+    return;
+  }
+  if(e.key==="F12"){
+    e.preventDefault();e.stopPropagation();toggleConsole();return;
+  }
+  sendKey(e,"keyDown");
+  e.preventDefault();
+  e.stopPropagation();
+},true);
+window.addEventListener("keyup",e=>{
+  if(e.key==="F1"){e.preventDefault();e.stopPropagation();return;}
+  sendKey(e,"keyUp");
+  e.preventDefault();
+  e.stopPropagation();
+},true);
+window.addEventListener("blur",()=>{
+  // Evitar dejar botones virtuales pulsados si el viewer pierde foco.
+  if(mouseButtons){
+    const b=mouseButtons;
+    for(const [mask,button] of [[1,"left"],[2,"right"],[4,"middle"]]){
+      if(b&mask)send({type:"input",event:"mouseReleased",x:lastMouseX,y:lastMouseY,button,buttons:0,clickCount:1,modifiers:0,timestamp:Date.now()});
+    }
+    mouseButtons=0;
+  }
+});
+connect();
+</script>
+</body>
+</html>
