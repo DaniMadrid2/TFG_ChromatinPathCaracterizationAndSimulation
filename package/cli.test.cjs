@@ -7,6 +7,7 @@ const test = require('node:test');
 const { loadParser, parseFiles, parseAll, resolveDsl } = require('../dist/runner.cjs');
 const { startServer } = require('../dist/lib/server.js');
 const { shouldWatchTs, watchProject } = require('../dist/watch.cjs');
+const { init } = require('../dist/initializer.cjs');
 
 async function temporaryWorkspace(run) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'dnti-shaderdsl-'));
@@ -48,6 +49,25 @@ test('uses a complete local WebGL parser and manager pair', async () => {
   });
 });
 
+test('ignores an incomplete local WebGL override', async () => {
+  await temporaryWorkspace(async (root) => {
+    const local = path.join(root, 'lib', 'Code', 'WebGL');
+    await fs.mkdir(local, { recursive: true });
+    await fs.writeFile(path.join(local, 'webglParser.ts'), 'throw new Error("LOCAL_PARSER_USED");');
+    await fs.writeFile(path.join(local, 'webglMan.js'), 'throw new Error("LOCAL_MANAGER_USED");');
+    const loaded = await loadParser(root);
+    assert.equal(loaded.localParser, null);
+    assert.equal(loaded.localMan, null);
+    const name = 'parseTextC1.shaderdsl.ts';
+    await fs.writeFile(path.join(root, name),
+      '<Pre/>\nprogram demo "demo" {\n}\nuse demo\ndrawTriangles -> [] size [8,8] {\n}\n<Pos>\n');
+    const [output] = await parseFiles([name], { cwd: root });
+    const browser = await fs.readFile(output.jsFile, 'utf8');
+    assert.doesNotMatch(browser, /LOCAL_MANAGER_USED|LOCAL_PARSER_USED/);
+    assert.match(browser, /createTexture2D/);
+  });
+});
+
 test('generates browser output without local WebGL libraries', async () => {
   await temporaryWorkspace(async (root) => {
     const name = 'parseTextC1.shaderdsl.ts';
@@ -81,6 +101,31 @@ test('transpiles line modes, inferred counts and attribute templates', () => {
   const integer = parser.transpileDrawCallBlock('drawPoints "aIndex" {indices}uvec2 4 -> []', [], new Set()).join('\n');
   assert.match(integer, /VAO\.attribute\("aIndex", indices, 2, "UNSIGNED_INT", 0, 0, false, 1\)/);
   assert.match(integer, /drawArrays\("POINTS", 0, 4\)/);
+});
+
+test('transfers texture values and resolves byte-sized draw dimensions', async () => {
+  const { DetailedParser: parser } = await loadParser(path.join(__dirname, '..'));
+  parser.transpileTexAliasToTextureVar.set('positionTexture', 'positionTexture');
+  parser.transpileTexAliasToUniform.set('positionTexture', 'positionTexture');
+  parser.transpileTexDeclaredNames.add('positionTexture');
+  assert.match(parser.transpileSimpleStatement('positionTexture <= trajectory', new Set()).join('\n'),
+    /positionTexture\.fill\(trajectory\)/);
+  assert.match(parser.transpileSimpleStatement('trajectory <= positionTexture', new Set()).join('\n'),
+    /positionTexture\.read\(\)/);
+  assert.deepEqual(parser.transpileSimpleStatement('unbindFBO movePoints', new Set()),
+    ['movePoints.unbindFBO();']);
+  const draw = parser.transpileDrawCallBlock(
+    'drawLineStrip {positionTexture}vec2 -> [] size [640,480]', [], new Set(),
+  ).join('\n');
+  assert.match(draw, /bindTexture\(positionTexture, "positionTexture", positionTexture\.unit\)/);
+  assert.match(draw, /drawArrays\("LINE_STRIP", 0, positionTexture\.w \* positionTexture\.h\)/);
+  assert.doesNotMatch(draw, /VAO\.attribute/);
+  const sizedDraw = parser.transpileDrawCallBlock(
+    'drawTriangles -> [positionTexture] size [1,trajectory.length]b', [], new Set(),
+  ).join('\n');
+  assert.match(sizedDraw, /Math\.ceil/);
+  assert.match(sizedDraw, /positionTexture as any\)\.format/);
+  assert.match(parser.transpileSizeToken('[1,trajectory.length]b', 'TexExamples.RGFloat'), /Math\.ceil/);
 });
 
 test('watches project TypeScript without reacting to generated output', async () => {
@@ -138,6 +183,41 @@ test('parseAll skips imported shared DSL files', async () => {
     const outputs = await parseAll({ cwd: root });
     assert.equal(outputs.length, 1);
     assert.match(outputs[0].tsFile, /generatedParserC1\.ts$/);
+  });
+});
+
+test('init pointSimulation includes both entry points and GPU shaders', async () => {
+  await temporaryWorkspace(async (root) => {
+    const target = await init({ cwd: root, dir: 'points', template: 'pointSimulation' });
+    for (const file of [
+      'index.html', 'parseTextC1.shaderdsl.ts', 'parseTextC12.shaderdsl.ts',
+      'parseTextC2.shaderdsl.ts', 'parser_snippets/c1/01_trajectory.snippet.ts',
+      'parser_snippets/c2/01_trajectory.snippet.ts', 'glsl/movePoints.frag',
+    ]) assert.ok((await fs.stat(path.join(target, file))).isFile(), file);
+    const outputs = await parseAll({ cwd: target });
+    assert.equal(outputs.length, 2);
+  });
+});
+
+test('regenerates imported DSL without stale or duplicate snippet anchors', async () => {
+  await temporaryWorkspace(async (root) => {
+    await fs.writeFile(path.join(root, 'parseTextC12.shaderdsl.ts'),
+      '<Pre>\nprogram demo "demo" {\n}\n<Pos>\n');
+    await fs.writeFile(path.join(root, 'parseTextC1.shaderdsl.ts'),
+      '<Pre/>\nimport <Mid> from ./parseTextC12.shaderdsl.ts\n<Pos>\n');
+    const snippetDir = path.join(root, 'parser_snippets', 'c1');
+    await fs.mkdir(snippetDir, { recursive: true });
+    const snippet = path.join(snippetDir, '01_trajectory.snippet.ts');
+    await fs.writeFile(snippet, 'const trajectory = [1, 2];\n');
+    const [first] = await parseFiles(['parseTextC1.shaderdsl.ts'], { cwd: root });
+    assert.equal((await fs.readFile(first.tsFile, 'utf8')).match(/\/\/<Pre>/g)?.length, 1);
+    await fs.writeFile(snippet, 'const trajectory = [3, 4];\n');
+    const [second] = await parseFiles(['parseTextC1.shaderdsl.ts'], { cwd: root });
+    const generated = await fs.readFile(second.tsFile, 'utf8');
+    assert.equal((generated.match(/\/\/<Pre>/g) || []).length, 1);
+    assert.equal((generated.match(/\/\/<Pos>/g) || []).length, 1);
+    assert.match(generated, /const trajectory = \[3, 4\]/);
+    assert.doesNotMatch(generated, /const trajectory = \[1, 2\]|trajectory2/);
   });
 });
 

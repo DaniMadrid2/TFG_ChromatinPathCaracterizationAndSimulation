@@ -1158,11 +1158,19 @@ export class DetailedParser {
         return DetailedParser.transpileExpr(token);
     }
 
-    static transpileSizeToken(sizeToken: string): string {
-        const sizeParts = DetailedParser.splitTopLevelByChar(sizeToken, "x")
-            .map(p => DetailedParser.transpileExpr(p));
-        if (!sizeParts.length) return "[]";
-        return `[${sizeParts.join(", ")}]`;
+    static transpileSizeToken(sizeToken: string, formatExpr?: string): string {
+        const token = sizeToken.trim();
+        const byteSized = /\]b$/.test(token);
+        const body = token.replace(/\]b$/, "]").replace(/^\[|\]$/g, "");
+        let sizeParts = DetailedParser.splitTopLevelByChar(body, ",").map(p => p.trim()).filter(Boolean);
+        if (sizeParts.length < 2) sizeParts = DetailedParser.splitTopLevelByChar(body, "x").map(p => p.trim()).filter(Boolean);
+        const values = sizeParts.map(p => DetailedParser.transpileExpr(p));
+        if (byteSized) {
+            if (!formatExpr || values.length !== 2) throw new Error(`[w,h]b requires a texture format: ${sizeToken}`);
+            const channelCount = `((__fmt:any) => [gl.RED, gl.RED_INTEGER].includes(__fmt[0]) ? 1 : [gl.RG, gl.RG_INTEGER].includes(__fmt[0]) ? 2 : [gl.RGB, gl.RGB_INTEGER].includes(__fmt[0]) ? 3 : 4)(${formatExpr})`;
+            values[1] = `Math.ceil((${values[1]}) / (${channelCount}))`;
+        }
+        return `[${values.join(", ")}]`;
     }
 
     static transpileTextureFormatToken(rawToken: string): string {
@@ -1714,6 +1722,8 @@ export class DetailedParser {
         const lineNoInit = initSplit ? initSplit[0] : line;
         const initExpr = initSplit ? DetailedParser.transpileExpr(initSplit[1]) : "null";
         const normalizedLineNoInit = lineNoInit.replace(/^\s*(?:new-|in-)?tex2D\b/, "tex2D");
+        const byteSized = /\]\s*b(?=\s|$)/.test(normalizedLineNoInit);
+        const normalizedSizeLine = normalizedLineNoInit.replace(/\]\s*b(?=\s|$)/, "]");
 
         let namesPart = "";
         let sizeBody = "";
@@ -1721,7 +1731,7 @@ export class DetailedParser {
         let maybeFilterToken: string | undefined;
         let texUnitToken: string | undefined;
 
-        const modern = normalizedLineNoInit.match(/^tex2D\s+(.+?)\s+RES\s*\[([\s\S]+?)\]\s+TYPE\s+([^\s]+)(?:\s+FILTER\s+(\[[\s\S]+\]))?\s*->\s*([^\s]+)\s*$/);
+        const modern = normalizedSizeLine.match(/^tex2D\s+(.+?)\s+RES\s*\[([\s\S]+?)\]\s+TYPE\s+([^\s]+)(?:\s+FILTER\s+(\[[\s\S]+\]))?\s*->\s*([^\s]+)\s*$/);
         if (modern) {
             namesPart = modern[1].trim();
             sizeBody = modern[2].trim();
@@ -1729,7 +1739,7 @@ export class DetailedParser {
             maybeFilterToken = modern[4]?.trim();
             texUnitToken = modern[5]?.trim();
         } else {
-            const modernNoType = normalizedLineNoInit.match(/^tex2D\s+(.+?)\s+RES\s*\[([\s\S]+?)\]\s+([\s\S]+)$/);
+            const modernNoType = normalizedSizeLine.match(/^tex2D\s+(.+?)\s+RES\s*\[([\s\S]+?)\]\s+([\s\S]+)$/);
             if (modernNoType) {
                 namesPart = modernNoType[1].trim();
                 sizeBody = modernNoType[2].trim();
@@ -1750,7 +1760,7 @@ export class DetailedParser {
                     texUnitToken = tailTokens[k];
                 }
             } else {
-                const legacy = normalizedLineNoInit.match(/^tex2D\s+([A-Za-z_]\w*(?:[\|~][A-Za-z_]\w*)*)\s*\[([\s\S]+)\]\s+([\s\S]+)$/);
+                const legacy = normalizedSizeLine.match(/^tex2D\s+([A-Za-z_]\w*(?:[\|~][A-Za-z_]\w*)*)\s*\[([\s\S]+)\]\s+([\s\S]+)$/);
                 if (!legacy) return null;
                 namesPart = legacy[1].trim();
                 sizeBody = legacy[2].trim();
@@ -1786,8 +1796,6 @@ export class DetailedParser {
             sizeParts = sizeBody.split(/\s+x\s+/i).map(x => x.trim()).filter(Boolean);
         }
         if (sizeParts.length < 2) return null;
-        const sizeExpr = `[${sizeParts.map(x => DetailedParser.transpileExpr(x)).join(", ")}]`;
-
         const texUnitExpr = texUnitToken ? DetailedParser.normalizeTexUnitToken(texUnitToken) : "undefined";
         let formatExpr = DetailedParser.transpileTextureFormatToken(resourceToken);
         let filterMinExpr = `"NEAREST"`;
@@ -1802,6 +1810,7 @@ export class DetailedParser {
             wrapSExpr = `(${resourceToken}?.wrap_S ?? ${resourceToken}?.wrap ?? ${resourceToken}?.wrapS ?? "CLAMP")`;
             wrapTExpr = `(${resourceToken}?.wrap_T ?? ${resourceToken}?.wrap ?? ${resourceToken}?.wrapT ?? "CLAMP")`;
         }
+        const sizeExpr = DetailedParser.transpileSizeToken(`[${sizeParts.join(",")}]${byteSized ? "b" : ""}`, formatExpr);
 
         if (maybeFilterToken) {
             const fw = DetailedParser.splitTopLevelByChar(maybeFilterToken.slice(1, -1), ",")
@@ -1996,7 +2005,7 @@ export class DetailedParser {
 
     static transpileDrawCallBlock(headerRaw: string, lines: string[], declaredVars: Set<string>): string[] {
         const header = headerRaw.trim();
-        const m = header.match(/^((?:drawPoints|drawLineStrip|drawLineLoop|drawLines|drawTriangleStrip|drawTriangleFan|drawTriangles))\s*([\s\S]*?)\s*(?:->\s*\[([\s\S]*?)\])?(?:\s+size\s+(\[[\s\S]*\]))?\s*$/i);
+        const m = header.match(/^((?:drawPoints|drawLineStrip|drawLineLoop|drawLines|drawTriangleStrip|drawTriangleFan|drawTriangles))\s*([\s\S]*?)\s*(?:->\s*\[([\s\S]*?)\])?(?:\s+size\s+(\[[\s\S]*\]b?))?\s*$/i);
         if (!m) return [`// TODO(draw-block): ${header}`];
         const drawFn = m[1];
         const canonicalDrawFn = Object.keys(DetailedParser.DRAW_BLOCK_MODES).find(key => key.toLowerCase() === drawFn.toLowerCase());
@@ -2007,6 +2016,7 @@ export class DetailedParser {
         const sizeRaw = (m[4] || "").trim();
         const headerTokens = DetailedParser.splitByWhitespaceTopLevel(argsRaw);
         let headerAttribute: { name: string, value: string, hint?: string } | undefined;
+        let headerTexture: { name: string, value: string } | undefined;
         let explicitCount: string | undefined;
         let firstVertex = "0";
         const headerAttributeToken = /^\{([^{}]+)\}(f|float|i|int|ui|uint|vec[234]|ivec[234]|uvec[234]|mat[234])?$/;
@@ -2015,7 +2025,16 @@ export class DetailedParser {
             const valueIndex = name ? 1 : 0;
             const attribute = headerAttributeToken.exec(headerTokens[valueIndex] || "");
             if (!attribute) throw new Error(`Atributo de draw invalido: ${header}`);
-            headerAttribute = { name: name ? name[2] : "aPos", value: DetailedParser.transpileExpr(attribute[1]), hint: attribute[2] };
+            const textureVar = DetailedParser.transpileTexAliasToTextureVar.get(attribute[1]);
+            if (textureVar) {
+                if (name) throw new Error(`Una textura de draw usa su nombre de uniform, no un atributo: ${header}`);
+                headerTexture = {
+                    name: DetailedParser.transpileTexAliasToUniform.get(attribute[1]) || attribute[1],
+                    value: textureVar
+                };
+            } else {
+                headerAttribute = { name: name ? name[2] : "aPos", value: DetailedParser.transpileExpr(attribute[1]), hint: attribute[2] };
+            }
             if (headerTokens[valueIndex + 1]) explicitCount = DetailedParser.transpileExpr(headerTokens[valueIndex + 1]);
             if (headerTokens.length > valueIndex + 2) throw new Error(`Demasiados argumentos de draw: ${header}`);
         } else if (headerTokens.length) {
@@ -2068,8 +2087,16 @@ export class DetailedParser {
                 out.push(`(()=>{ const __data = ${headerAttribute.value}; const __dim = Array.isArray(__data?.[0]) ? __data[0].length : 2; lastUsedProgram.VAO.attribute(${JSON.stringify(headerAttribute.name)}, __data, __dim); })();`);
             }
         }
+        if (headerTexture) {
+            out.push(`lastUsedProgram.bindVAO();`);
+            out.push(`lastUsedProgram.bindTexture(${headerTexture.value}, ${JSON.stringify(headerTexture.name)}, ${headerTexture.value}.unit);`);
+        }
         if (sizeRaw) {
-            const sizeExpr = DetailedParser.transpileExpr(sizeRaw);
+            const firstOutput = DetailedParser.splitTopLevelByChar(outTexRaw, ",").map(x => x.trim()).find(Boolean);
+            const formatExpr = firstOutput ? `(${DetailedParser.transpileExpr(firstOutput)} as any).format` : undefined;
+            const sizeExpr = sizeRaw.endsWith("b")
+                ? DetailedParser.transpileSizeToken(sizeRaw, formatExpr)
+                : DetailedParser.transpileExpr(sizeRaw);
             out.push(`(()=>{ const __sz:any = ${sizeExpr}; lastUsedProgram?.setViewport(0,0,__sz[0],__sz[1]); })();`);
         }
         if (outTexRaw) {
@@ -2178,7 +2205,7 @@ export class DetailedParser {
         }
 
         if (hasAttributes) out.push(`lastUsedProgram.bindVAO();`);
-        out.push(`lastUsedProgram?.drawArrays(${JSON.stringify(drawMode)}, ${firstVertex}, ${explicitCount ?? (hasAttributes ? "lastUsedProgram.VAO.vaoLength" : "6")});`);
+        out.push(`lastUsedProgram?.drawArrays(${JSON.stringify(drawMode)}, ${firstVertex}, ${explicitCount ?? (hasAttributes ? "lastUsedProgram.VAO.vaoLength" : headerTexture ? `${headerTexture.value}.w * ${headerTexture.value}.h` : "6")});`);
         if (backupPathExpr !== "undefined") {
             const outputEntriesExpr = outputRefs.length
                 ? `[${outputRefs.map(ref => `{ name: ${JSON.stringify(ref)}, tex: ${DetailedParser.transpileExpr(ref)} }`).join(", ")}]`
@@ -2773,6 +2800,27 @@ export class DetailedParser {
     static transpileSimpleStatement(line: string, declaredVars: Set<string>): string[] {
         const out: string[] = [];
 
+        const unbindFBO = /^unbindFBO\s+([A-Za-z_]\w*)$/.exec(line.trim());
+        if (unbindFBO) return [`${unbindFBO[1]}.unbindFBO();`];
+
+        const transfer = /^([A-Za-z_]\w*)\s*<=\s*([A-Za-z_]\w*)$/.exec(line.trim());
+        if (transfer) {
+            const [, left, right] = transfer;
+            const leftTexture = DetailedParser.transpileTexAliasToTextureVar.get(left);
+            const rightTexture = DetailedParser.transpileTexAliasToTextureVar.get(right);
+            if (leftTexture && !rightTexture) {
+                return [`${leftTexture}.fill(${right});`];
+            }
+            if (!leftTexture && rightTexture) {
+                return [
+                    `(()=>{ const __target:any = ${left}; const __values = ${rightTexture}.read();`,
+                    `if (!Array.isArray(__target)) throw new Error("Texture read target must be a resizable array: ${left}");`,
+                    `__target.length = 0; for (const __value of __values) __target.push(__value); })();`
+                ];
+            }
+            throw new Error(`Transferencia <= ambigua: ${line}`);
+        }
+
         const escaped = DetailedParser.transpileEscapedDestructuring(line, declaredVars);
         if (escaped) return escaped;
 
@@ -2951,7 +2999,8 @@ export class DetailedParser {
         str: string,
         outPath: string,
         mainImportsPath?: string,
-        backupScopeHint?: string
+        backupScopeHint?: string,
+        preserveGeneratedSections = true
     ): Promise<string> {
         const req = DetailedParser.getNodeRequire();
         const pathMod = req ? req("path") : await import("node:path");
@@ -2968,7 +3017,7 @@ export class DetailedParser {
         }
 
         const imports = await DetailedParser.extractImportsFromMain(resolvedMainPath);
-        const previousSource = await DetailedParser.readFileSafe(outPath);
+        const previousSource = preserveGeneratedSections ? await DetailedParser.readFileSafe(outPath) : null;
         const preserved = previousSource
             ? DetailedParser.extractPreservedSections(previousSource)
             : new Map<string, string[]>();
@@ -3538,9 +3587,9 @@ export class DetailedParser {
     /**
      * Método principal para parsear y ejecutar la configuración del script.
      */
-    static async parse(str: string, gl: WebGL2RenderingContext, thiscontext, outPath?: string, mainImportsPath?: string, backupScopeHint?: string) {
+    static async parse(str: string, gl: WebGL2RenderingContext, thiscontext, outPath?: string, mainImportsPath?: string, backupScopeHint?: string, preserveGeneratedSections = true) {
         if (outPath) {
-            return await DetailedParser.transpileToFile(str, outPath, mainImportsPath, backupScopeHint);
+            return await DetailedParser.transpileToFile(str, outPath, mainImportsPath, backupScopeHint, preserveGeneratedSections);
         }
         str = await DetailedParser.resolveParseTextImports(str);
         DetailedParser.gctx.gl = gl;

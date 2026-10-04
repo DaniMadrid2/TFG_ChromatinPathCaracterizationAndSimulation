@@ -51,6 +51,21 @@
       "match": "\\b(?:vec2|vec3|vec4|mat2|mat3|mat4)\\s*(?=\\()"
     },
     {
+      "name": "meta.dimension.byte-sized.parse-text-ts",
+      "begin": "\\[(?=[^\\]\\n]+\\]b\\b)",
+      "end": "(?<=\\])b\\b",
+      "beginCaptures": {
+        "0": { "name": "punctuation.section.brackets.begin.parse-text-ts" }
+      },
+      "endCaptures": {
+        "0": { "name": "punctuation.section.brackets.end.parse-text-ts" }
+      },
+      "patterns": [
+        { "name": "punctuation.section.brackets.end.parse-text-ts", "match": "\\]" },
+        { "include": "source.ts" }
+      ]
+    },
+    {
       "name": "meta.dimension.parse-text-ts",
       "match": "\\[[^\\]]+\\s+x\\s+[^\\]]+\\]"
     },

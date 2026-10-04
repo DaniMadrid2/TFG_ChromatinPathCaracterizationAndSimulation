@@ -240,6 +240,7 @@ export class WebProgram{
         this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_WRAP_S, (FILTER_WRAP as any)[2]);
         this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_WRAP_T, (FILTER_WRAP as any)[3]);
         // Initialize texture with data
+        const arrayData = Array.isArray(data) || ArrayBuffer.isView(data);
         this.gl.texImage2D(
             this.gl.TEXTURE_2D,      // Target
             LODlevel,                  // Level
@@ -249,7 +250,7 @@ export class WebProgram{
             0,                  // Border
             format[0]||this.gl.RGBA,            // Format
             format[2]||this.gl.FLOAT,           // Type
-            data||null          // Data
+            arrayData ? null : data||null // Array data is uploaded by fill below.
         );
 
         if(!!name&&!!name.trim()){
@@ -258,6 +259,22 @@ export class WebProgram{
         this.nUsedTextures++;
 
         (tex as any).fill=(arr,x=0,y=0,w=size[0],h=size[1],LOD=LODlevel)=>{
+            const channels = [this.gl.RED, this.gl.RED_INTEGER].includes(format[0]) ? 1
+                : [this.gl.RG, this.gl.RG_INTEGER].includes(format[0]) ? 2
+                : [this.gl.RGB, this.gl.RGB_INTEGER].includes(format[0]) ? 3 : 4;
+            const values = Array.isArray(arr) ? arr.flat(Infinity)
+                : ArrayBuffer.isView(arr) ? Array.from(arr as any) : null;
+            if (values) {
+                if (values.length > w * h * channels) throw new Error(`Texture fill accepts at most ${w * h * channels} values, got ${values.length}`);
+                while (values.length < w * h * channels) values.push(0);
+                arr = format[2] === this.gl.FLOAT ? new Float32Array(values)
+                    : format[2] === this.gl.INT ? new Int32Array(values)
+                    : format[2] === this.gl.UNSIGNED_INT ? new Uint32Array(values)
+                    : format[2] === this.gl.UNSIGNED_BYTE ? new Uint8Array(values)
+                    : format[2] === this.gl.BYTE ? new Int8Array(values)
+                    : format[2] === this.gl.SHORT ? new Int16Array(values)
+                    : format[2] === this.gl.UNSIGNED_SHORT ? new Uint16Array(values) : values;
+            }
             if((tex as any).unit!==undefined)
                 this.gl.activeTexture(this.gl.TEXTURE0+(tex as any).unit);
             this.gl.bindTexture(this.gl.TEXTURE_2D,tex);
@@ -266,17 +283,51 @@ export class WebProgram{
             return tex;
         };
         
-        //Removed because this doesnt actually read the texture, only the screen
-        // (tex as any).read=(arr?,x=0,y=0,w=size[0],h=size[1],dimension=4)=>{
-        //     if(!arr) arr=new Float32Array(w*h*dimension);
-        //     if((tex as any).unit!==undefined){
-        //         this.gl.activeTexture(this.gl.TEXTURE0+(tex as any).unit);
-        //     }
-        //     this.gl.bindTexture(this.gl.TEXTURE_2D,tex);
-        //     this.gl.readPixels(x, y, w, h, format[0], format[2], arr);
-        //     this.gl.bindTexture(this.gl.TEXTURE_2D,null);
-        //     return arr;
-        // };
+        (tex as any).read=(x=0,y=0,w=size[0],h=size[1])=>{
+            const gl = this.gl;
+            const channels = [gl.RED, gl.RED_INTEGER].includes(format[0]) ? 1
+                : [gl.RG, gl.RG_INTEGER].includes(format[0]) ? 2
+                : [gl.RGB, gl.RGB_INTEGER].includes(format[0]) ? 3 : 4;
+            const integerFormat = [gl.RED_INTEGER, gl.RG_INTEGER, gl.RGB_INTEGER, gl.RGBA_INTEGER].includes(format[0]);
+            const readFormat = integerFormat ? gl.RGBA_INTEGER : gl.RGBA;
+            const length = w * h * 4;
+            const pixels = format[2] === gl.FLOAT ? new Float32Array(length)
+                : format[2] === gl.INT ? new Int32Array(length)
+                : format[2] === gl.UNSIGNED_INT ? new Uint32Array(length)
+                : format[2] === gl.UNSIGNED_BYTE ? new Uint8Array(length)
+                : format[2] === gl.BYTE ? new Int8Array(length)
+                : format[2] === gl.SHORT ? new Int16Array(length)
+                : format[2] === gl.UNSIGNED_SHORT ? new Uint16Array(length) : null;
+            if (!pixels) throw new Error(`Unsupported texture read type: ${format[2]}`);
+            const previous = gl.getParameter(gl.READ_FRAMEBUFFER_BINDING);
+            const previousReadBuffer = gl.getParameter(gl.READ_BUFFER);
+            const previousPackAlignment = gl.getParameter(gl.PACK_ALIGNMENT);
+            const readFBO = gl.createFramebuffer();
+            if (!readFBO) throw new Error("Could not create texture read framebuffer");
+            try {
+                gl.bindFramebuffer(gl.READ_FRAMEBUFFER, readFBO);
+                gl.framebufferTexture2D(gl.READ_FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+                gl.readBuffer(gl.COLOR_ATTACHMENT0);
+                if (gl.checkFramebufferStatus(gl.READ_FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) {
+                    throw new Error("Texture read framebuffer is incomplete");
+                }
+                gl.pixelStorei(gl.PACK_ALIGNMENT, 1);
+                gl.readPixels(x, y, w, h, readFormat, format[2], pixels);
+                const error = gl.getError();
+                if (error !== gl.NO_ERROR) throw new Error(`Texture read failed: WebGL error ${error}`);
+                if (channels === 4) return pixels;
+                const compact = new (pixels.constructor as any)(w * h * channels);
+                for (let i = 0; i < w * h; i++) {
+                    for (let c = 0; c < channels; c++) compact[i * channels + c] = pixels[i * 4 + c];
+                }
+                return compact;
+            } finally {
+                gl.bindFramebuffer(gl.READ_FRAMEBUFFER, previous);
+                gl.readBuffer(previousReadBuffer);
+                gl.pixelStorei(gl.PACK_ALIGNMENT, previousPackAlignment);
+                gl.deleteFramebuffer(readFBO);
+            }
+        };
         
     
         (tex as any).unit=nTexture;
@@ -305,6 +356,8 @@ export class WebProgram{
 
         WebProgram.Textures[parseTexUnitType((tex as any).unit)]=tex as any;
         this.textures[parseTexUnitType((tex as any).unit)]=tex as any;
+
+        if (arrayData) (tex as any).fill(data);
 
 
         return tex as any;
@@ -1191,7 +1244,7 @@ export type GLMode="TRIANGLES"|"TRIANGLE_STRIP"|"TRIANGLE_FAN"|"POINTS"|"LINES"|
 export type BindableTexture=WebGLTexture&{
     unit:number,w:number,h:number,
     fill:(arr: any, x?: number, y?: number, w?: number, h?: number, LOD?: number) => BindableTexture,
-    // read:(arr?: any, x?: number, y?: number, w?: number, h?: number, dimension?: number) => ArrayBufferView<ArrayBufferLike>,
+    read:(x?: number, y?: number, w?: number, h?: number) => Float32Array | Int32Array | Uint32Array | Uint8Array | Int8Array | Int16Array | Uint16Array,
     bind:(textureUnit?:TextureUnitType)=>BindableTexture,
     unbind:(textureUnit?:TextureUnitType)=>BindableTexture,
 }

@@ -17,3 +17,8 @@ Su parser y sus ayudas de edicion deben reconocer:
 
 El parser del paquete es la referencia semantica. La extension no debe asumir
 seis vertices cuando se proporcionan atributos sin un count explicito.
+
+La gramatica ya colorea `b` en `[w,h]b`, pero las ayudas semanticas de la
+extension todavia deben distinguir `drawLineStrip {textura}vec2` (sampler y
+`gl_VertexID`) de `{array}vec2` (atributo VAO), y reconocer `textura <= array`
+y `array <= textura` como transferencias explicitas.

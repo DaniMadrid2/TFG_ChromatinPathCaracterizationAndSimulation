@@ -28,7 +28,12 @@ function sourceResolver(cwd, localParser, localMan) {
     name: 'shaderdsl-source-resolver',
     setup(build) {
       build.onResolve({ filter: /^\/Code\// }, async ({ path: request }) => {
-        if (localMan && request === '/Code/WebGL/webglMan.js') return { path: localMan };
+        if (request === '/Code/WebGL/webglMan.js') {
+          return { path: localMan || path.join(bundledLib, 'Code', 'WebGL', 'webglMan.ts') };
+        }
+        if (request === '/Code/WebGL/webglParser.js') {
+          return { path: localParser || path.join(bundledLib, 'Code', 'WebGL', 'webglParser.ts') };
+        }
         const relative = request.slice('/Code/'.length);
         const local = path.join(localCode, relative);
         if (await exists(local)) return { path: local };
@@ -64,7 +69,7 @@ async function loadParser(cwd) {
     }
   }
   if (!localParser) {
-    return { DetailedParser: require(path.join(packageRoot, 'parser.cjs')).DetailedParser, localMan: null };
+    return { DetailedParser: require(path.join(packageRoot, 'parser.cjs')).DetailedParser, localParser: null, localMan: null };
   }
   const result = await esbuild.build({
     entryPoints: [localParser], bundle: true, write: false, platform: 'node',
@@ -75,7 +80,7 @@ async function loadParser(cwd) {
   mod.paths = Module._nodeModulePaths(path.dirname(localParser));
   mod._compile(result.outputFiles[0].text, localParser);
   if (!mod.exports.DetailedParser) throw new Error(`${localParser} does not export DetailedParser`);
-  return { DetailedParser: mod.exports.DetailedParser, localMan };
+  return { DetailedParser: mod.exports.DetailedParser, localParser, localMan };
 }
 
 function directive(line) {
@@ -100,7 +105,9 @@ async function resolveDsl(file, inherited = [], ancestors = new Set()) {
     const imported = line.match(/^\s*import\s*<([A-Za-z_][\w-]*)>\s+from\s+(.+?)\s*$/);
     if (imported && /\.shaderdsl\.ts["']?$/.test(imported[2])) {
       const target = imported[2].trim().replace(/^["']|["']$/g, '');
-      output.push(await resolveDsl(path.resolve(path.dirname(absolute), target), active, nextAncestors));
+      const importedSource = await resolveDsl(path.resolve(path.dirname(absolute), target), active, nextAncestors);
+      output.push(importedSource.split(/\r?\n/).filter((importedLine) =>
+        !/^\s*<(?:Pre\/?|Pos\/?)>\s*$/.test(importedLine)).join('\n'));
       continue;
     }
     output.push(/^\s*backUp\s*:/.test(line)
@@ -202,7 +209,7 @@ function applySnippets(source, snippets, config = {}, id = '') {
 async function parseFiles(files, options = {}) {
   const cwd = path.resolve(options.cwd || process.cwd());
   const outDir = path.resolve(cwd, options.outDir || 'generated');
-  const { DetailedParser, localMan } = await loadParser(cwd);
+  const { DetailedParser, localParser, localMan } = await loadParser(cwd);
   const configPath = path.join(cwd, 'shaderdsl.config.json');
   const config = await exists(configPath) ? JSON.parse(await fs.readFile(configPath, 'utf8')) : {};
   const outputs = [];
@@ -217,7 +224,7 @@ async function parseFiles(files, options = {}) {
     const tsFile = path.join(outDir, basename + '.ts');
     const jsFile = path.join(outDir, basename + '.js');
     await fs.mkdir(outDir, { recursive: true });
-    await DetailedParser.parse(source, null, {}, tsFile, undefined, fileName.replace(dslSuffix, ''));
+    await DetailedParser.parse(source, null, {}, tsFile, undefined, fileName.replace(dslSuffix, ''), false);
     const snippets = await readSnippets(cwd, id);
     const explicit = [];
     for (const item of config.snippets || []) {
@@ -229,7 +236,7 @@ async function parseFiles(files, options = {}) {
     await esbuild.build({
       stdin: { contents: generated, resolveDir: outDir, sourcefile: tsFile, loader: 'ts' },
       outfile: jsFile, bundle: true, platform: 'browser', format: 'esm', target: 'es2022',
-      plugins: [sourceResolver(cwd, null, localMan)],
+      plugins: [sourceResolver(cwd, localParser, localMan)],
     });
     outputs.push({ input: absolute, tsFile, jsFile });
     console.log(`[dnti_shaderdsl] ${jsFile}`);

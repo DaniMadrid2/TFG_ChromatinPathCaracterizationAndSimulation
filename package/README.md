@@ -21,7 +21,10 @@ repositorio original.
 ## Crear y servir un proyecto
 
 `dnti_shaderdsl init` pregunta que ejemplo crear: un canvas sencillo, dos
-trayectorias sin `tick`, o una simulacion de dos campos con WebGL2. Para usarlo
+trayectorias sin `tick`, una simulacion de dos campos con WebGL2, o
+`pointSimulation` (dos canvases con puntos cuya posicion se actualiza en la GPU).
+Este cuarto ejemplo usa `parseTextC12.shaderdsl.ts` como DSL compartido y
+snippets distintos para C1 y C2. Para usarlo
 sin preguntas:
 
 ```sh
@@ -161,6 +164,24 @@ atributo directamente en la cabecera. Tambien se admiten `f`, `i`, `ui`,
 `ivec2/3/4`, `uvec2/3/4` y `mat2/3/4`. Si se omite el recuento, se infiere
 del array; el tercer ejemplo fuerza 10 vertices. El grosor de las lineas WebGL depende
 del navegador y la GPU; para lineas anchas portables usa triangulos.
+
+Una textura declarada con `tex2D` tambien puede ser la fuente de vertices:
+`drawLineStrip {positionTexture}vec2 -> [] size [640,480] { }`. En este caso
+no hay transferencia a CPU ni atributo `aPos`: el parser enlaza el sampler
+`positionTexture` y usa `texture.w * texture.h` vertices. El vertex shader
+debe leer `texelFetch(positionTexture, ivec2(0, gl_VertexID), 0)` para una
+textura de anchura 1. No se puede muestrear una textura mientras se escribe
+en ella en la misma pasada; utiliza dos texturas y alterna entrada/salida.
+
+Las sentencias `positionTexture <= trajectory` y `trajectory <= positionTexture`
+suben valores mediante `.fill()` o los leen mediante `.read()`, respectivamente.
+La lectura es sincrona y copia datos de GPU a CPU; el destino debe ser un
+array JS redimensionable. El sufijo `b` en `RES [1,trajectory.length]b` o
+`drawTriangles -> [positionTexture] size [1,trajectory.length]b` divide la
+segunda dimension por los canales del formato (`RG` = 2) y aplica `ceil`.
+En un draw con varias salidas usa el formato de la primera; sin salida no
+puede inferirse el formato y `b` no esta permitido. `.fill()` completa con
+ceros el ultimo texel cuando faltan componentes.
 
 Para varios atributos, define el tipo de cada uno. Cada entrada usa un array
 plano o un array de tuplas del tamano indicado; las matrices ocupan varias

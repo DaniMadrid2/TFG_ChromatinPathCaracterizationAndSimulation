@@ -6,17 +6,18 @@ const templates = {
   simple: 'Un canvas y un shader GLSL',
   trajectories: 'Dos trayectorias y sus medias, sin tick',
   simulation: 'Dos campos de textura con simulacion y raton',
+  pointSimulation: 'Dos canvases con puntos simulados en texturas WebGL2',
 };
 
 async function chooseTemplate(input = process.stdin, output = process.stdout) {
-  if (!input.isTTY) throw new Error('Usa --template simple|trajectories|simulation sin terminal interactiva');
+  if (!input.isTTY) throw new Error('Usa --template simple|trajectories|simulation|pointSimulation sin terminal interactiva');
   const names = Object.keys(templates);
   output.write('Elige un ejemplo Shader DSL:\n');
   names.forEach((name, index) => output.write(`  ${index + 1}. ${name}: ${templates[name]}\n`));
   const rl = readline.createInterface({ input, output });
   try {
-    const answer = (await rl.question('Ejemplo [1-3]: ')).trim().toLowerCase();
-    const chosen = names[Number(answer) - 1] || (answer in templates ? answer : null);
+    const answer = (await rl.question(`Ejemplo [1-${names.length}]: `)).trim();
+    const chosen = names[Number(answer) - 1] || names.find((name) => name.toLowerCase() === answer.toLowerCase());
     if (!chosen) throw new Error(`Ejemplo desconocido: ${answer}`);
     return chosen;
   } finally {

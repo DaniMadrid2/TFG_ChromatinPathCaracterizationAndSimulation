@@ -24,17 +24,30 @@ import { BindableTexture, GLMode, TexExamples, TextureUnitType, WebGLMan, WebPro
   if (!canvas) throw new Error("Missing trajectory canvas for c1");
   const gl = canvas.getContext("webgl2");
   if (!gl) throw new Error("WebGL2 is required");
+  if (!gl.getExtension("EXT_color_buffer_float")) throw new Error("RG32F render targets are not supported");
   const ctx = gl;
   const webglMan = new WebGLMan(gl);
   KeyManager.detectKeys(keypress);
   MouseManager.EnableCanvas(canvas);
 
-const trajectory: Array<[number, number]> = [
+let trajectory: number[] = [
   [0.06, 0.74], [0.15, 0.57], [0.24, 0.62], [0.33, 0.35],
   [0.44, 0.43], [0.53, 0.28], [0.64, 0.39], [0.73, 0.17],
   [0.84, 0.26], [0.94, 0.11],
 ].flat();
+//Somehow trajectory is length 20, but it should be able to add more points to it
 
+//Add 300 more points to the trajectory by interpolating between the last point and the first point
+//make sure trajectory is a flat array of numbers, not an array of tuples
+
+const lastPoint = trajectory.slice(-2);
+const firstPoint = trajectory.slice(0, 2);
+for (let i = 1; i <= 300; i++) {
+  const t = i / 300;
+  const x = lastPoint[0] * (1 - t) + firstPoint[0] * t;
+  const y = lastPoint[1] * (1 - t) + firstPoint[1] * t;
+  trajectory.push(x, y);
+}
 //</Pre>
 var lastUsedProgram: any = null;
 var lastFillerProgram: any = null;
@@ -401,27 +414,39 @@ await movePoints.loadProgram(movePoints.vertPath, movePoints.fragPath, (source =
 await movePoints.use?.();
 lastUsedProgram = movePoints;
 movePoints.createVAO().bind();
-var positionTexture = movePoints.createTexture2D("positionTexture", [1, trajectory.length/2], (TauFloatTex?.format ?? (TexExamples as any).RGBAFloat), trajectory, [(TauFloatTex?.filter_min ?? TauFloatTex?.filter ?? TauFloatTex?.minFilter ?? "NEAREST"), (TauFloatTex?.filter_mag ?? TauFloatTex?.filter ?? TauFloatTex?.magFilter ?? "NEAREST"), (TauFloatTex?.wrap_S ?? TauFloatTex?.wrap ?? TauFloatTex?.wrapS ?? "CLAMP"), (TauFloatTex?.wrap_T ?? TauFloatTex?.wrap ?? TauFloatTex?.wrapT ?? "CLAMP")], "TexUnit12");
+var positionTexture = movePoints.createTexture2D("positionTexture", [1, Math.ceil((trajectory.length) / (((__fmt:any) => [gl.RED, gl.RED_INTEGER].includes(__fmt[0]) ? 1 : [gl.RG, gl.RG_INTEGER].includes(__fmt[0]) ? 2 : [gl.RGB, gl.RGB_INTEGER].includes(__fmt[0]) ? 3 : 4)((TauFloatTex?.format ?? (TexExamples as any).RGBAFloat))))], (TauFloatTex?.format ?? (TexExamples as any).RGBAFloat), trajectory, [(TauFloatTex?.filter_min ?? TauFloatTex?.filter ?? TauFloatTex?.minFilter ?? "NEAREST"), (TauFloatTex?.filter_mag ?? TauFloatTex?.filter ?? TauFloatTex?.magFilter ?? "NEAREST"), (TauFloatTex?.wrap_S ?? TauFloatTex?.wrap ?? TauFloatTex?.wrapS ?? "CLAMP"), (TauFloatTex?.wrap_T ?? TauFloatTex?.wrap ?? TauFloatTex?.wrapT ?? "CLAMP")], "TexUnit12");
 (positionTexture as any).__backupVarName = "positionTexture";
 (positionTexture as any).__backupUniformName = "positionTexture";
 (positionTexture as any).__backupProgram = (movePoints as any)?.ID ?? (movePoints as any)?.fragPath ?? "movePoints";
+var positionTextureNext = movePoints.createTexture2D("positionTextureNext", [1, Math.ceil((trajectory.length) / (((__fmt:any) => [gl.RED, gl.RED_INTEGER].includes(__fmt[0]) ? 1 : [gl.RG, gl.RG_INTEGER].includes(__fmt[0]) ? 2 : [gl.RGB, gl.RGB_INTEGER].includes(__fmt[0]) ? 3 : 4)((TauFloatTex?.format ?? (TexExamples as any).RGBAFloat))))], (TauFloatTex?.format ?? (TexExamples as any).RGBAFloat), null, [(TauFloatTex?.filter_min ?? TauFloatTex?.filter ?? TauFloatTex?.minFilter ?? "NEAREST"), (TauFloatTex?.filter_mag ?? TauFloatTex?.filter ?? TauFloatTex?.magFilter ?? "NEAREST"), (TauFloatTex?.wrap_S ?? TauFloatTex?.wrap ?? TauFloatTex?.wrapS ?? "CLAMP"), (TauFloatTex?.wrap_T ?? TauFloatTex?.wrap ?? TauFloatTex?.wrapT ?? "CLAMP")], "TexUnit13");
+(positionTextureNext as any).__backupVarName = "positionTextureNext";
+(positionTextureNext as any).__backupUniformName = "positionTextureNext";
+(positionTextureNext as any).__backupProgram = (movePoints as any)?.ID ?? (movePoints as any)?.fragPath ?? "movePoints";
+let movePointsFBO = null;
 var __globalBlockFn_0 = async (dt)=>{ // tick
     await movePoints.use?.();
     lastUsedProgram = movePoints;
     lastUsedProgram?.use?.();
+    (()=>{ const __sz:any = [1, Math.ceil((trajectory.length) / (((__fmt:any) => [gl.RED, gl.RED_INTEGER].includes(__fmt[0]) ? 1 : [gl.RG, gl.RG_INTEGER].includes(__fmt[0]) ? 2 : [gl.RGB, gl.RGB_INTEGER].includes(__fmt[0]) ? 3 : 4)((positionTextureNext as any).format)))]; lastUsedProgram?.setViewport(0,0,__sz[0],__sz[1]); })();
+    movePointsFBO = (typeof movePointsFBO !== "undefined" && movePointsFBO) ? movePointsFBO.bind(["ColAtch0"]) : lastUsedProgram.cFrameBuffer().bind(["ColAtch0"]);
+    movePointsFBO.bindColorBuffer(positionTextureNext, "ColAtch0");
     lastUsedProgram.uNum("dt", true, false).set((dt));
-    lastUsedProgram?.drawArrays("TRIANGLES", ->, [positionTexture]);
-    trajectory <= positionTexture;
+    if(typeof positionTexture !== "undefined" && positionTexture?.bind) positionTexture.bind("TexUnit12");
+    lastUsedProgram.bindTexName2TexUnit("positionTexture", "TexUnit12");
+    lastUsedProgram?.drawArrays("TRIANGLES", 0, 6);
+    movePoints.unbindFBO();
     await demo.use?.();
     lastUsedProgram = demo;
     lastUsedProgram?.use?.();
     lastUsedProgram.bindVAO();
-    lastUsedProgram.VAO.attribute("aPos", trajectory, 2, "FLOAT", 0, 0, false, 1);
+    lastUsedProgram.bindTexture(positionTextureNext, "positionTextureNext", positionTextureNext.unit);
     (()=>{ const __sz:any = [640,480]; lastUsedProgram?.setViewport(0,0,__sz[0],__sz[1]); })();
     lastUsedProgram.uNum("offsetX", true, false).set((offset.x));
     lastUsedProgram.uNum("offsetY", true, false).set((offset.y));
-    lastUsedProgram.bindVAO();
-    lastUsedProgram?.drawArrays("LINE_STRIP", 0, lastUsedProgram.VAO.vaoLength);
+    lastUsedProgram?.drawArrays("POINTS", 0, positionTextureNext.w * positionTextureNext.h);
+    let previousTexture = positionTexture;
+    positionTexture = positionTextureNext;
+    positionTextureNext = previousTexture;
 };
 __globalBlocks.push({ priority: 10, order: 0, fn: __globalBlockFn_0 });
 KeyManager.OnKey("a", async (e)=>{ // OnKey

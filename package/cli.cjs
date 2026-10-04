@@ -13,7 +13,7 @@ Uso:
   dnti_shaderdsl parse <archivo.shaderdsl.ts> [...] [--out-dir DIR] [--watch] [--serve [port]] [--no-backup-server]
   dnti_shaderdsl parse . [--out-dir DIR] [--watch] [--serve [port]] [--no-backup-server]
   dnti_shaderdsl parseAll [--out-dir DIR] [--watch] [--serve [port]] [--no-backup-server]
-  dnti_shaderdsl init [NOMBRE|./] [--template simple|trajectories|simulation]
+  dnti_shaderdsl init [NOMBRE|./] [--template simple|trajectories|simulation|pointSimulation]
   dnti_shaderdsl serve [port] [path] [--no-backup-server]
   dnti_shaderdsl runserver [port] [path] [--no-backup-server]
   dnti_shaderdsl servebackups [port] [path]
@@ -50,6 +50,7 @@ Ejemplos:
   dnti_shaderdsl parse . --watch --serve
   dnti_shaderdsl parse . --watch --serve 5180
   dnti_shaderdsl init --template simulation --dir mi-simulacion
+  dnti_shaderdsl init --template pointSimulation --dir mis-puntos
   dnti_shaderdsl serve 4178 ./GLSLTest
   npm install -g ./dist
 
