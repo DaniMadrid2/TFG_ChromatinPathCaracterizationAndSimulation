@@ -60,6 +60,28 @@ npm run package
 npm run install-vsix
 ```
 
+## Registry syntax
+
+`npm run package` first runs `npm run build:syntax`. This reads every TypeScript
+file in `src/dependencies/Code/WebGL/parser/{objects,functions,registryModules}`
+without executing the parser. It writes `generated/registrySyntax.json` and
+updates the generated object/function patterns in the Shader DSL grammar.
+
+Put metadata comments immediately above an object or function entry:
+
+```ts
+objects: {
+    //@dnti-createsInternalTexture
+    //@dnti-color #39FF14
+    SolidMeshProgram: (params, gl) => { /* ... */ },
+}
+```
+
+`createsInternalTexture` tells the extension that `input=TexUnit20` is occupied
+by that object; it affects the TexUnit state color and completion ranking.
+`color` sets the name's editor color. Other `@dnti-*` comments are retained in
+the generated JSON for future rules. New registry files need no extension edit.
+
 ## Nota sobre el soporte de lenguaje
 
 Esta extensión registra dos identificadores de lenguaje:

@@ -3,10 +3,14 @@
 <Pre>
 
 
-MeshProgram input=TexUnit20 1024x1024
+meshProgram = SolidMeshProgram input=TexUnit20 1024x1024
 lduse meshProgram
-meshProgram.initUniforms().setPerXPerY(0.5,0.5).setDXDY(0.16,0.16).setColorHueScale(1)
-surface=createIdealMesh TexUnit20 (x,y)=>{return sin(x/4)*cos(y/4)+-exp(0.00001*((x-512)*(x-512)+(y-512)*(y-512)))*12} .bind()
+let scaleFactor=1;
+//TODO que la extensión pueda saber cuándo estamos trabajando con un objeto de tal clase y autocomplete al usar sus funciones o variables
+//TODO el renderizado de solidMeshProgram no deduce el color en el fragment shader sino que lo pilla del pixel de creacion, debe de ser en el fragment si es posible?
+meshProgram.initUniforms().setPerXPerY(0.5,0.5).setDXDY(0.16*scaleFactor,0.16*scaleFactor).setYScale(scaleFactor).setColorHueScale(1)
+// surface=createIdealMesh TexUnit20 (x,y)=>{return sin(x/4)*cos(y/4)+-exp(0.00001*((x-512)*(x-512)+(y-512)*(y-512)))*12} .bind()
+surface=createIdealMesh TexUnit20 (x,y)=>{return sin(x/4)*cos(y/4)} .bind()
 
 
 camera3D = Camera3D pos=vec3(0,4,12);
@@ -79,7 +83,7 @@ tick {
     camera3D.tick( {dt} , {keypress} , {mousepos} , {mouseclick} )
 
     use meshProgram
-    meshProgram.draw(0,0,640,480,{camera3D},"LINES")
+    meshProgram.draw(0,0,640,480,{camera3D},"TRIANGLE_STRIP")
 
     // use axis3DGroup
     // axis3DGroup.draw({camera3D})

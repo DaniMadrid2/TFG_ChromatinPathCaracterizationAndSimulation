@@ -10,6 +10,6 @@ import { MathJaxLoader } from "/Code/MathJax/MathJax.js";
 import { createCanvasNextTo} from "/DNTI_Templates/00_Canvas_Snippet_Creator/Canvas_On_Page.js"
 import {create2DWithAxis} from "/DNTI_Templates/LinearAlgebra/2DLinear.js"
 
-import { Axis3DGroup, MeshRenderingProgram, MeshFillerProgram } from "/Code/WebGL/webglCapsules.js";
+import { Axis3DGroup, MeshRenderingProgram, SolidMeshRenderingProgram, MeshFillerProgram } from "/Code/WebGL/parser/registryModules/capsules.js";
 import { Camera3D } from "/Code/Game3D/Game3D.js";
 import { BindableTexture, GLMode, TexExamples, TextureUnitType, WebGLMan, WebProgram, parseTexUnitType } from "/Code/WebGL/webglMan.js";

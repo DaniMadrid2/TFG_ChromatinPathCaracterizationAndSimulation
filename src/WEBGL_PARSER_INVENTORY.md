@@ -14,7 +14,7 @@ si contiene `parser/webglParser.ts` y `webglMan.ts` (se acepta el par antiguo).
   `register`. El cargador Node descubre los archivos TS con `fs` al ejecutar el parser; no genera `index.ts`.
 - `parser/registryModules/`: agregadores `objects.ts` y `functions.ts`, mas
   modulos independientes. `capsules.ts` contiene las clases, funciones y
-  transpilacion de `MeshCapsule`; `webglCapsules.ts` solo reexporta.
+  transpilacion de `MeshCapsule`; las clases se importan desde ese modulo.
   `dnti.modules.json` activa nombres o rutas de modulos externos.
 - Los modos de dibujo son un mapa del parser a constantes WebGL, no un modulo
   `blocks` separado.
@@ -241,7 +241,7 @@ Destino sugerido: `parser/importResolver.ts`, `parser/sectionPreserver.ts`,
 
 | Metodo(s) | Funcion |
 | --- | --- |
-| `ObjectRegistry` (`Program`, `MeshProgram`, `MeshFillerProgram`, `Axis3DGroup`, `Camera3D`) | Construye objetos para interpretacion inmediata; implementaciones finales en `webglMan.ts`, `webglCapsules.ts`, `Game3D.ts`. |
+| `ObjectRegistry` (`Program`, `MeshProgram`, `SolidMeshProgram`, `MeshFillerProgram`, `Axis3DGroup`, `Camera3D`) | Construye objetos para interpretacion inmediata; implementaciones finales en `webglMan.ts`, `parser/registryModules/capsules.ts`, `Game3D.ts`. |
 | `FunctionRegistry` (`createIdealMesh`, `fillMeshTexture`, `draw`, `viewport`, `depthTest`, `start`, `startAsync`, `log`, `let`, `lduse`, `use`, `uMat4/uMat3/uMat2/uVec/uNum/uFloat/uInt`, `cFrameBuffer`, `unbindFrameBuffer`, `unbindFBO`, `drawArrays`, `drawElements`, `texture2DArray`) | Despacha comandos inmediatos a objetos/funciones ya existentes; algunos, como `log`, son stub. |
 | `getVar`, getters/setters `ctx`, `gctx`, `lastUsedProgram`, `lastFillerProgram` | Consultan estado mutable del interprete. |
 | `prepareMathFunction` (y su `replacePowers` interno), `parseValue` | Compilan callbacks con contexto y convierten literales DSL. La version `__prepareMathFunction` de `opengl.ts` no es identica. |

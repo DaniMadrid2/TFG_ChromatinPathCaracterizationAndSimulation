@@ -11,7 +11,7 @@ import { MathJaxLoader } from "/Code/MathJax/MathJax.js";
 import { createCanvasNextTo} from "/DNTI_Templates/00_Canvas_Snippet_Creator/Canvas_On_Page.js"
 import {create2DWithAxis} from "/DNTI_Templates/LinearAlgebra/2DLinear.js"
 
-import { Axis3DGroup, MeshRenderingProgram, MeshFillerProgram } from "/Code/WebGL/webglCapsules.js";
+import { Axis3DGroup, MeshRenderingProgram, SolidMeshRenderingProgram, MeshFillerProgram } from "/Code/WebGL/parser/registryModules/capsules.js";
 import { Camera3D } from "/Code/Game3D/Game3D.js";
 import { BindableTexture, GLMode, TexExamples, TextureUnitType, WebGLMan, WebProgram, parseTexUnitType } from "/Code/WebGL/webglMan.js";
 
@@ -53,16 +53,17 @@ var lastUsedProgram: any = null;
 var lastFillerProgram: any = null;
 void lastFillerProgram;
 var __globalBlocks: Array<{priority:number, order:number, fn:(dt:any)=>any}> = [];
-var meshProgram = new MeshRenderingProgram(gl, "TexUnit20", ([1024, 1024])[0], ([1024, 1024])[1]).includeInWebManList();
+var meshProgram = new SolidMeshRenderingProgram(gl, "TexUnit20", ([1024, 1024])[0], ([1024, 1024])[1]).includeInWebManList();
 lastUsedProgram = meshProgram;
 await meshProgram.loadProgram(meshProgram.vertPath, meshProgram.fragPath, (source => source), (source => source));
 await meshProgram.use?.();
 lastUsedProgram = meshProgram;
-meshProgram.initUniforms().setPerXPerY(0.5,0.5).setDXDY(0.16,0.16).setColorHueScale(1);
+let scaleFactor = 1;;
+meshProgram.initUniforms().setPerXPerY(0.5,0.5).setDXDY(0.16*scaleFactor,0.16*scaleFactor).setYScale(scaleFactor).setColorHueScale(1);
 var surface;
 (()=>{
     // createIdealMesh surface
-    let compiledCreateIdealMeshFn = __prepareMathFunction("(x,y)=>{return sin(x/4)*cos(y/4)+-exp(0.00001*((x-512)*(x-512)+(y-512)*(y-512)))*12}");
+    let compiledCreateIdealMeshFn = __prepareMathFunction("(x,y)=>{return sin(x/4)*cos(y/4)}");
     surface = lastUsedProgram?.createIdealTexture?.("TexUnit20", compiledCreateIdealMeshFn);
     surface?.bind?.();
 })();
@@ -110,7 +111,7 @@ var __globalBlockFn_0 = async (dt)=>{ // tick
     camera3D.tick( (dt) , (keypress) , (mousepos) , (mouseclick) );
     await meshProgram.use?.();
     lastUsedProgram = meshProgram;
-    meshProgram.draw(0,0,640,480,(camera3D),"LINES");
+    meshProgram.draw(0,0,640,480,(camera3D),"TRIANGLE_STRIP");
 };
 __globalBlocks.push({ priority: 10, order: 0, fn: __globalBlockFn_0 });
 KeyManager.OnKey("a", async (e)=>{ // OnKey

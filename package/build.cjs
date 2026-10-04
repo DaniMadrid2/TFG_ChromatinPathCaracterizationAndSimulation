@@ -11,6 +11,9 @@ async function main() {
   await fs.mkdir(path.join(output, 'lib'), { recursive: true });
   for (const stale of [
     'Code/WebGL/webglParser.ts',
+    'Code/WebGL/webglCapsules.js',
+    'Code/WebGL/webglCapsules.ts',
+    'Code/WebGL/webglCapsules.d.ts',
     'Code/WebGL/registryModules',
     'Code/WebGL/runtimeFeatures',
     'Code/WebGL/parser/runtimeFeatures',
@@ -82,6 +85,11 @@ async function main() {
     await fs.mkdir(path.dirname(target), { recursive: true });
     await fs.copyFile(path.join(source, relative), target);
   }
+  const capsulesSource = await fs.readFile(path.join(parserRoot, 'registryModules', 'capsules.ts'), 'utf8');
+  const capsulesJs = await esbuild.transform(capsulesSource, { loader: 'ts', format: 'esm', target: 'es2020' });
+  const capsulesTarget = path.join(output, 'lib', 'Code', 'WebGL', 'parser', 'registryModules', 'capsules.js');
+  await fs.mkdir(path.dirname(capsulesTarget), { recursive: true });
+  await fs.writeFile(capsulesTarget, capsulesJs.code);
   for (const name of ['cli.cjs', 'runner.cjs', 'registry-loader.cjs', 'watch.cjs', 'initializer.cjs', 'tutorial.cjs', 'README.md', 'EXTENSION_SYNTAX_PENDING.md']) {
     await fs.copyFile(path.join(__dirname, name), path.join(output, name));
   }

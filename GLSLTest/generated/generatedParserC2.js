@@ -4331,46 +4331,25 @@ var VAO = class {
   }
 };
 
-// ../dist/lib/Code/WebGL/webglCapsules.js
-var __awaiter4 = function(thisArg, _arguments, P, generator) {
-  function adopt(value) {
-    return value instanceof P ? value : new P(function(resolve) {
-      resolve(value);
-    });
-  }
-  return new (P || (P = Promise))(function(resolve, reject) {
-    function fulfilled(value) {
-      try {
-        step(generator.next(value));
-      } catch (e) {
-        reject(e);
-      }
-    }
-    function rejected(value) {
-      try {
-        step(generator["throw"](value));
-      } catch (e) {
-        reject(e);
-      }
-    }
-    function step(result) {
-      result.done ? resolve(result.value) : adopt(result.value).then(fulfilled, rejected);
-    }
-    step((generator = generator.apply(thisArg, _arguments || [])).next());
-  });
-};
+// ../dist/lib/Code/WebGL/parser/registryModules/capsules.js
+var __defProp = Object.defineProperty;
+var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
+var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "symbol" ? key + "" : key, value);
 var MeshRenderingProgram = class extends WebProgram {
   constructor(gl, valsTexUnit = "TexUnit20", w = 1024, h = 1024, dx = 0.015, dy = 0.015) {
     super(gl, "", "");
-    this.valsTexUnit = valsTexUnit;
-    this.w = w;
-    this.h = h;
-    this.dx = dx;
-    this.dy = dy;
+    __publicField(this, "valsTexUnit", valsTexUnit);
+    __publicField(this, "w", w);
+    __publicField(this, "h", h);
+    __publicField(this, "dx", dx);
+    __publicField(this, "dy", dy);
+    __publicField(this, "totalSegments");
   }
-  loadProgram(vs, fs) {
-    return __awaiter4(this, void 0, void 0, function* () {
-      [this.program, this.vert, this.frag] = yield loadShadersFromString(this.gl, `#version 300 es
+  async loadProgram(vs, fs) {
+    [this.program, this.vert, this.frag] = await loadShadersFromString(
+      this.gl,
+      //? vertex shader
+      `#version 300 es
             precision highp float;
 
             uniform sampler2D values;
@@ -4400,30 +4379,13 @@ var MeshRenderingProgram = class extends WebProgram {
             }
 
             void main() {
-                int horizCount = (msdLength - 1) * msdCount;
-                int segment = gl_VertexID / 2;
-                bool first = (gl_VertexID % 2) == 0;
-
-                int x, y;
-                vec4 pos;
-
-                if (segment < horizCount) {
-                    // Segmento horizontal
-                    int base = segment;
-                    y = base / (msdLength - 1);
-                    x = base % (msdLength - 1);
-                    pos = getPoint(first ? x : x + 1, y);
-                } else {
-                    // Segmento vertical
-                    int base = segment - horizCount;
-                    x = base / (msdCount - 1);
-                    y = base % (msdCount - 1);
-                    pos = getPoint(x, first ? y : y + 1);
-                }
+                ${this.vertexPositionCode()}
 
                 outPos = pos.xyz;
                 gl_Position = u_projectionMatrix * (u_viewMatrix * pos);
-            }`, `#version 300 es
+            }`,
+      //? fragment shader
+      `#version 300 es
             precision highp float;
 
             flat in vec3 outPos;
@@ -4461,9 +4423,27 @@ var MeshRenderingProgram = class extends WebProgram {
 
                 outColor = vec4(rgb, 1.0);
             }
-            `);
-      return this;
-    });
+            `
+    );
+    return this;
+  }
+  vertexPositionCode() {
+    return `int horizCount = (msdLength - 1) * msdCount;
+                int segment = gl_VertexID / 2;
+                bool first = (gl_VertexID % 2) == 0;
+                int x, y;
+                vec4 pos;
+                if (segment < horizCount) {
+                    int base = segment;
+                    y = base / (msdLength - 1);
+                    x = base % (msdLength - 1);
+                    pos = getPoint(first ? x : x + 1, y);
+                } else {
+                    int base = segment - horizCount;
+                    x = base / (msdCount - 1);
+                    y = base % (msdCount - 1);
+                    pos = getPoint(x, first ? y : y + 1);
+                }`;
   }
   setSize(w = this.w, h = this.h) {
     this.w = w;
@@ -4485,6 +4465,10 @@ var MeshRenderingProgram = class extends WebProgram {
     this.uFloat("dy").set(dy);
     return this;
   }
+  /**
+   * Offsets depending on the total mesh size
+   * 0.5,0.5 = centered on 0,0
+   */
   setPerXPerY(px = 0.5, py = 0.5) {
     this.uFloat("xPer").set(px);
     this.uFloat("yPer").set(py);
@@ -4502,6 +4486,9 @@ var MeshRenderingProgram = class extends WebProgram {
     this.setSize(this.w, this.h).setOffset(0, 0, 0).setDXDY(this.dx, this.dy).setPerXPerY().setColorHueScale().setYScale();
     return this;
   }
+  /**
+   * Remember to check the texUnit texture must be active (use texture.bind(texUnit?))
+   */
   draw(x = 0, y = 0, w = 1080, h = 720, camera, mode = "LINES") {
     this.initDepthBefDraw();
     this.bindTexName2TexUnit("values", this.valsTexUnit);
@@ -4512,6 +4499,9 @@ var MeshRenderingProgram = class extends WebProgram {
     this.clearColor();
     this.drawArrays(mode, 0, this.totalSegments * 2);
   }
+  /**
+   * Creates and fills a texture for a 3d Mesh f(x,y)=>z
+   */
   createIdealTexture(texUnit = this.valsTexUnit, data, w = this.w, h = this.h) {
     let arrdata;
     if (typeof data == "function" && typeof data(0, 0) == "number") {
@@ -4542,14 +4532,39 @@ var MeshRenderingProgram = class extends WebProgram {
     texture2D.fill(arrdata, 0, 0, w, h);
   }
 };
+var SolidMeshRenderingProgram = class extends MeshRenderingProgram {
+  vertexPositionCode() {
+    return `int rowStride = msdLength * 2 + 2;
+                int row = gl_VertexID / rowStride;
+                int inRow = gl_VertexID % rowStride;
+                int x = min(inRow / 2, msdLength - 1);
+                int y = row + (inRow % 2);
+                if (inRow == msdLength * 2) {
+                    y = row + 1;
+                } else if (inRow == msdLength * 2 + 1) {
+                    x = 0;
+                    y = row + 1;
+                }
+                vec4 pos = getPoint(x, y);`;
+  }
+  setSize(w = this.w, h = this.h) {
+    super.setSize(w, h);
+    this.totalSegments = w > 1 && h > 1 ? w * (h - 1) + (h - 2) : 0;
+    return this;
+  }
+  draw(x = 0, y = 0, w = 1080, h = 720, camera, _mode = "TRIANGLE_STRIP") {
+    super.draw(x, y, w, h, camera, "TRIANGLE_STRIP");
+  }
+};
 var AxisLinesProgram = class extends WebProgram {
   constructor(gl, axisLengths = new Vector3D2(1, 1, 1)) {
     super(gl, "", "");
-    this.axisLengths = axisLengths;
+    __publicField(this, "axisLengths", axisLengths);
   }
-  loadProgram() {
-    return __awaiter4(this, void 0, void 0, function* () {
-      [this.program, this.vert, this.frag] = yield loadShadersFromString(this.gl, `#version 300 es
+  async loadProgram() {
+    [this.program, this.vert, this.frag] = await loadShadersFromString(
+      this.gl,
+      `#version 300 es
             precision highp float;
 
             const vec3 AXIS_COLORS[3] = vec3[3](
@@ -4576,13 +4591,14 @@ var AxisLinesProgram = class extends WebProgram {
 
                 gl_Position = u_projectionMatrix * u_viewMatrix * vec4(pos, 1.0);
                 vColor = AXIS_COLORS[axis];
-            }`, `#version 300 es
+            }`,
+      `#version 300 es
             precision highp float;
             in vec3 vColor;
             out vec4 outColor;
-            void main() { outColor = vec4(vColor, 1.0); }`);
-      return this;
-    });
+            void main() { outColor = vec4(vColor, 1.0); }`
+    );
+    return this;
   }
   initUniforms() {
     this.uVec("axisLengths", 3).set(this.axisLengths);
@@ -4593,21 +4609,22 @@ var AxisLinesProgram = class extends WebProgram {
     return this;
   }
   draw(camera) {
-    if (camera)
-      camera.calculateMatrices().setUniformsProgram(this);
+    if (camera) camera.calculateMatrices().setUniformsProgram(this);
     this.drawArrays("LINES", 0, 6);
   }
 };
 var AxisConesProgram = class extends WebProgram {
   constructor(gl, arrowHeights = new Vector3D2(0.1, 0.1, 0.1), arrowRadii = new Vector3D2(0.03, 0.03, 0.03), axisLengths = new Vector3D2(1, 1, 1)) {
     super(gl, "", "");
-    this.arrowHeights = arrowHeights;
-    this.arrowRadii = arrowRadii;
-    this.axisLengths = axisLengths;
+    __publicField(this, "arrowHeights", arrowHeights);
+    __publicField(this, "arrowRadii", arrowRadii);
+    __publicField(this, "axisLengths", axisLengths);
   }
-  loadProgram() {
-    return __awaiter4(this, void 0, void 0, function* () {
-      [this.program, this.vert, this.frag] = yield loadShadersFromString(this.gl, `#version 300 es
+  async loadProgram() {
+    [this.program, this.vert, this.frag] = await loadShadersFromString(
+      this.gl,
+      // VS
+      `#version 300 es
             precision highp float;
             layout(location=0) in vec3 aPos;
             layout(location=1) in vec3 aColor;
@@ -4619,14 +4636,17 @@ var AxisConesProgram = class extends WebProgram {
             void main(){
                 gl_Position = u_projectionMatrix * u_viewMatrix * vec4(aPos,1.0);
                 vColor = aColor;
-            }`, `#version 300 es
+            }`,
+      // FS
+      `#version 300 es
             precision highp float;
             in vec3 vColor;
             out vec4 outColor;
-            void main(){ outColor = vec4(vColor, 1.0); }`);
-      return this;
-    });
+            void main(){ outColor = vec4(vColor, 1.0); }`
+    );
+    return this;
   }
+  /** Crea un simple VAO de conos para las puntas */
   initVAO() {
     const steps = 16;
     const vertices = [];
@@ -4635,10 +4655,28 @@ var AxisConesProgram = class extends WebProgram {
       for (let i = 0; i < steps; i++) {
         const a1 = i / steps * Math.PI * 2;
         const a2 = (i + 1) / steps * Math.PI * 2;
-        const base1 = new Vector3D2(dir.x * length + radius * Math.cos(a1), dir.y * length + radius * Math.sin(a1), dir.z * length);
-        const base2 = new Vector3D2(dir.x * length + radius * Math.cos(a2), dir.y * length + radius * Math.sin(a2), dir.z * length);
+        const base1 = new Vector3D2(
+          dir.x * length + radius * Math.cos(a1),
+          dir.y * length + radius * Math.sin(a1),
+          dir.z * length
+        );
+        const base2 = new Vector3D2(
+          dir.x * length + radius * Math.cos(a2),
+          dir.y * length + radius * Math.sin(a2),
+          dir.z * length
+        );
         const tip = new Vector3D2(dir.x * (length + height), dir.y * (length + height), dir.z * (length + height));
-        vertices.push(base1.x, base1.y, base1.z, base2.x, base2.y, base2.z, tip.x, tip.y, tip.z);
+        vertices.push(
+          base1.x,
+          base1.y,
+          base1.z,
+          base2.x,
+          base2.y,
+          base2.z,
+          tip.x,
+          tip.y,
+          tip.z
+        );
         colors.push(...color, ...color, ...color);
       }
     };
@@ -4656,25 +4694,26 @@ var AxisConesProgram = class extends WebProgram {
     this.uVec("arrowRadii", 3).set(this.arrowRadii);
   }
   draw(camera) {
-    if (camera)
-      camera.calculateMatrices().setUniformsProgram(this);
+    if (camera) camera.calculateMatrices().setUniformsProgram(this);
     this.bindVAO();
     this.drawArrays("TRIANGLES", 0, 3 * 16 * 3);
   }
 };
 var AxisGridProgram = class extends WebProgram {
+  // tamaño del lado del cuadrado (calculado automáticamente)
   constructor(gl, planes = ["XY"], axisLengths = new Vector3D2(1, 1, 1), divisions = 10) {
     super(gl, "", "");
-    this.planes = planes;
-    this.axisLengths = axisLengths;
-    this.vertexCount = 0;
-    this.divisions = 10;
-    this.cellSize = 0.1;
+    __publicField(this, "planes", planes);
+    __publicField(this, "axisLengths", axisLengths);
+    __publicField(this, "vertexCount", 0);
+    __publicField(this, "divisions", 10);
+    __publicField(this, "cellSize", 0.1);
     this.setDivisions(divisions);
   }
-  loadProgram() {
-    return __awaiter4(this, void 0, void 0, function* () {
-      [this.program, this.vert, this.frag] = yield loadShadersFromString(this.gl, `#version 300 es
+  async loadProgram() {
+    [this.program, this.vert, this.frag] = await loadShadersFromString(
+      this.gl,
+      `#version 300 es
             precision highp float;
             layout(location=0) in vec3 aPos;
             uniform mat4 u_viewMatrix;
@@ -4683,35 +4722,33 @@ var AxisGridProgram = class extends WebProgram {
             void main(){
                 gl_Position = u_projectionMatrix * u_viewMatrix * vec4(aPos,1.0);
                 vColor = vec3(0.3);
-            }`, `#version 300 es
+            }`,
+      `#version 300 es
             precision highp float;
             in vec3 vColor;
             out vec4 outColor;
-            void main(){ outColor = vec4(vColor,1.0); }`);
-      return this;
-    });
+            void main(){ outColor = vec4(vColor,1.0); }`
+    );
+    return this;
   }
+  /** Inicializa uniforms comunes (axis lengths, matrices, etc.) */
   initUniforms(axisLengths) {
-    if (axisLengths)
-      this.axisLengths = axisLengths;
-    else if (!this.axisLengths)
-      this.axisLengths = new Vector3D2(1, 1, 1);
+    if (axisLengths) this.axisLengths = axisLengths;
+    else if (!this.axisLengths) this.axisLengths = new Vector3D2(1, 1, 1);
   }
+  /** Genera el VAO de la cuadrícula en función de cellSize o divisions */
   initVAO() {
     const vertices = [];
-    for (const plane of this.planes)
-      this.addGrid(plane, vertices);
+    for (const plane of this.planes) this.addGrid(plane, vertices);
     this.vertexCount = vertices.length / 3;
-    if (!this.VAO)
-      this.createVAO();
+    if (!this.VAO) this.createVAO();
     this.VAO.bind().attribute("aPos", vertices, 3);
     return this;
   }
   addGrid(plane, vertices) {
-    var _a2, _b2, _c2, _d, _e, _f;
-    const sizeX = (_b2 = (_a2 = this.axisLengths) === null || _a2 === void 0 ? void 0 : _a2.x) !== null && _b2 !== void 0 ? _b2 : 1;
-    const sizeY = (_d = (_c2 = this.axisLengths) === null || _c2 === void 0 ? void 0 : _c2.y) !== null && _d !== void 0 ? _d : 1;
-    const sizeZ = (_f = (_e = this.axisLengths) === null || _e === void 0 ? void 0 : _e.z) !== null && _f !== void 0 ? _f : 1;
+    const sizeX = this.axisLengths?.x ?? 1;
+    const sizeY = this.axisLengths?.y ?? 1;
+    const sizeZ = this.axisLengths?.z ?? 1;
     const stepX = sizeX / this.divisions;
     const stepY = sizeY / this.divisions;
     const stepZ = sizeZ / this.divisions;
@@ -4745,18 +4782,22 @@ var AxisGridProgram = class extends WebProgram {
     }
   }
   draw(camera) {
-    if (camera)
-      camera.calculateMatrices().setUniformsProgram(this);
+    if (camera) camera.calculateMatrices().setUniformsProgram(this);
     this.bindVAO();
     if (this.vertexCount)
       this.drawArrays("LINES", 0, this.vertexCount);
   }
+  // ----------------------------
+  // 🔧 Nuevas funciones añadidas
+  // ----------------------------
+  /** Fija el número de divisiones (por eje) y calcula automáticamente el tamaño de cada celda */
   setDivisions(divisions) {
     this.divisions = Math.max(1, divisions);
     const avgAxis = (this.axisLengths.x + this.axisLengths.y + this.axisLengths.z) / 3;
     this.cellSize = avgAxis / this.divisions;
     return this;
   }
+  /** Fija el tamaño del lado de las celdas y calcula el nº de divisiones */
   setCellSize(size) {
     this.cellSize = Math.max(1e-3, size);
     const avgAxis = (this.axisLengths.x + this.axisLengths.y + this.axisLengths.z) / 3;
@@ -4766,23 +4807,27 @@ var AxisGridProgram = class extends WebProgram {
 };
 var Axis3DGroup = class {
   constructor(gl, axisLengths = new Vector3D2(1, 1, 1), drawArrows = false, arrowHeights = new Vector3D2(0.1, 0.1, 0.1), arrowRadii = new Vector3D2(0.03, 0.03, 0.03), planes = []) {
-    this.gl = gl;
-    this.axisLengths = axisLengths;
-    this.drawArrows = drawArrows;
-    this.arrowHeights = arrowHeights;
-    this.arrowRadii = arrowRadii;
-    this.planes = planes;
-    this.gridDivisions = 10;
+    __publicField(this, "gl", gl);
+    __publicField(this, "axisLengths", axisLengths);
+    __publicField(this, "drawArrows", drawArrows);
+    __publicField(this, "arrowHeights", arrowHeights);
+    __publicField(this, "arrowRadii", arrowRadii);
+    __publicField(this, "planes", planes);
+    __publicField(this, "lines");
+    __publicField(this, "cones");
+    __publicField(this, "grid");
+    __publicField(this, "gridDivisions", 10);
     this.lines = new AxisLinesProgram(gl, axisLengths);
-    if (drawArrows)
-      this.cones = new AxisConesProgram(gl, this.arrowHeights, this.arrowRadii, axisLengths);
-    if (planes && planes.length > 0)
-      this.grid = new AxisGridProgram(gl, planes, this.axisLengths);
+    if (drawArrows) this.cones = new AxisConesProgram(gl, this.arrowHeights, this.arrowRadii, axisLengths);
+    if (planes && planes.length > 0) this.grid = new AxisGridProgram(gl, planes, this.axisLengths);
   }
+  /**
+   * Inicializa uniforms y crea VAOs necesarios para cada subprograma.
+   * Llamar a esta función después de loadAll() y antes del primer draw().
+   */
   initUniforms() {
-    var _a2, _b2;
     this.lines.use();
-    (_b2 = (_a2 = this.lines).initUniforms) === null || _b2 === void 0 ? void 0 : _b2.call(_a2);
+    this.lines.initUniforms?.();
     this.lines.setAxisLengths(this.axisLengths.x, this.axisLengths.y, this.axisLengths.z);
     if (this.cones) {
       this.cones.axisLengths = this.axisLengths;
@@ -4802,6 +4847,7 @@ var Axis3DGroup = class {
     }
     return this;
   }
+  /** Dibuja los tres elementos (usa VAOs creados en initUniforms) */
   draw(camera) {
     if (this.lines) {
       this.lines.use();
@@ -4810,8 +4856,7 @@ var Axis3DGroup = class {
     }
     if (this.grid) {
       this.grid.use();
-      if (!this.grid.VAO)
-        this.grid.initVAO();
+      if (!this.grid.VAO) this.grid.initVAO();
       this.grid.draw(camera);
     }
     if (this.cones) {
@@ -4819,16 +4864,15 @@ var Axis3DGroup = class {
       this.cones.axisLengths = this.axisLengths;
       this.cones.arrowHeights = this.arrowHeights;
       this.cones.arrowRadii = this.arrowRadii;
-      if (!this.cones.VAO)
-        this.cones.initVAO();
+      if (!this.cones.VAO) this.cones.initVAO();
       this.cones.draw(camera);
     }
   }
+  /** helpers para actualizar parámetros en caliente */
   setAxisLengths(x, y, z) {
     this.axisLengths = new Vector3D2(x, y, z);
     this.lines.setAxisLengths(x, y, z);
-    if (this.cones)
-      this.cones.axisLengths = this.axisLengths;
+    if (this.cones) this.cones.axisLengths = this.axisLengths;
     if (this.grid)
       this.grid.axisLengths = this.axisLengths;
     return this;
@@ -4853,12 +4897,14 @@ var Axis3DGroup = class {
     }
     return this;
   }
+  /** Fija el número de divisiones (por eje) y calcula automáticamente el tamaño de cada celda */
   setDivisions(divisions) {
     this.gridDivisions = divisions;
     if (this.grid)
       return this.grid.setDivisions(divisions);
     return this;
   }
+  /** Fija el tamaño del lado de las celdas y calcula el nº de divisiones */
   setCellSize(size) {
     if (this.grid)
       return this.grid.setCellSize(size);
@@ -4873,16 +4919,14 @@ var Axis3DGroup = class {
       this.cones.includeInWebManList();
     return this;
   }
-  loadProgram() {
-    return __awaiter4(this, void 0, void 0, function* () {
-      if (this.lines)
-        yield this.lines.loadProgram();
-      if (this.grid)
-        yield this.grid.loadProgram();
-      if (this.cones)
-        yield this.cones.loadProgram();
-      return this;
-    });
+  async loadProgram() {
+    if (this.lines)
+      await this.lines.loadProgram();
+    if (this.grid)
+      await this.grid.loadProgram();
+    if (this.cones)
+      await this.cones.loadProgram();
+    return this;
   }
   use() {
     return this;
@@ -4891,10 +4935,10 @@ var Axis3DGroup = class {
 var MeshFillerProgram = class extends WebProgram {
   constructor(gl, valsTexUnit = "TexUnit20", w = 1024, h = 1024, callBackString, varsContext = {}) {
     super(gl, "", "");
-    this.valsTexUnit = valsTexUnit;
-    this.w = w;
-    this.h = h;
-    this.uniformsToUpdate = [];
+    __publicField(this, "valsTexUnit", valsTexUnit);
+    __publicField(this, "w", w);
+    __publicField(this, "h", h);
+    __publicField(this, "uniformsToUpdate", []);
     if (callBackString)
       this.generateProgram(callBackString, varsContext);
     const ext = gl.getExtension("EXT_color_buffer_float");
@@ -4902,19 +4946,20 @@ var MeshFillerProgram = class extends WebProgram {
       console.error("Este navegador/GPU no permite renderizar en RFloat.");
     }
   }
-  loadProgram(vs = this.vertPath, fs = this.fragPath) {
-    return __awaiter4(this, void 0, void 0, function* () {
-      [this.program, this.vert, this.frag] = yield loadShadersFromString(this.gl, vs, fs);
-      this.use();
-      this.uniformsToUpdate.forEach((u) => {
-        u.setterObj = this.uFloat(u.name);
-      });
-      return this;
+  async loadProgram(vs = this.vertPath, fs = this.fragPath) {
+    [this.program, this.vert, this.frag] = await loadShadersFromString(this.gl, vs, fs);
+    this.use();
+    this.uniformsToUpdate.forEach((u) => {
+      u.setterObj = this.uFloat(u.name);
     });
+    return this;
   }
+  /**
+   * Se ejecuta en cada frame del loop de renderizado (tick).
+   * Obtiene los valores actuales del contexto y los sube a la GPU.
+   */
   tick() {
-    if (!this.program)
-      return;
+    if (!this.program) return;
     this.use();
     this.uniformsToUpdate.forEach((u) => {
       const currentVal = u.getter();
@@ -4924,6 +4969,11 @@ var MeshFillerProgram = class extends WebProgram {
     });
     return this;
   }
+  /**
+   * 
+   * @param callbackString (x,y) => { cos(-(y/100-({u_time||0, float}*3))) }
+   * @param varsContext DetailedParser.ctx.vars, DetailedParser.GlobalContext
+   */
   generateProgram(callbackString, ...varsContexts) {
     this.uniformsToUpdate = [];
     let uniformDecls = "";
@@ -4954,21 +5004,19 @@ var MeshFillerProgram = class extends WebProgram {
             try {
               const scope = new Proxy({}, {
                 has(target, prop) {
-                  if (typeof prop === "symbol")
-                    return false;
-                  return varsContexts.some((ctx) => ctx instanceof Map ? ctx.has(prop) : prop in ctx);
+                  if (typeof prop === "symbol") return false;
+                  return varsContexts.some(
+                    (ctx) => ctx instanceof Map ? ctx.has(prop) : prop in ctx
+                  );
                 },
                 get(target, prop) {
-                  if (prop === Symbol.unscopables)
-                    return void 0;
+                  if (prop === Symbol.unscopables) return void 0;
                   for (let i = varsContexts.length - 1; i >= 0; i--) {
                     const ctx = varsContexts[i];
                     if (ctx instanceof Map) {
-                      if (ctx.has(prop))
-                        return ctx.get(prop);
+                      if (ctx.has(prop)) return ctx.get(prop);
                     } else {
-                      if (prop in ctx)
-                        return ctx[prop];
+                      if (prop in ctx) return ctx[prop];
                     }
                   }
                   return void 0;
@@ -4994,10 +5042,8 @@ var MeshFillerProgram = class extends WebProgram {
         if (str[left] === ")") {
           let count = 0, i = left;
           for (; i >= 0; i--) {
-            if (str[i] === ")")
-              count++;
-            if (str[i] === "(")
-              count--;
+            if (str[i] === ")") count++;
+            if (str[i] === "(") count--;
             if (count === 0) {
               i--;
               break;
@@ -5012,12 +5058,9 @@ var MeshFillerProgram = class extends WebProgram {
         if (str[right] === "(") {
           let count = 0, i = right;
           for (; i < str.length; i++) {
-            if (str[i] === "(")
-              count++;
-            if (str[i] === ")")
-              count--;
-            if (count === 0)
-              break;
+            if (str[i] === "(") count++;
+            if (str[i] === ")") count--;
+            if (count === 0) break;
           }
           exponent = str.substring(right, i + 1);
         } else {
@@ -5053,16 +5096,13 @@ var MeshFillerProgram = class extends WebProgram {
     console.log("Shader generado con uniforms complejos:", this.fragPath);
   }
   draw() {
-    var _a2, _b2;
-    if (!this.program)
-      return;
+    if (!this.program) return;
     const gl = this.gl;
     this.use();
     const tex = this.getTextureByUnit(parseTexUnitType(this.valsTexUnit));
-    if (!tex)
-      return;
-    const tw = (_a2 = tex.w) !== null && _a2 !== void 0 ? _a2 : this.w;
-    const th = (_b2 = tex.h) !== null && _b2 !== void 0 ? _b2 : this.h;
+    if (!tex) return;
+    const tw = tex.w ?? this.w;
+    const th = tex.h ?? this.h;
     let fbo = this.cFrameBuffer().bind([0]);
     fbo.bindColorBuffer(tex, "ColAtch0");
     const status = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
@@ -6616,15 +6656,17 @@ var VAO2 = class {
   var lastFillerProgram = null;
   void lastFillerProgram;
   var __globalBlocks = [];
-  var meshProgram = new MeshRenderingProgram(gl, "TexUnit20", [1024, 1024][0], [1024, 1024][1]).includeInWebManList();
+  var meshProgram = new SolidMeshRenderingProgram(gl, "TexUnit20", [1024, 1024][0], [1024, 1024][1]).includeInWebManList();
   lastUsedProgram = meshProgram;
   await meshProgram.loadProgram(meshProgram.vertPath, meshProgram.fragPath, ((source) => source), ((source) => source));
   await meshProgram.use?.();
   lastUsedProgram = meshProgram;
-  meshProgram.initUniforms().setPerXPerY(0.5, 0.5).setDXDY(0.16, 0.16).setColorHueScale(1);
+  let scaleFactor = 1;
+  ;
+  meshProgram.initUniforms().setPerXPerY(0.5, 0.5).setDXDY(0.16 * scaleFactor, 0.16 * scaleFactor).setYScale(scaleFactor).setColorHueScale(1);
   var surface;
   (() => {
-    let compiledCreateIdealMeshFn = __prepareMathFunction("(x,y)=>{return sin(x/4)*cos(y/4)+-exp(0.00001*((x-512)*(x-512)+(y-512)*(y-512)))*12}");
+    let compiledCreateIdealMeshFn = __prepareMathFunction("(x,y)=>{return sin(x/4)*cos(y/4)}");
     surface = lastUsedProgram?.createIdealTexture?.("TexUnit20", compiledCreateIdealMeshFn);
     surface?.bind?.();
   })();
@@ -6672,7 +6714,7 @@ var VAO2 = class {
     camera3D.tick(dt, keypress, mousepos, mouseclick);
     await meshProgram.use?.();
     lastUsedProgram = meshProgram;
-    meshProgram.draw(0, 0, 640, 480, camera3D, "LINES");
+    meshProgram.draw(0, 0, 640, 480, camera3D, "TRIANGLE_STRIP");
   };
   __globalBlocks.push({ priority: 10, order: 0, fn: __globalBlockFn_0 });
   KeyManager.OnKey("a", async (e) => {
@@ -6695,3 +6737,4 @@ var VAO2 = class {
   if (typeof __mountGlobalBlocks === "function") __mountGlobalBlocks(__globalBlocks, addFunc);
   start();
 })();
+//! Program Capsules (templates)

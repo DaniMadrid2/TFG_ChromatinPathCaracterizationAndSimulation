@@ -1,6 +1,31 @@
 const vscode = require("vscode");
 const { textureImage } = require("./backupHover");
 const { renderBackupPanel } = require("./backupPanel");
+const registrySyntax = require("./generated/registrySyntax.json");
+
+const internalTextureObjects = registrySyntax.objects
+    .filter((entry) => entry.tags.createsInternalTexture)
+    .map((entry) => entry.name);
+const internalTextureInputPattern = internalTextureObjects.length
+    ? new RegExp(`\\b(?:${internalTextureObjects.map(escapeRegExp).join("|")})\\b[^\\n]*?\\binput\\s*=\\s*(?:TexUnit|texUnit)(\\d+)\\b`, "g")
+    : null;
+
+function internalTextureInputUnits(code) {
+    if (!internalTextureInputPattern) return [];
+    internalTextureInputPattern.lastIndex = 0;
+    return [...code.matchAll(internalTextureInputPattern)].map((match) => Number.parseInt(match[1], 10));
+}
+
+const registryColorRules = [...registrySyntax.objects, ...registrySyntax.functions]
+    .filter((entry) => /^#[0-9a-fA-F]{6}$/.test(entry.tags.color || ""))
+    .map((entry) => ({
+        name: entry.name,
+        decoration: vscode.window.createTextEditorDecorationType({ color: entry.tags.color }),
+    }));
+const registryColorByName = new Map(registryColorRules.map((rule) => [rule.name, rule]));
+const registryColorPattern = registryColorRules.length
+    ? new RegExp(`\\b(?:${registryColorRules.map((rule) => escapeRegExp(rule.name)).join("|")})\\b`, "g")
+    : null;
 
 const OPTION_COLORS = [
     { color: "#00F5FF", background: "rgba(0, 245, 255, 0.10)" },
@@ -2973,6 +2998,9 @@ function collectTextureUnitUsage(text) {
                 textureDeclaredUnit.set(name, unit);
             }
         }
+        for (const unit of internalTextureInputUnits(code)) {
+            unitUseCount.set(unit, (unitUseCount.get(unit) || 0) + 1);
+        }
         const texArrayDecl = code.match(/\b([A-Za-z_]\w*)(?:\s*\|=\s*([A-Za-z_]\w*))?\s*=\s*texture2DArray\s+[A-Za-z_]\w*\s+([A-Za-z_]\w*)\s+"([^"]+)"\s+(?:TexUnit|texUnit)(\d+)\b/);
         if (texArrayDecl) {
             const unit = Number.parseInt(texArrayDecl[5], 10);
@@ -3290,6 +3318,22 @@ function refreshEditorDecorations(editor) {
     });
     editor.setDecorations(emptySquareDecoration, rebindEmptySquareRanges);
     editor.setDecorations(drawBackupPreviewDecoration, drawBackupPreviewOptions);
+    if (isShaderDsl && registryColorPattern) {
+        const rangesByName = new Map(registryColorRules.map((rule) => [rule.name, []]));
+        const lines = text.split(/\r?\n/);
+        for (let lineNo = 0; lineNo < lines.length; lineNo++) {
+            const code = stripLineComment(lines[lineNo]);
+            const lineStart = editor.document.offsetAt(new vscode.Position(lineNo, 0));
+            registryColorPattern.lastIndex = 0;
+            for (const match of code.matchAll(registryColorPattern)) {
+                rangesByName.get(match[0]).push(rangeFromOffsets(editor.document,
+                    lineStart + match.index, lineStart + match.index + match[0].length));
+            }
+        }
+        for (const [name, ranges] of rangesByName) {
+            editor.setDecorations(registryColorByName.get(name).decoration, ranges);
+        }
+    }
 }
 
 function collectTagDecorations(document, text, editor, tagRanges, derivedKeywordRanges, derivedVariableRanges, optiRanges, optiLineRanges, optiFadedRanges, optiTextRanges, tagDefinitionsInfo) {
@@ -3640,6 +3684,10 @@ function collectTexUnitAndTextureDecorations(document, text, texUnitRanges, text
         parseTextureDecl(code);
         parseAliasAssignments(code);
 
+        for (const unitIndex of internalTextureInputUnits(code)) {
+            registerAssociation(`mesh-input:${unitIndex}`, unitIndex);
+        }
+
         const bindMatch = code.match(/\b([A-Za-z_]\w*)\.bind\(\s*"TexUnit(\d+)"\s*\)/);
         if (bindMatch) {
             registerAssociation(bindMatch[1], Number.parseInt(bindMatch[2], 10));
@@ -3967,6 +4015,18 @@ function collectResourceAndDslVisuals(
                 const abs = lineStart + localOffset + xMatch.index + 1;
                 dimensionXRanges.push(rangeFromOffsets(document, abs, abs + 1));
             }
+            if (code[dimMatch.index + dimMatch[0].length] === "b") {
+                const abs = lineStart + dimMatch.index + dimMatch[0].length;
+                dimensionXRanges.push(rangeFromOffsets(document, abs, abs + 1));
+            }
+        }
+
+        const compactSizeRegex = /\b\d+\s*x\s*\d+\b/g;
+        let compactSizeMatch;
+        while ((compactSizeMatch = compactSizeRegex.exec(code)) !== null) {
+            const xOffset = compactSizeMatch[0].indexOf("x");
+            const abs = lineStart + compactSizeMatch.index + xOffset;
+            dimensionXRanges.push(rangeFromOffsets(document, abs, abs + 1));
         }
 
         const wordRegex = /\b[A-Za-z_]\w*\b/g;

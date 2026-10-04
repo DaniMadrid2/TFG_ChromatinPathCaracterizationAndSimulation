@@ -11,7 +11,7 @@ Los registros tematicos se descubren con `fs` en `parser/objects/` y
 `parser/functions/` al ejecutar el parser; no se generan `index.ts`.
 `parser/registryModules/capsules.ts`
 contiene las clases, funciones y reglas DSL de `MeshCapsule`;
-`webglCapsules.ts` es solo una ruta de importacion compatible.
+Las clases de malla se importan directamente desde `parser/registryModules/capsules.js`.
 Los modulos de runtime (`backup`, `runtimeLet`, `shaderFilters`)
 se registran explicitamente en el parser y viven en `Code/WebGL/runtime/`.
 Consulta [WEBGL_PARSER_INVENTORY.md](WEBGL_PARSER_INVENTORY.md) para el mapa

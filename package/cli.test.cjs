@@ -32,15 +32,72 @@ test('discovers registry modules without editing the parser', async () => {
 test('capsule implementation contributes object and function DSL handlers', async () => {
   await temporaryWorkspace(async (root) => {
     const { DetailedParser } = await loadParser(root);
-    DetailedParser.activateRegistries('MeshProgram createIdealMesh fillMeshTexture');
+    DetailedParser.activateRegistries('MeshProgram SolidMeshProgram createIdealMesh fillMeshTexture');
     assert.equal(typeof DetailedParser.ObjectRegistry.MeshProgram, 'function');
+    assert.equal(typeof DetailedParser.ObjectRegistry.SolidMeshProgram, 'function');
     assert.equal(typeof DetailedParser.FunctionRegistry.createIdealMesh, 'function');
     assert.equal(typeof DetailedParser.FunctionRegistry.fillMeshTexture, 'function');
     assert.match(DetailedParser.transpileSimpleStatement('fillMeshTexture a (x,y)=>{sin(x)}', new Set()).join('\n'), /fillMeshTexture.*__prepareMathFunction/);
     assert.match(DetailedParser.transpileSimpleStatement('mesh = MeshProgram input=TexUnit20 4x4', new Set()).join('\n'), /new MeshRenderingProgram/);
     assert.match(DetailedParser.transpileSimpleStatement('MeshProgram input=TexUnit20 1024x1024', new Set()).join('\n'), /var meshProgram = new MeshRenderingProgram/);
+    assert.match(DetailedParser.transpileSimpleStatement('SolidMeshProgram input=TexUnit20 4x3', new Set()).join('\n'), /var solidMeshProgram = new SolidMeshRenderingProgram/);
+    const SolidMesh = DetailedParser.GlobalContext.SolidMeshRenderingProgram;
+    const solid = new SolidMesh({}, 'TexUnit20', 4, 3);
+    solid.uInt = () => ({ set() {} });
+    solid.setSize(4, 3);
+    assert.equal(solid.totalSegments * 2, 18);
+    assert.match(solid.vertexPositionCode(), /rowStride = msdLength \* 2 \+ 2/);
+    solid.initDepthBefDraw = () => {};
+    solid.bindTexName2TexUnit = () => {};
+    solid.setViewport = () => {};
+    solid.clearColor = () => {};
+    let drawCall;
+    solid.drawArrays = (...args) => { drawCall = args; };
+    solid.draw(0, 0, 640, 480, undefined, 'LINES');
+    assert.deepEqual(drawCall, ['TRIANGLE_STRIP', 0, 18]);
+    const width = 4;
+    const height = 3;
+    const stride = width * 2 + 2;
+    const vertices = Array.from({ length: drawCall[2] }, (_, id) => {
+      const row = Math.floor(id / stride);
+      const inRow = id % stride;
+      return [inRow === width * 2 + 1 ? 0 : Math.min(Math.floor(inRow / 2), width - 1),
+        row + (inRow >= width * 2 ? 1 : inRow % 2)];
+    });
+    const cells = new Map();
+    for (let i = 2; i < vertices.length; i++) {
+      const points = vertices.slice(i - 2, i + 1);
+      const twiceArea = (points[1][0] - points[0][0]) * (points[2][1] - points[0][1])
+        - (points[1][1] - points[0][1]) * (points[2][0] - points[0][0]);
+      if (!twiceArea) continue;
+      const x = Math.min(...points.map((point) => point[0]));
+      const y = Math.min(...points.map((point) => point[1]));
+      assert.equal(Math.max(...points.map((point) => point[0])) - x, 1);
+      assert.equal(Math.max(...points.map((point) => point[1])) - y, 1);
+      const key = `${x},${y}`;
+      cells.set(key, (cells.get(key) || 0) + 1);
+    }
+    assert.equal(cells.size, (width - 1) * (height - 1));
+    assert.ok([...cells.values()].every((count) => count === 2));
     assert.match(DetailedParser.transpileSimpleStatement('Axis3DGroup axisLength=vec3(15.3)', new Set()).join('\n'), /new Axis3DGroup/);
     assert.match(DetailedParser.transpileSimpleStatement('MeshFillerProgram TexUnit20 "(x,y)=>x"', new Set()).join('\n'), /new MeshFillerProgram/);
+  });
+});
+
+test('solid mesh compiles with a direct capsule import', async () => {
+  await temporaryWorkspace(async (root) => {
+    const snippets = path.join(root, 'parser_snippets', 'shared');
+    await fs.mkdir(snippets, { recursive: true });
+    await fs.writeFile(path.join(snippets, 'commonImports.snippet.ts'),
+      'import { MeshRenderingProgram } from "/Code/WebGL/webglCapsules.js";\n');
+    await fs.writeFile(path.join(root, 'parseTextC1.shaderdsl.ts'),
+      '<Pre/>\nSolidMeshProgram input=TexUnit20 4x3\n<Pos>\n');
+    const [output] = await parseFiles(['parseTextC1.shaderdsl.ts'], { cwd: root });
+    const generated = await fs.readFile(output.tsFile, 'utf8');
+    assert.match(generated, /new SolidMeshRenderingProgram\(/);
+    assert.match(generated, /from "\/Code\/WebGL\/parser\/registryModules\/capsules\.js"/);
+    assert.doesNotMatch(generated, /from "\/Code\/WebGL\/webglCapsules\.js"/);
+    await fs.access(output.jsFile);
   });
 });
 

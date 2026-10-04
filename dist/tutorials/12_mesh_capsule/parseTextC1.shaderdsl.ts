@@ -11,11 +11,11 @@ camera.calculateMatrices()
 
 
 
-surface=createIdealMesh TexUnit20 (x,y)=>{sin(x/4)*cos(y/4)} .bind()
+surface=createIdealMesh TexUnit20 (x,y)=>{return sin(x/4)*cos(y/4)} .bind()
 
 
 
 lduse meshProgram
-meshProgram.initUniforms().setPerXPerY(1,0).setColorHueScale(1)
+meshProgram.initUniforms().setPerXPerY(0.5,0.5).setDXDY(0.16,0.16).setColorHueScale(1)
 
 <Pos>

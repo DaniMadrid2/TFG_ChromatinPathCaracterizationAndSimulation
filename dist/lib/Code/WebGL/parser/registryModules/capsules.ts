@@ -51,26 +51,7 @@ export class MeshRenderingProgram extends WebProgram{
             }
 
             void main() {
-                int horizCount = (msdLength - 1) * msdCount;
-                int segment = gl_VertexID / 2;
-                bool first = (gl_VertexID % 2) == 0;
-
-                int x, y;
-                vec4 pos;
-
-                if (segment < horizCount) {
-                    // Segmento horizontal
-                    int base = segment;
-                    y = base / (msdLength - 1);
-                    x = base % (msdLength - 1);
-                    pos = getPoint(first ? x : x + 1, y);
-                } else {
-                    // Segmento vertical
-                    int base = segment - horizCount;
-                    x = base / (msdCount - 1);
-                    y = base % (msdCount - 1);
-                    pos = getPoint(x, first ? y : y + 1);
-                }
+                ${this.vertexPositionCode()}
 
                 outPos = pos.xyz;
                 gl_Position = u_projectionMatrix * (u_viewMatrix * pos);
@@ -117,6 +98,25 @@ export class MeshRenderingProgram extends WebProgram{
             `
         );
         return this;
+    }
+
+    protected vertexPositionCode(): string {
+        return `int horizCount = (msdLength - 1) * msdCount;
+                int segment = gl_VertexID / 2;
+                bool first = (gl_VertexID % 2) == 0;
+                int x, y;
+                vec4 pos;
+                if (segment < horizCount) {
+                    int base = segment;
+                    y = base / (msdLength - 1);
+                    x = base % (msdLength - 1);
+                    pos = getPoint(first ? x : x + 1, y);
+                } else {
+                    int base = segment - horizCount;
+                    x = base / (msdCount - 1);
+                    y = base % (msdCount - 1);
+                    pos = getPoint(x, first ? y : y + 1);
+                }`;
     }
 
     setSize(w=this.w,h=this.h){
@@ -213,6 +213,34 @@ export class MeshRenderingProgram extends WebProgram{
     }
 }
 
+/** Draws every height-map cell with a row-wise triangle strip. */
+export class SolidMeshRenderingProgram extends MeshRenderingProgram {
+    protected override vertexPositionCode(): string {
+        return `int rowStride = msdLength * 2 + 2;
+                int row = gl_VertexID / rowStride;
+                int inRow = gl_VertexID % rowStride;
+                int x = min(inRow / 2, msdLength - 1);
+                int y = row + (inRow % 2);
+                if (inRow == msdLength * 2) {
+                    y = row + 1;
+                } else if (inRow == msdLength * 2 + 1) {
+                    x = 0;
+                    y = row + 1;
+                }
+                vec4 pos = getPoint(x, y);`;
+    }
+
+    override setSize(w=this.w, h=this.h): this {
+        super.setSize(w, h);
+        this.totalSegments = w > 1 && h > 1 ? w * (h - 1) + (h - 2) : 0;
+        return this;
+    }
+
+    override draw(x=0, y=0, w=1080, h=720, camera?:Camera3D, _mode:GLMode="TRIANGLE_STRIP") {
+        super.draw(x, y, w, h, camera, "TRIANGLE_STRIP");
+    }
+}
+
 // The same module supplies browser classes and their DSL handlers.
 function transpileCreateIdealMesh(line: string, declaredVars: Set<string>, parser: any): string[] | null {
         const m = line.match(/^(?:([a-zA-Z_]\w*)\s*=\s*)?createIdealMesh\s+([\s\S]+)$/);
@@ -267,7 +295,7 @@ function transpileCreateIdealMesh(line: string, declaredVars: Set<string>, parse
 
 function transpileCapsuleObject(line: string, declaredVars: Set<string>, parser: any): string[] | null {
     const { aliases, core } = parser.extractAliasesAndCore(line);
-    const kind = core.match(/^(MeshProgram|MeshFillerProgram|Axis3DGroup)(?:\s+|$)/)?.[1];
+    const kind = core.match(/^(MeshProgram|SolidMeshProgram|MeshFillerProgram|Axis3DGroup)(?:\s+|$)/)?.[1];
     if (!kind) return null;
     const names = parser.ensureAliasesForClass(aliases, kind, declaredVars);
     if (!names.length) return null;
@@ -276,7 +304,7 @@ function transpileCapsuleObject(line: string, declaredVars: Set<string>, parser:
     const split = parser.splitParamsAndChainTokens(paramsStr);
     const out: string[] = [];
 
-    if (kind === "MeshProgram") {
+    if (kind === "MeshProgram" || kind === "SolidMeshProgram") {
         const params = new Map<string, string>();
         const positional: string[] = [];
         for (const token of split.params) {
@@ -288,7 +316,8 @@ function transpileCapsuleObject(line: string, declaredVars: Set<string>, parser:
         const size = positional[0] && params.has("input") ? positional[0] : positional[1] ?? "undefined";
         const dimensions = size.includes("x") ? parser.transpileSizeToken(size)
             : size.startsWith("[") ? size : parser.transpileExpr(size);
-        out.push(`var ${first} = new MeshRenderingProgram(gl, ${input}, (${dimensions})[0], (${dimensions})[1]).includeInWebManList();`);
+        const programClass = kind === "SolidMeshProgram" ? "SolidMeshRenderingProgram" : "MeshRenderingProgram";
+        out.push(`var ${first} = new ${programClass}(gl, ${input}, (${dimensions})[0], (${dimensions})[1]).includeInWebManList();`);
         out.push(`lastUsedProgram = ${first};`);
     } else if (kind === "Axis3DGroup") {
         const params = new Map<string, string>();
@@ -328,9 +357,18 @@ function transpileCapsuleObject(line: string, declaredVars: Set<string>, parser:
 function buildHandlers(parser: any) {
     return {
         objects: {
+            //@dnti-createsInternalTexture
             MeshProgram: (params: Map<string | number, any>, gl: WebGL2RenderingContext) => {
                 const [width, height] = params.get(0) || [1024, 1024];
                 const program = new MeshRenderingProgram(gl, params.get("input"), width, height)
+                    .includeInWebManList();
+                parser.lastUsedProgram = program;
+                return program;
+            },
+            //@dnti-createsInternalTexture
+            SolidMeshProgram: (params: Map<string | number, any>, gl: WebGL2RenderingContext) => {
+                const [width, height] = params.get(0) || [1024, 1024];
+                const program = new SolidMeshRenderingProgram(gl, params.get("input"), width, height)
                     .includeInWebManList();
                 parser.lastUsedProgram = program;
                 return program;
@@ -1109,7 +1147,7 @@ export class MeshFillerProgram extends WebProgram {
 export const id = "MeshCapsule";
 
 export function detectUse(source: string): boolean | "Toggled" {
-    return /\b(?:MeshProgram|MeshFillerProgram|Axis3DGroup|createIdealMesh|fillMeshTexture)\b/.test(source)
+    return /\b(?:MeshProgram|SolidMeshProgram|MeshFillerProgram|Axis3DGroup|createIdealMesh|fillMeshTexture)\b/.test(source)
         ? true : "Toggled";
 }
 

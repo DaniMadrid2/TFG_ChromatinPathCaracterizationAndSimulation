@@ -169,8 +169,12 @@ parser a constantes WebGL; no son modulos de objetos o funciones.
 Un modulo independiente en `registryModules/` exporta `id`, `detectUse(source)`
 y `register(parser, services)`. `register` puede devolver `objects`, `functions`,
 `transpile`, `browserImports` y `browserSetup`. `capsules.ts` contiene las
-clases, funciones y reglas de transpilacion de `MeshCapsule`; el antiguo
-`webglCapsules.ts` solo reexporta sus clases para imports existentes.
+clases, funciones y reglas de transpilacion de `MeshCapsule`. Los imports del
+codigo generado apuntan directamente a `parser/registryModules/capsules.js`.
+`SolidMeshProgram input=TexUnit20 1024x1024` usa la misma API que
+`MeshProgram`, pero rellena cada celda con dos triangulos mediante `TRIANGLE_STRIP`.
+Su nombre implicito es `solidMeshProgram`; `draw(..., "LINES")` tambien dibuja
+la malla solida en esta clase.
 
 `detectUse` puede devolver `true`, `false` o `"Toggled"`. Con `"Toggled"`, el
 modulo se activa si esta nombrado en `dnti.modules.json` del proyecto. El mismo

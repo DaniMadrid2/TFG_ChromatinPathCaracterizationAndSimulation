@@ -1,0 +1,102 @@
+{
+  "objects": [
+    {
+      "name": "Axis3DGroup",
+      "tags": {}
+    },
+    {
+      "name": "Camera3D",
+      "tags": {}
+    },
+    {
+      "name": "MeshFillerProgram",
+      "tags": {}
+    },
+    {
+      "name": "MeshProgram",
+      "tags": {
+        "createsInternalTexture": true
+      }
+    },
+    {
+      "name": "Program",
+      "tags": {}
+    },
+    {
+      "name": "SolidMeshProgram",
+      "tags": {
+        "createsInternalTexture": true
+      }
+    }
+  ],
+  "functions": [
+    {
+      "name": "cFrameBuffer",
+      "tags": {}
+    },
+    {
+      "name": "createIdealMesh",
+      "tags": {}
+    },
+    {
+      "name": "depthTest",
+      "tags": {}
+    },
+    {
+      "name": "draw",
+      "tags": {}
+    },
+    {
+      "name": "drawArrays",
+      "tags": {}
+    },
+    {
+      "name": "drawElements",
+      "tags": {}
+    },
+    {
+      "name": "fillMeshTexture",
+      "tags": {}
+    },
+    {
+      "name": "lduse",
+      "tags": {}
+    },
+    {
+      "name": "let",
+      "tags": {}
+    },
+    {
+      "name": "log",
+      "tags": {}
+    },
+    {
+      "name": "start",
+      "tags": {}
+    },
+    {
+      "name": "startAsync",
+      "tags": {}
+    },
+    {
+      "name": "texture2DArray",
+      "tags": {}
+    },
+    {
+      "name": "unbindFBO",
+      "tags": {}
+    },
+    {
+      "name": "unbindFrameBuffer",
+      "tags": {}
+    },
+    {
+      "name": "use",
+      "tags": {}
+    },
+    {
+      "name": "viewport",
+      "tags": {}
+    }
+  ]
+}

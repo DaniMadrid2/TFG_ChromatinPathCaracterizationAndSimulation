@@ -15,7 +15,7 @@ import {Funcion, Arrow, Field,Axis,Axis2D,Funcion2D,Funcion3D,MatrixObject,axisp
 import {addFunc, start, startAsync, stop, Timer} from "../../Start/start.js"
 import { MathJaxLoader } from "../../MathJax/MathJax.js";
 
-import { Axis3DGroup, MeshRenderingProgram, MeshFillerProgram } from "../webglCapsules.js";
+import { Axis3DGroup, MeshRenderingProgram, SolidMeshRenderingProgram, MeshFillerProgram } from "./registryModules/capsules.js";
 import { Camera3D } from "../../Game3D/Game3D.js";
 import { WebGLMan, WebProgram, BindableTexture, parseTexUnitType, TexExamples } from "../webglMan.js";
 
@@ -152,6 +152,7 @@ export class DetailedParser {
     static GlobalContext = {
         // Clases del usuario (de tus imports)
         MeshRenderingProgram,
+        SolidMeshRenderingProgram,
         MeshFillerProgram,
         Axis3DGroup,
         Camera3D,
@@ -1783,21 +1784,22 @@ export class DetailedParser {
             }
         }
 
-        return DetailedParser.ensureOpenGLHelpersImport(DetailedParser.ensureWebglCapsulesImport(imports));
+        return DetailedParser.ensureOpenGLHelpersImport(DetailedParser.ensureMeshCapsuleImport(imports));
     }
 
-    static ensureWebglCapsulesImport(imports: string[]): string[] {
-        const idx = imports.findIndex(i => /from\s+["'][^"']*webglCapsules\.js["']/.test(i));
+    static ensureMeshCapsuleImport(imports: string[]): string[] {
+        const idx = imports.findIndex(i => /from\s+["'][^"']*(?:webglCapsules|parser\/registryModules\/capsules)\.js["']/.test(i));
         if (idx < 0) return imports;
         const imp = imports[idx];
-        const m = imp.match(/import\s*{([\s\S]*?)}\s*from\s*["']([^"']*webglCapsules\.js)["'];?/);
+        const m = imp.match(/import\s*{([\s\S]*?)}\s*from\s*["'][^"']*(?:webglCapsules|parser\/registryModules\/capsules)\.js["'];?/);
         if (!m) return imports;
         const names = m[1]
             .split(",")
             .map(s => s.trim())
             .filter(Boolean);
         if (!names.includes("MeshFillerProgram")) names.push("MeshFillerProgram");
-        imports[idx] = `import { ${[...new Set(names)].join(", ")} } from "${m[2]}";`;
+        if (!names.includes("SolidMeshRenderingProgram")) names.push("SolidMeshRenderingProgram");
+        imports[idx] = `import { ${[...new Set(names)].join(", ")} } from "/Code/WebGL/parser/registryModules/capsules.js";`;
         return imports;
     }
 

@@ -1,7 +1,7 @@
 {
   "name": "dnti-snippets-and-shader-dsl-ext",
   "displayName": "DNTI TS Snippets and Shader DSL language support",
-  "version": "1.2.2-2",
+  "version": "1.2.2-4",
   "description": "VS Code language mode for .snippet.ts and .shaderdsl.ts files syntax highlighting.",
   "publisher": "danimadrid2",
   "main": "./extension.js",
@@ -16,8 +16,9 @@
     "onLanguage:parse-text-ts"
   ],
   "scripts": {
-    "test": "node --test backupHover.test.js extensionHover.test.js",
-    "package": "vsce package --allow-missing-repository",
+    "build:syntax": "node build-registry-syntax.cjs",
+    "test": "npm run build:syntax && node --test backupHover.test.js extensionHover.test.js registrySyntax.test.js",
+    "package": "npm run build:syntax && vsce package --allow-missing-repository",
     "install-vsix": "code --install-extension .\\dnti-snippets-and-shader-dsl-ext-1.2.2-0.vsix"
   },
   "contributes": {
@@ -89,7 +90,8 @@
   "author": "DaniMadrid2",
   "license": "Unlicense",
   "devDependencies": {
-    "@vscode/vsce": "2.20.0"
+    "@vscode/vsce": "2.20.0",
+    "typescript": "^6.0.2"
   },
   "overrides": {
     "cheerio": "1.0.0"

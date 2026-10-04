@@ -22,7 +22,9 @@
       "name": "variable.other.assignment.parse-text-ts",
       "match": "^\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*(?==(?!=))",
       "captures": {
-        "1": { "name": "variable.other.definition.parse-text-ts" }
+        "1": {
+          "name": "variable.other.definition.parse-text-ts"
+        }
       }
     },
     {
@@ -62,14 +64,23 @@
       "begin": "\\[(?=[^\\]\\n]+\\]b\\b)",
       "end": "(?<=\\])b\\b",
       "beginCaptures": {
-        "0": { "name": "punctuation.section.brackets.begin.parse-text-ts" }
+        "0": {
+          "name": "punctuation.section.brackets.begin.parse-text-ts"
+        }
       },
       "endCaptures": {
-        "0": { "name": "punctuation.section.brackets.end.parse-text-ts" }
+        "0": {
+          "name": "punctuation.section.brackets.end.parse-text-ts"
+        }
       },
       "patterns": [
-        { "name": "punctuation.section.brackets.end.parse-text-ts", "match": "\\]" },
-        { "include": "source.ts" }
+        {
+          "name": "punctuation.section.brackets.end.parse-text-ts",
+          "match": "\\]"
+        },
+        {
+          "include": "source.ts"
+        }
       ]
     },
     {
@@ -77,8 +88,16 @@
       "match": "\\[[^\\]]+\\s+x\\s+[^\\]]+\\]"
     },
     {
+      "name": "support.class.registry-generated.parse-text-ts",
+      "match": "\\b(?:Axis3DGroup|Camera3D|MeshFillerProgram|MeshProgram|Program|SolidMeshProgram)\\b"
+    },
+    {
+      "name": "support.function.registry-generated.parse-text-ts",
+      "match": "\\b(?:cFrameBuffer|createIdealMesh|depthTest|draw|drawArrays|drawElements|fillMeshTexture|lduse|let|log|start|startAsync|texture2DArray|unbindFBO|unbindFrameBuffer|use|viewport)\\b"
+    },
+    {
       "name": "support.function.parser-helpers.parse-text-ts",
-      "match": "\\b(?:lduse|use|start|stop|drawPoints|drawLineStrip|drawLineLoop|drawLines|drawTriangleStrip|drawTriangleFan|drawTriangles|viewport|log|framebuffer|program|resource|texturePreset|rebind-temp|rebind|temp|uniforms|attributes|pingpong|swap|glslFilters|tex2D|texture2DArray|tick|draw|OnKeyPress|opti-let|opti-var|defineTag|bindTexName2TexUnit|MeshProgram|MeshFillerProgram|Axis3DGroup|Camera3D|Camera2D|Program|createIdealMesh|fillMeshTexture)\\b"
+      "match": "\\b(?:stop|drawPoints|drawLineStrip|drawLineLoop|drawLines|drawTriangleStrip|drawTriangleFan|drawTriangles|framebuffer|program|resource|texturePreset|rebind-temp|rebind|temp|uniforms|attributes|pingpong|swap|glslFilters|tex2D|tick|OnKeyPress|opti-let|opti-var|defineTag|bindTexName2TexUnit|Camera2D)\\b"
     },
     {
       "name": "entity.name.type.parser-block.parse-text-ts",

@@ -10,7 +10,7 @@ import {Funcion, Arrow, Field,Axis,Axis2D,Funcion2D,Funcion3D,MatrixObject,axisp
 import {addFunc, start, startAsync, stop, Timer} from "../Start/start.js"
 import { MathJaxLoader } from "../MathJax/MathJax.js";
 
-import { Axis3DGroup, MeshRenderingProgram, MeshFillerProgram } from "./webglCapsules.js";
+import { Axis3DGroup, MeshRenderingProgram, MeshFillerProgram } from "./parser/registryModules/capsules.js";
 import { Camera3D } from "../Game3D/Game3D.js";
 import { WebGLMan, WebProgram, BindableTexture, parseTexUnitType, TexExamples } from "./webglMan.js";
 

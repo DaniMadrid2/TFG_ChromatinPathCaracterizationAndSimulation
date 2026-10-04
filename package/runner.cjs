@@ -253,6 +253,19 @@ function applySnippets(source, snippets, config = {}, id = '') {
   const helpers = ['__mountGlobalBlocks', '__prepareMathFunction'].filter((name) =>
     source.includes(name) && !new RegExp(`import\\s*\\{[^}]*\\b${name}\\b[^}]*\\}`).test(source));
   if (helpers.length) source = `import { ${helpers.join(', ')} } from "/Code/opengl/opengl.js";\n${source}`;
+  source = source.replace(/from\s*(["'])[^"']*webglCapsules\.js\1/g,
+    'from "/Code/WebGL/parser/registryModules/capsules.js"');
+  if (source.includes('new SolidMeshRenderingProgram(') &&
+      !/import\s*\{[^}]*\bSolidMeshRenderingProgram\b[^}]*\}/.test(source)) {
+    const modulePath = '/Code/WebGL/parser/registryModules/capsules.js';
+    const capsuleImport = /import\s*\{([^}]*)\}\s*from\s*["']\/Code\/WebGL\/parser\/registryModules\/capsules\.js["'];?/;
+    if (capsuleImport.test(source)) {
+      source = source.replace(capsuleImport, (_match, names) =>
+        `import { ${names.trim().replace(/,\s*$/, '')}, SolidMeshRenderingProgram } from "${modulePath}";`);
+    } else {
+      source = `import { SolidMeshRenderingProgram } from "${modulePath}";\n${source}`;
+    }
+  }
   source = source.replace(/if\(!WebGLMan\.stWebGLMan\.gl\)\s*WebGLMan\.setGL\(gl\);\s*/g, '');
   source = source.replace(/WebGLMan\.program\(/g, 'webglMan.program(');
   return source;
