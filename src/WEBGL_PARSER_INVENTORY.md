@@ -1,11 +1,36 @@
 # Inventario de webglParser y del codigo inyectado
 
-Estado: documentacion para una refactorizacion posterior; este archivo no cambia el parser.
-Fuente principal: `src/dependencies/Code/WebGL/webglParser.ts` (`DetailedParser`).
+Estado: inventario historico y seguimiento del refactor; los nombres `__*` de
+las tablas describen el codigo anterior a la extraccion.
+Fuente principal: `src/dependencies/Code/WebGL/parser/webglParser.ts` (`DetailedParser`).
 El README principal de este proyecto esta en `src/README.md`. El paquete se
 construye desde `src/dependencies/Code`; `dist/` es salida de build. Un
 `lib/Code/WebGL/` del proyecto consumidor solo sustituye el parser incluido
-si contiene el par completo `webglParser.ts` y `webglMan.ts`.
+si contiene `parser/webglParser.ts` y `webglMan.ts` (se acepta el par antiguo).
+
+## Estado actual
+
+- `parser/objects/` y `parser/functions/`: registros tematicos con export
+  `register`. El cargador Node descubre los archivos TS con `fs` al ejecutar el parser; no genera `index.ts`.
+- `parser/registryModules/`: agregadores `objects.ts` y `functions.ts`, mas
+  modulos independientes. `capsules.ts` contiene las clases, funciones y
+  transpilacion de `MeshCapsule`; `webglCapsules.ts` solo reexporta.
+  `dnti.modules.json` activa nombres o rutas de modulos externos.
+- Los modos de dibujo son un mapa del parser a constantes WebGL, no un modulo
+  `blocks` separado.
+- `parser/runtimeFeature.ts`: contrato compartido. La lista explicita de
+  modulos sigue en el parser, pero cada implementacion de `runtime/` exporta
+  su `runtimeFeature` y termina con `detectUse`. El parser consulta primero
+  `detectUse` y carga el descriptor solo si se activa. `"Toggled"` necesita
+  activacion en el JSON.
+- `Code/WebGL/runtime/BackupRuntime.ts`, `RuntimeLetSource.ts` y
+  `ShaderFilterSet.ts` sustituyen los helpers `__*` generados. Sus imports
+  para el codigo generado solo se emiten si se detectan o se fuerzan.
+  `readBackup(path)` es la API de
+  lectura; `backUp restore` sigue rellenando un destino existente.
+
+Las tablas siguientes conservan el mapeo del codigo antiguo para revisar
+posibles mejoras pendientes; no describen simbolos emitidos hoy.
 
 ## Que es cada cosa
 
@@ -20,10 +45,9 @@ si contiene el par completo `webglParser.ts` y `webglMan.ts`.
   forma parte de `DetailedParser`. Su refactorizacion pertenece al ejemplo o
   a una libreria de dominio, no necesariamente al paquete universal.
 
-Hoy `transpileToFile` llama a `buildRuntimeLetHelperLines` y
-`buildBackupRuntimeHelperLines` desde `insertScaffold` incluso cuando el DSL
-no usa `let` remoto ni `backUp`. `buildTranspiledShaderFilterHelperLines` solo
-emite codigo si hay reglas `glslFilters`. Los `//<Pre>` del paquete reciben el
+Antes `transpileToFile` llamaba a `buildRuntimeLetHelperLines` y
+`buildBackupRuntimeHelperLines` desde `insertScaffold` incluso sin uso del DSL.
+Ahora resuelve descriptores y emite imports selectivos. Los `//<Pre>` del paquete reciben el
 wrapper y los snippets; `//<Pos>` cierra el wrapper. El CLI
 (`package/runner.cjs`) anade imports TS y compila el JS; el parser directo de
 `src/parsers/testParser*.ts` conserva ademas secciones existentes por defecto.
@@ -187,7 +211,7 @@ parseo de sintaxis, preparacion GPU y serializacion de backups.
 | `extractAliasesAndCore`, `ensureAliasesForClass` | Separan aliases de la definicion y crean uno si falta. |
 | `transpileCamera3DObject` | Construye `Camera3D` desde parametros DSL. Ya existe `Code/Game3D/Game3D.ts`. |
 | `transpileTexture2DArrayObject` | Llama a `WebProgram.texture2DArray`; ya existe en `webglMan.ts`. |
-| `transpileMeshProgramObject`, `transpileAxis3DGroupObject`, `transpileMeshFillerProgramObject` | Instancian wrappers ya definidos en `Code/WebGL/webglCapsules.ts`, con alias, chaining y contexto. |
+| `transpileCapsuleObject` (antes `transpileMeshProgramObject`, `transpileAxis3DGroupObject`, `transpileMeshFillerProgramObject`) | Instancia las clases definidas en `parser/registryModules/capsules.ts`, con alias, chaining y contexto. |
 | `transpileEscapedDestructuring` | Convierte asignacion multiple con llamada `$fn$`. |
 | `transpileCreateIdealMesh` | Compila callback matematico y llama a `createIdealTexture` del programa. |
 | `transpileSimpleStatement` | Despachador de `<=`, `let`, `use`, `viewport`, `logFBO`, backups, start, log, objetos y fallback TS. |

@@ -386,6 +386,47 @@ function activate(context) {
             refreshAllEditors();
             vscode.window.showInformationMessage("Shader DSL backUp path replacements rescanned.");
         }),
+        vscode.commands.registerCommand("vsTSSnippets.extractRepeatedDslBlock", async () => {
+            const editor = vscode.window.activeTextEditor;
+            if (!editor || editor.document.languageId !== "parse-text-ts") return;
+            const lines = editor.document.getText().split(/\r?\n/);
+            const blocks = [];
+            for (let start = 0; start < lines.length; start++) {
+                const kind = /^\s*(uniforms|rebind|attributes)\s*\{\s*$/.exec(lines[start])?.[1];
+                if (!kind) continue;
+                let depth = 1;
+                let end = start;
+                while (depth && ++end < lines.length) {
+                    depth += (lines[end].match(/\{/g) || []).length - (lines[end].match(/\}/g) || []).length;
+                }
+                if (depth) continue;
+                const key = lines.slice(start, end + 1).map(line => line.trim()).join("\n");
+                blocks.push({ kind, start, end, key });
+                start = end;
+            }
+            const selected = blocks.find(block => editor.selection.active.line >= block.start && editor.selection.active.line <= block.end);
+            if (!selected) return vscode.window.showInformationMessage("Sitúa el cursor dentro de uniforms, rebind o attributes.");
+            const matches = blocks.filter(block => block.key === selected.key);
+            if (matches.length < 2) return vscode.window.showInformationMessage("Este bloque no se repite en el documento.");
+            const name = await vscode.window.showInputBox({ prompt: `Nombre de la plantilla ${selected.kind} (${matches.length} usos)`, validateInput: value => /^[A-Za-z_]\w*$/.test(value) ? null : "Usa un identificador válido" });
+            if (!name) return;
+            if (new RegExp(`\\b${name}\\b`).test(editor.document.getText())) return vscode.window.showErrorMessage(`El nombre ${name} ya existe.`);
+            const first = matches[0];
+            let anchor = first.start;
+            for (let line = first.start - 1; line >= 0; line--) {
+                if (/^\s*(?:drawPoints|drawLineStrip|drawLineLoop|drawLines|drawTriangleStrip|drawTriangleFan|drawTriangles)\b.*\{\s*$/.test(lines[line])) { anchor = line; break; }
+            }
+            const indent = /^\s*/.exec(lines[anchor])[0];
+            const declaration = `${indent}${name} = ${selected.kind} {\n${lines.slice(first.start + 1, first.end).join("\n")}\n${indent}}\n`;
+            const edit = new vscode.WorkspaceEdit();
+            for (const block of matches) {
+                const range = new vscode.Range(block.start, 0, block.end, lines[block.end].length);
+                const call = `${/^\s*/.exec(lines[block.start])[0]}${name}`;
+                edit.replace(editor.document.uri, range, anchor === first.start && block === first ? declaration + call : call);
+            }
+            if (anchor !== first.start) edit.insert(editor.document.uri, new vscode.Position(anchor, 0), declaration);
+            await vscode.workspace.applyEdit(edit);
+        }),
         vscode.languages.registerDefinitionProvider(SNIPPET_SELECTOR, {
             provideDefinition(document, position) {
                 return provideSnippetDefinition(document, position);
@@ -1549,7 +1590,7 @@ function collectDrawBackupBlocks(text) {
             const innerCode = stripLineComment(lines[innerLine] || "");
             const backupMatch = innerCode.match(/^\s*backUp\s*:\s*(.+?)\s*$/);
             if (backupMatch) {
-                backupPathHint = backupMatch[1].trim();
+                backupPathHint = backupMatch[1].split(",")[0].trim();
                 break;
             }
         }
@@ -3940,14 +3981,14 @@ function collectResourceAndDslVisuals(
         const rebindHeaderMatch = code.match(/^\s*rebind\s+([A-Za-z_]\w*)\s*\{/);
         if (rebindHeaderMatch) {
             currentRebindProgram = rebindHeaderMatch[1];
-        } else if (/^\s*rebind\s*\{/.test(code)) {
+        } else if (/^\s*rebind(?:-temp)?\s*\{/.test(code)) {
             currentRebindProgram = currentBoundProgram;
         } else if (/^\s*}\s*$/.test(code)) {
             currentRebindProgram = null;
             insideUniformsBlock = false;
         }
 
-        if (/^\s*rebind\b/.test(code) || /^\s*[A-Za-z_]\w*\s*->/.test(code)) {
+        if (/^\s*rebind(?:-temp)?\b/.test(code) || /^\s*[A-Za-z_]\w*\s*->/.test(code)) {
             const pairRegex = /([A-Za-z_]\w*)\s*->\s*(?:TexUnit|texUnit)?(\d+)/g;
             let pair;
             while ((pair = pairRegex.exec(code)) !== null) {
@@ -3981,6 +4022,14 @@ function collectResourceAndDslVisuals(
                     rebindEmptySquareRanges.push(rangeFromOffsets(document, lhsStart, lhsStart));
                 } else {
                     rebindSquareRangesByUnit[prevUnit].push(rangeFromOffsets(document, lhsStart, lhsStart));
+                }
+                const destinationUnit = Number.parseInt(pair[2], 10);
+                const displaced = [...currentTextureByName.entries()].find(([name, unit]) => name !== lhs && unit === destinationUnit)?.[0];
+                if (displaced && rebindSquareRangesByUnit[destinationUnit]) {
+                    rebindSquareRangesByUnit[destinationUnit].push({
+                        range: rangeFromOffsets(document, lhsStart, lhsStart + lhs.length),
+                        hoverMessage: `TexUnit${destinationUnit} contenía ${displaced}. Un rebind temporal lo restaura después del draw.`,
+                    });
                 }
             }
         }

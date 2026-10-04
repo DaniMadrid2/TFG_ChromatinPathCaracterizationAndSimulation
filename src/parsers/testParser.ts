@@ -32,9 +32,13 @@ function ensureBrowserLikeGlobals() {
 async function loadDetailedParser() {
     const dynamicImport = new Function("p", "return import(p)");
     try {
-        return (await dynamicImport(pathToFileURL(path.resolve(process.cwd(), "src/dependencies/Code/WebGL/webglParser.mts")).href)).DetailedParser;
+        return (await dynamicImport(pathToFileURL(path.resolve(process.cwd(), "src/dependencies/Code/WebGL/parser/webglParser.mts")).href)).DetailedParser;
     } catch {
-        return (await dynamicImport(pathToFileURL(path.resolve(process.cwd(), "src/dependencies/Code/WebGL/webglParser.mjs")).href)).DetailedParser;
+        try {
+            return (await dynamicImport(pathToFileURL(path.resolve(process.cwd(), "src/dependencies/Code/WebGL/parser/webglParser.mjs")).href)).DetailedParser;
+        } catch {
+            return require("../../dist/parser.cjs").DetailedParser;
+        }
     }
 }
 

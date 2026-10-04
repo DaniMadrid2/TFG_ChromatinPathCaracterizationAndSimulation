@@ -6,8 +6,100 @@ const path = require('node:path');
 const test = require('node:test');
 const { loadParser, parseFiles, parseAll, resolveDsl } = require('../dist/runner.cjs');
 const { startServer } = require('../dist/lib/server.js');
+const { startBackupServer } = require('../dist/lib/backups.js');
 const { shouldWatchTs, watchProject } = require('../dist/watch.cjs');
 const { init } = require('../dist/initializer.cjs');
+const { registryEntry } = require('./registry-loader.cjs');
+
+test('discovers registry modules without editing the parser', async () => {
+  await temporaryWorkspace(async (root) => {
+    const parser = path.join(root, 'Code', 'WebGL', 'parser');
+    const folder = path.join(parser, 'registryModules');
+    await fs.mkdir(folder, { recursive: true });
+    await fs.mkdir(path.join(parser, 'objects'));
+    await fs.mkdir(path.join(parser, 'functions'));
+    await fs.writeFile(path.join(folder, 'sample.ts'), 'export const id = "sample"; export const register = () => ({ id });\n');
+    await fs.writeFile(path.join(parser, 'objects', 'sample.ts'), 'export const register = () => ({ objects: {} });\n');
+    await fs.writeFile(path.join(parser, 'functions', 'sample.ts'), 'export const register = () => ({ functions: {} });\n');
+    const entry = await registryEntry(path.join(parser, 'webglParser.ts'), parser);
+    assert.match(entry, /registryDefinitions = \[/);
+    assert.match(entry, /sample\.ts/);
+    assert.match(entry, /register\(parser, services\)/);
+    await assert.rejects(fs.access(path.join(folder, 'index.ts')));
+  });
+});
+
+test('capsule implementation contributes object and function DSL handlers', async () => {
+  await temporaryWorkspace(async (root) => {
+    const { DetailedParser } = await loadParser(root);
+    DetailedParser.activateRegistries('MeshProgram createIdealMesh fillMeshTexture');
+    assert.equal(typeof DetailedParser.ObjectRegistry.MeshProgram, 'function');
+    assert.equal(typeof DetailedParser.FunctionRegistry.createIdealMesh, 'function');
+    assert.equal(typeof DetailedParser.FunctionRegistry.fillMeshTexture, 'function');
+    assert.match(DetailedParser.transpileSimpleStatement('fillMeshTexture a (x,y)=>{sin(x)}', new Set()).join('\n'), /fillMeshTexture.*__prepareMathFunction/);
+    assert.match(DetailedParser.transpileSimpleStatement('mesh = MeshProgram input=TexUnit20 4x4', new Set()).join('\n'), /new MeshRenderingProgram/);
+    assert.match(DetailedParser.transpileSimpleStatement('MeshProgram input=TexUnit20 1024x1024', new Set()).join('\n'), /var meshProgram = new MeshRenderingProgram/);
+    assert.match(DetailedParser.transpileSimpleStatement('Axis3DGroup axisLength=vec3(15.3)', new Set()).join('\n'), /new Axis3DGroup/);
+    assert.match(DetailedParser.transpileSimpleStatement('MeshFillerProgram TexUnit20 "(x,y)=>x"', new Set()).join('\n'), /new MeshFillerProgram/);
+  });
+});
+
+test('dnti.modules.json selects a built-in module and loads a TypeScript module by path', async () => {
+  await temporaryWorkspace(async (root) => {
+    await fs.writeFile(path.join(root, 'dnti.modules.json'), JSON.stringify({ modules: ['MeshCapsule', './Custom.ts'] }));
+    await fs.writeFile(path.join(root, 'Custom.ts'), [
+      'export const id = "Custom";',
+      'export const detectUse = () => "Toggled";',
+      'export const register = () => ({ id, browserSetup: ["const customReady = true;"],',
+      '  transpile: [(line: string) => line === "customPing" ? ["console.log(customReady);"] : null] });',
+    ].join('\n'));
+    await fs.writeFile(path.join(root, 'parseTextC1.shaderdsl.ts'), '<Pre>\ncustomPing\n<Pos>\n');
+    const [result] = await parseFiles(['parseTextC1.shaderdsl.ts'], { cwd: root });
+    const generated = await fs.readFile(result.tsFile, 'utf8');
+    assert.match(generated, /const customReady = true;/);
+    assert.match(generated, /console\.log\(customReady\);/);
+    const { loadProjectModules, loadParser } = require('../dist/runner.cjs');
+    const { DetailedParser } = await loadParser(root);
+    const modules = await loadProjectModules(root, DetailedParser);
+    DetailedParser.activateRegistries('', modules.forced, modules.external);
+    assert.ok(DetailedParser.activeRegistryModules.some(module => module.id === 'MeshCapsule'));
+    assert.ok(DetailedParser.activeRegistryModules.some(module => module.id === 'Custom'));
+    modules.external[0].detectUse = () => false;
+    DetailedParser.activateRegistries('', modules.forced, modules.external);
+    assert.ok(!DetailedParser.activeRegistryModules.some(module => module.id === 'Custom'));
+  });
+});
+
+test('emits backup runtime only for backup DSL or explicit configuration', async () => {
+  await temporaryWorkspace(async (root) => {
+    const name = 'parseTextC1.shaderdsl.ts';
+    const file = path.join(root, name);
+    await fs.writeFile(file, '<Pre>\ndrawLines -> [] size [1,1] {\n backUp: /test/lines/\n}\n<Pos>\n');
+    const [result] = await parseFiles([name], { cwd: root });
+    let generated = await fs.readFile(result.tsFile, 'utf8');
+    assert.match(generated, /import \{ BackupRuntime \}/);
+    assert.match(generated, /backupRuntime\.storeDrawBlock\("drawLines"/);
+    assert.doesNotMatch(generated, /import \{ RuntimeLetSource \}/);
+    await fs.writeFile(path.join(root, 'shaderdsl.config.json'), JSON.stringify({ runtimeFeatures: { backup: false } }));
+    await assert.rejects(parseFiles([name], { cwd: root }), /backup.*disabled/);
+  });
+});
+
+test('runtime implementations own their detection and packaged contracts', async () => {
+  const bundled = path.join(__dirname, '..', 'dist', 'lib', 'Code', 'WebGL');
+  for (const name of ['BackupRuntime', 'RuntimeLetSource', 'ShaderFilterSet']) {
+    const source = await fs.readFile(path.join(bundled, 'runtime', `${name}.ts`), 'utf8');
+    assert.match(source.trimEnd(), /export const detectUse = [\s\S]+;$/);
+    assert.match(source, /export const runtimeFeature:/);
+  }
+  await fs.access(path.join(bundled, 'parser', 'runtimeFeature.ts'));
+  await fs.access(path.join(bundled, 'parser', 'registryModules', 'types.ts'));
+  await temporaryWorkspace(async (root) => {
+    const { DetailedParser } = await loadParser(root);
+    assert.equal(DetailedParser.runtimeFeatures.length, 3);
+    assert.equal(DetailedParser.runtimeFeatures[0].detectUse({ source: 'backUp: /x/' }), true);
+  });
+});
 
 async function temporaryWorkspace(run) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'dnti-shaderdsl-'));
@@ -35,10 +127,10 @@ test('uses a complete local WebGL parser and manager pair', async () => {
   for (const directory of ['Code/WebGL', 'WebGL']) await temporaryWorkspace(async (root) => {
     const local = path.join(root, 'lib', directory);
     const bundled = path.join(__dirname, '..', 'dist', 'lib', 'Code', 'WebGL');
-    await fs.mkdir(local, { recursive: true });
-    const parser = await fs.readFile(path.join(bundled, 'webglParser.ts'), 'utf8');
+    await fs.mkdir(path.join(local, 'parser'), { recursive: true });
+    const parser = await fs.readFile(path.join(bundled, 'parser', 'webglParser.ts'), 'utf8');
     assert.match(parser, /^export class DetailedParser\s*\{/m);
-    await fs.writeFile(path.join(local, 'webglParser.ts'), parser.replace(
+    await fs.writeFile(path.join(local, 'parser', 'webglParser.ts'), parser.replace(
       /^export class DetailedParser\s*\{/m,
       'export class DetailedParser { static localOverrideMarker = true;',
     ));
@@ -101,6 +193,58 @@ test('transpiles line modes, inferred counts and attribute templates', () => {
   const integer = parser.transpileDrawCallBlock('drawPoints "aIndex" {indices}uvec2 4 -> []', [], new Set()).join('\n');
   assert.match(integer, /VAO\.attribute\("aIndex", indices, 2, "UNSIGNED_INT", 0, 0, false, 1\)/);
   assert.match(integer, /drawArrays\("POINTS", 0, 4\)/);
+});
+
+test('object declarations accept a trailing semicolon and number implicit aliases from 2', () => {
+  const { DetailedParser: parser } = require('../dist/parser.cjs');
+  const declared = new Set();
+  const explicit = parser.transpileSimpleStatement('camera = Camera3D pos=vec3(0,4,12);', declared).join('\n');
+  assert.match(explicit, /var camera = new Camera3D\(new Vector3D\(0,4,12\)\);/);
+  assert.doesNotMatch(explicit, /Vector3D\([^)]*\);\)/);
+  const first = parser.transpileSimpleStatement('Camera3D pos=vec3(0,4,12);', declared).join('\n');
+  const second = parser.transpileSimpleStatement('Camera3D pos=vec3(0,0,5);', declared).join('\n');
+  assert.match(first, /var camera3D = new Camera3D/);
+  assert.match(second, /var camera3D2 = new Camera3D/);
+});
+
+test('transpiles swaps, temporary rebinding and backup retention options', async () => {
+  const { DetailedParser: parser } = await loadParser(path.join(__dirname, '..'));
+  assert.deepEqual(parser.transpileSimpleStatement('swap {a, b, c}', new Set()), ['[a, b, c] = [b, c, a];']);
+  assert.deepEqual(parser.transpileSimpleStatement('a <=> b', new Set()), ['[a, b] = [b, a];']);
+  const draw = parser.transpileDrawCallBlock('drawPoints -> [] size [8,8]', [
+    'rebind-temp {', 'inputTexture -> TexUnit12', '}',
+    'backUp: /test/points/, maxBackUpIterations: 20, priority: last',
+  ], new Set()).join('\n');
+  assert.match(draw, /getParameter\(gl\.TEXTURE_BINDING_2D\)/);
+  assert.match(draw, /gl\.bindTexture\(gl\.TEXTURE_2D, __tempRebind_0_0Old\)/);
+  assert.match(draw, /storeDrawBlock\("drawPoints", "\/test\/points\/", \[\], \[\], lastUsedProgram, \{ maxBackUpIterations: 20, priority: "last" \}\)/);
+  await temporaryWorkspace(async (root) => {
+    const name = 'parseTextC1.shaderdsl.ts';
+    await fs.writeFile(path.join(root, name), '<Pre/>\nlet a = 1\nlet b = 2\ntick {\npingpong (a, b) {\n a <=> b\n}\n}\n<Pos>\n');
+    const [output] = await parseFiles([name], { cwd: root });
+    assert.match(await fs.readFile(output.tsFile, 'utf8'), /\[a, b\] = \[b, a\];/);
+  });
+});
+
+test('last-priority cleanup removes only the selected draw files', async () => {
+  await temporaryWorkspace(async (root) => {
+    const folder = path.join(root, 'backups', 'scene', '2');
+    await fs.mkdir(folder, { recursive: true });
+    await fs.writeFile(path.join(folder, 'drawPoints_uniforms.txt'), 'old');
+    await fs.writeFile(path.join(folder, 'drawTriangles_uniforms.txt'), 'keep');
+    const server = await startBackupServer(0, root, { allowDeletion: true });
+    try {
+      const response = await fetch(`http://127.0.0.1:${server.address().port}/api/backups/clear-generation`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: 'scene/2', prefix: 'drawPoints_', content: '' }),
+      });
+      assert.equal(response.status, 200);
+      await assert.rejects(fs.access(path.join(folder, 'drawPoints_uniforms.txt')));
+      assert.equal(await fs.readFile(path.join(folder, 'drawTriangles_uniforms.txt'), 'utf8'), 'keep');
+    } finally {
+      await new Promise(resolve => server.close(resolve));
+    }
+  });
 });
 
 test('transfers texture values and resolves byte-sized draw dimensions', async () => {
@@ -226,7 +370,7 @@ test('CLI help explains installation, GLSL and local overrides', () => {
   const result = spawnSync(process.execPath, [cli, '--help'], { encoding: 'utf8' });
   assert.equal(result.status, 0);
   assert.match(result.stdout, /npm install -g/);
-  assert.match(result.stdout, /lib\/Code\/WebGL\/webglParser\.ts/);
+  assert.match(result.stdout, /lib\/Code\/WebGL\/parser\/webglParser\.ts/);
   assert.match(result.stdout, /parser_snippets\/shared/);
   assert.match(result.stdout, /\/glsl\//);
   assert.match(result.stdout, /runserver \[port\] \[path\]/);

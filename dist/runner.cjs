@@ -2,6 +2,7 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const Module = require('node:module');
 const esbuild = require('esbuild');
+const { registryEntry } = require('./registry-loader.cjs');
 
 const packageRoot = __dirname;
 const bundledLib = path.join(packageRoot, 'lib');
@@ -31,13 +32,15 @@ function sourceResolver(cwd, localParser, localMan) {
         if (request === '/Code/WebGL/webglMan.js') {
           return { path: localMan || path.join(bundledLib, 'Code', 'WebGL', 'webglMan.ts') };
         }
-        if (request === '/Code/WebGL/webglParser.js') {
-          return { path: localParser || path.join(bundledLib, 'Code', 'WebGL', 'webglParser.ts') };
+        if (request === '/Code/WebGL/webglParser.js' || request === '/Code/WebGL/parser/webglParser.js') {
+          return { path: localParser || path.join(bundledLib, 'Code', 'WebGL', 'parser', 'webglParser.ts') };
         }
         const relative = request.slice('/Code/'.length);
         const local = path.join(localCode, relative);
         if (await exists(local)) return { path: local };
-        return { path: path.join(bundledLib, 'Code', relative) };
+        const bundled = path.join(bundledLib, 'Code', relative);
+        const typescript = bundled.replace(/\.js$/, '.ts');
+        return { path: await exists(bundled) ? bundled : typescript };
       });
       build.onResolve({ filter: /^\/(DNTI_Templates|ExternalCode)\// }, async ({ path: request }) => {
         const local = path.join(cwd, request.slice(1));
@@ -45,10 +48,15 @@ function sourceResolver(cwd, localParser, localMan) {
       });
       build.onResolve({ filter: /^\.{1,2}\// }, async (args) => {
         if (!localParser || ![localParser, localMan].some((file) => path.resolve(args.importer) === path.resolve(file))) return;
-        if (path.resolve(args.importer) === path.resolve(localParser) && args.path === './webglMan.js') return { path: localMan };
+        if (path.resolve(args.importer) === path.resolve(localParser) && (args.path === './webglMan.js' || args.path === '../webglMan.js')) return { path: localMan };
         const local = path.resolve(path.dirname(args.importer), args.path);
         if (await exists(local)) return { path: local };
-        return { path: path.resolve(bundledLib, 'Code/WebGL', args.path) };
+        const relativeDirectory = path.resolve(args.importer) === path.resolve(localMan)
+          ? 'Code/WebGL'
+          : path.basename(path.dirname(localParser)) === 'parser' ? 'Code/WebGL/parser' : 'Code/WebGL';
+        const bundled = path.resolve(bundledLib, relativeDirectory, args.path);
+        const typescript = bundled.replace(/\.js$/, '.ts');
+        return { path: await exists(bundled) ? bundled : typescript };
       });
     },
   };
@@ -60,27 +68,71 @@ async function loadParser(cwd) {
   let localParser;
   let localMan;
   for (const directory of locations) {
-    const parser = path.join(directory, 'webglParser.ts');
     const man = path.join(directory, 'webglMan.ts');
-    if (await exists(parser) && await exists(man)) {
-      localParser = parser;
-      localMan = man;
-      break;
+    for (const parser of [path.join(directory, 'parser', 'webglParser.ts'), path.join(directory, 'webglParser.ts')]) {
+      if (await exists(parser) && await exists(man)) {
+        localParser = parser;
+        localMan = man;
+        break;
+      }
     }
+    if (localParser) break;
   }
-  if (!localParser) {
-    return { DetailedParser: require(path.join(packageRoot, 'parser.cjs')).DetailedParser, localParser: null, localMan: null };
-  }
+  const registryRoot = path.join(bundledLib, 'Code', 'WebGL', 'parser');
+  const parserFile = localParser || path.join(registryRoot, 'webglParser.ts');
   const result = await esbuild.build({
-    entryPoints: [localParser], bundle: true, write: false, platform: 'node',
+    stdin: { contents: await registryEntry(parserFile, registryRoot), resolveDir: registryRoot,
+      sourcefile: path.join(registryRoot, 'registry-entry.ts'), loader: 'ts' },
+    bundle: true, write: false, platform: 'node',
     format: 'cjs', target: 'node20', plugins: [sourceResolver(cwd, localParser, localMan)],
   });
-  const mod = new Module(localParser, module);
-  mod.filename = localParser;
-  mod.paths = Module._nodeModulePaths(path.dirname(localParser));
-  mod._compile(result.outputFiles[0].text, localParser);
-  if (!mod.exports.DetailedParser) throw new Error(`${localParser} does not export DetailedParser`);
-  return { DetailedParser: mod.exports.DetailedParser, localParser, localMan };
+  const mod = new Module(parserFile, module);
+  mod.filename = parserFile;
+  mod.paths = Module._nodeModulePaths(path.dirname(parserFile));
+  mod._compile(result.outputFiles[0].text, parserFile);
+  if (!mod.exports.DetailedParser) throw new Error(`${parserFile} does not export DetailedParser`);
+  return { DetailedParser: mod.exports.DetailedParser, localParser: localParser || null, localMan: localMan || null };
+}
+
+async function loadProjectModules(cwd, DetailedParser) {
+  const file = path.join(cwd, 'dnti.modules.json');
+  if (!await exists(file)) return { forced: [], external: [] };
+  const config = JSON.parse(await fs.readFile(file, 'utf8'));
+  const entries = Array.isArray(config) ? config : [
+    ...(config.modules || []),
+    ...Object.entries(config).filter(([key, enabled]) => key !== 'modules' && enabled === true).map(([key]) => key),
+  ];
+  const forced = new Set();
+  const external = [];
+  for (const entry of entries) {
+    const name = typeof entry === 'string' ? entry : entry?.path || entry?.name;
+    if (!name || typeof name !== 'string') throw new Error(`Invalid entry in ${file}`);
+    if (!/[\\/]|\.tsx?$/.test(name)) {
+      if (!DetailedParser.registryModuleNames?.includes(name)) throw new Error(`Unknown module '${name}' in ${file}`);
+      forced.add(name);
+      continue;
+    }
+    const moduleFile = path.resolve(cwd, name);
+    if (!await exists(moduleFile)) throw new Error(`Module file not found: ${moduleFile}`);
+    const result = await esbuild.build({
+      entryPoints: [moduleFile], bundle: true, write: false, platform: 'node', format: 'cjs',
+      target: 'node20', plugins: [sourceResolver(cwd, null, null)],
+    });
+    const loaded = new Module(moduleFile, module);
+    loaded.filename = moduleFile;
+    loaded.paths = Module._nodeModulePaths(path.dirname(moduleFile));
+    loaded._compile(result.outputFiles[0].text, moduleFile);
+    const definition = loaded.exports;
+    if (typeof definition.detectUse !== 'function' || typeof definition.register !== 'function') {
+      throw new Error(`Module ${moduleFile} must export detectUse(source) and register(parser, services)`);
+    }
+    const id = definition.id || path.basename(moduleFile).replace(/\.tsx?$/, '');
+    if (external.some(module => module.id === id) || DetailedParser.registryModuleNames?.includes(id)) {
+      throw new Error(`Duplicate module id '${id}' in ${file}`);
+    }
+    external.push({ id, detectUse: definition.detectUse, register: definition.register });
+  }
+  return { forced: [...forced], external };
 }
 
 function directive(line) {
@@ -212,6 +264,7 @@ async function parseFiles(files, options = {}) {
   const { DetailedParser, localParser, localMan } = await loadParser(cwd);
   const configPath = path.join(cwd, 'shaderdsl.config.json');
   const config = await exists(configPath) ? JSON.parse(await fs.readFile(configPath, 'utf8')) : {};
+  const projectModules = await loadProjectModules(cwd, DetailedParser);
   const outputs = [];
   for (const input of files) {
     const absolute = path.resolve(cwd, input);
@@ -224,7 +277,8 @@ async function parseFiles(files, options = {}) {
     const tsFile = path.join(outDir, basename + '.ts');
     const jsFile = path.join(outDir, basename + '.js');
     await fs.mkdir(outDir, { recursive: true });
-    await DetailedParser.parse(source, null, {}, tsFile, undefined, fileName.replace(dslSuffix, ''), false);
+    await DetailedParser.parse(source, null, {}, tsFile, undefined, fileName.replace(dslSuffix, ''), false,
+      config.runtimeFeatures || {}, [...(config.registryModules || []), ...projectModules.forced], projectModules.external);
     const snippets = await readSnippets(cwd, id);
     const explicit = [];
     for (const item of config.snippets || []) {
@@ -263,4 +317,4 @@ async function parseAll(options = {}) {
   return parseFiles(entryPoints, { ...options, cwd, outDir: options.outDir || 'generated' });
 }
 
-module.exports = { parseFiles, parseAll, resolveDsl, loadParser };
+module.exports = { parseFiles, parseAll, resolveDsl, loadParser, loadProjectModules };

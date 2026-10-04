@@ -9,11 +9,14 @@
   "files": [
     "cli.cjs",
     "runner.cjs",
+    "registry-loader.cjs",
     "watch.cjs",
     "initializer.cjs",
+    "tutorial.cjs",
     "parser.cjs",
     "lib",
     "templates",
+    "tutorials",
     "README.md",
     "EXTENSION_SYNTAX_PENDING.md"
   ],

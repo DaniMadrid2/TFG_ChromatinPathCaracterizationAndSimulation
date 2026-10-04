@@ -6,7 +6,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "build:package": "node package/build.cjs",
-    "test:package": "node --test package/cli.test.cjs",
+    "test:package": "node --test package/cli.test.cjs package/tutorial.test.cjs",
     "watch": "tsc -p tsconfig.json -w",
     "tailwind": "npx tailwindcss -c ./tailwind.config.js -i ./src/dependencies/static/tailwind.input.css -o ./src/dependencies/static/main.css",
     "tailwind:watch": "npx tailwindcss -c ./tailwind.config.js -i ./src/dependencies/static/tailwind.input.css -o ./src/dependencies/static/main.css --watch",

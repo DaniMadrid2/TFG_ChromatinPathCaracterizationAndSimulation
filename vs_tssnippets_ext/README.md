@@ -77,3 +77,15 @@ Ambos comparten parte del sistema de decoraciones, hover y navegación simbólic
 In any `.shaderdsl.ts` file, hover over `backUp:` in a supported `draw*` block for a temporary image preview; hovering does not open a tab. Use `Open` after the block to open the dockable inspector, then drag its tab between editor groups. HTML selectors for path, scope, iteration and file appear only in that inspector, and each inspector keeps its own selection. The base directory is the first iteration; numbered directories are later iterations. All valid texture matrices render as images with per-channel value ranges. `Open File` opens the selected backing file in the editor.
 
 The extension scans shader DSL files only within the current document's project directory. Code searches use bounded in-memory snapshots instead of opening every match as a VS Code document; the snapshot cache is pruned when its project has no visible editor.
+
+# Recent Shader DSL Syntax
+
+`RES [width,height]b` and `size [width,height]b` mark the `b` with the same
+bracket scope as the dimension delimiters. The language also recognizes all
+draw modes, `rebind-temp`, `temp`, `swap`, and `pingpong`.
+
+Run **Shader DSL: Extract Repeated Block** with the cursor inside a repeated
+`uniforms`, `rebind`, or `attributes` block. It creates one named template in
+the current document and replaces identical blocks with calls to that name.
+The rebind color marker shows the texture previously occupying a destination
+unit on hover.

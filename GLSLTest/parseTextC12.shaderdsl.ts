@@ -1,4 +1,27 @@
+
+
 <Pre>
+
+
+MeshProgram input=TexUnit20 1024x1024
+lduse meshProgram
+meshProgram.initUniforms().setPerXPerY(0.5,0.5).setDXDY(0.16,0.16).setColorHueScale(1)
+surface=createIdealMesh TexUnit20 (x,y)=>{return sin(x/4)*cos(y/4)+-exp(0.00001*((x-512)*(x-512)+(y-512)*(y-512)))*12} .bind()
+
+
+camera3D = Camera3D pos=vec3(0,4,12);
+camera3D.direction = new Vector3D(0,-0.3,-1)
+camera3D.calculateMatrices()
+
+
+
+Axis3DGroup axisLength=vec3(4) drawArrows=true
+lduse axis3DGroup
+axis3DGroup.setDivisions(4).initUniforms()
+
+
+camera3D.bindRKey("z")
+MeshFillerProgram TexUnit20 "(x,y)=>{ sin(x/4)*cos(y/4) }"
 
 let offset = new Vector2D(0, 0)
 
@@ -14,8 +37,12 @@ resource TauFloatTex {
 }
 
 program movePoints "movePoints" {
-    tex2D positionTexture RES [1 x trajectory.length]b TauFloatTex TexUnit12 <= trajectory
+    in-tex2D positionTexture RES [1 x trajectory.length]b TauFloatTex TexUnit12 <= trajectory
     new-tex2D positionTextureNext RES [1 x trajectory.length]b TauFloatTex TexUnit13
+
+    //Recuerda que in-tex2D indica que la textura es de entrada
+    //Recuerda que new-tex2D indica que la textura es de reemplazo o es temporal
+    //Y que tex2D se suele referir a texturas de salida del documento
 }
 
 
@@ -27,29 +54,35 @@ setCoords_u = uniforms{
 let movePointsFBO = null
 
 tick {
-    use movePoints
-    drawTriangles -> [positionTextureNext] size [1,trajectory.length]b {
-        uniforms{
-            {dt}f
-        }
-        rebind {
-            positionTexture -> TexUnit12
-        }
-    }
+    // pingpong (positionTexture, positionTextureNext) {
+    //     use movePoints
+    //     drawTriangles -> [positionTextureNext] size [1,trajectory.length]b {
+    //         uniforms{
+    //             {dt}f
+    //         }
+    //         rebind {
+    //             positionTexture -> TexUnit12
+    //         }
+    //     }
 
-    unbindFBO movePoints
+    //     unbindFBO movePoints
 
-    use demo
-    drawPoints {positionTextureNext}vec2 -> [] size [640,480] {
-        uniforms{
-            setCoords_u
-        }
-        // backUp: /parseTextC12/lines
-    }
+    //     use demo
+    //     drawPoints {positionTextureNext}vec2 -> [] size [640,480] {
+    //         uniforms{
+    //             setCoords_u
+    //         }
+    //         backUp: /parseTextC12/lines, maxBackUpIterations: 20, priority: first
+    //     }
+    // }
+    
+    camera3D.tick( {dt} , {keypress} , {mousepos} , {mouseclick} )
 
-    let previousTexture = positionTexture
-    positionTexture = positionTextureNext
-    positionTextureNext = previousTexture
+    use meshProgram
+    meshProgram.draw(0,0,640,480,{camera3D},"LINES")
+
+    // use axis3DGroup
+    // axis3DGroup.draw({camera3D})
 
     // log "-> offset:" {offset.x} {offset.y}
 }

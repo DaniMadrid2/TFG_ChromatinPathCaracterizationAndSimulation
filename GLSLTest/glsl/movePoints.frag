@@ -36,7 +36,7 @@ void main() {
   //calculate distance to center
   float dist = distance(pos.xy, center);
 
-  const float globalSpeedMag = 0.04;
+  const float globalSpeedMag = 0.004;
 
   //calculate speed based on distance to center
   float speed = dist * dist * 0.1 * globalSpeedMag;

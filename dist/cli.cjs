@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 const { parseFiles, parseAll } = require('./runner.cjs');
 const { init } = require('./initializer.cjs');
+const { tutorial } = require('./tutorial.cjs');
 const { startServer } = require('./lib/server.js');
 const { askBackupDeletionPermission, startBackupServer } = require('./lib/backups.js');
 const { watchProject } = require('./watch.cjs');
@@ -14,6 +15,7 @@ Uso:
   dnti_shaderdsl parse . [--out-dir DIR] [--watch] [--serve [port]] [--no-backup-server]
   dnti_shaderdsl parseAll [--out-dir DIR] [--watch] [--serve [port]] [--no-backup-server]
   dnti_shaderdsl init [NOMBRE|./] [--template simple|trajectories|simulation|pointSimulation]
+  dnti_shaderdsl tutorial [capitulo]
   dnti_shaderdsl serve [port] [path] [--no-backup-server]
   dnti_shaderdsl runserver [port] [path] [--no-backup-server]
   dnti_shaderdsl servebackups [port] [path]
@@ -29,18 +31,20 @@ Opciones:
   --no-backup-server  No inicia la API de backups ni solicita elevacion UAC.
   En Windows, la API de backups abre una consola externa elevada mediante UAC.
   --template       Ejemplo para init; si se omite, muestra un menu.
+  tutorial         Lista capitulos y copia el elegido a una carpeta nueva.
   --dir            Carpeta nueva donde init crea el proyecto.
   serve/runserver  Sirve index.html y glsl/ por HTTP (puerto 4178 por defecto).
   servebackups     Sirve solo /api/backups sobre [path]/backups.
 
 Operacion:
   1. Lee cada Shader DSL y sus import <Mid> desde el directorio actual.
-  2. Usa ./lib/Code/WebGL/webglParser.ts + webglMan.ts si existen ambos;
+  2. Usa ./lib/Code/WebGL/parser/webglParser.ts + ../webglMan.ts si existen ambos;
      tambien admite ./lib/WebGL/. Si no, usa los del paquete.
   3. Inserta snippets de ./parser_snippets/shared y del identificador
      (por ejemplo c1 o c2). shaderdsl.config.json permite ubicaciones
      pre, post, before:MARCADOR y after:MARCADOR.
-  4. Genera generatedParser<ID>.ts y .js. El JS carga los shaders GLSL
+  4. dnti.modules.json activa modulos por nombre (MeshCapsule) o ruta .ts.
+  5. Genera generatedParser<ID>.ts y .js. El JS carga los shaders GLSL
      del programa desde /glsl/<nombre>.vert y /glsl/<nombre>.frag.
 
 Ejemplos:
@@ -51,6 +55,8 @@ Ejemplos:
   dnti_shaderdsl parse . --watch --serve 5180
   dnti_shaderdsl init --template simulation --dir mi-simulacion
   dnti_shaderdsl init --template pointSimulation --dir mis-puntos
+  dnti_shaderdsl tutorial
+  dnti_shaderdsl tutorial 3
   dnti_shaderdsl serve 4178 ./GLSLTest
   npm install -g ./dist
 
@@ -67,7 +73,7 @@ async function main(argv) {
     process.stdout.write(version + '\n');
     return;
   }
-  const command = ['parse', 'parseAll', 'init', 'serve', 'runserver', 'servebackups'].includes(argv[0]) ? argv.shift() : 'parse';
+  const command = ['parse', 'parseAll', 'init', 'tutorial', 'serve', 'runserver', 'servebackups'].includes(argv[0]) ? argv.shift() : 'parse';
   const launchServer = async (port, directory, noBackupServer, serverCommand = 'serve') => {
     if (!noBackupServer && process.platform === 'win32' && !isWindowsAdministrator()) {
       startElevatedServer(serverCommand, port, directory);
@@ -103,6 +109,10 @@ async function main(argv) {
     }
     if (dir !== undefined && positionalDir !== undefined) throw new Error('Usa NOMBRE o --dir, no ambos');
     return init({ template, dir: dir ?? positionalDir });
+  }
+  if (command === 'tutorial') {
+    if (argv.length > 1 || (argv[0] && !/^\d+$/.test(argv[0]))) throw new Error('Uso: dnti_shaderdsl tutorial [capitulo]');
+    return tutorial({ chapter: argv[0] ? Number(argv[0]) : undefined });
   }
   if (!argv.length && command !== 'parseAll') {
     process.stderr.write('Faltan archivos Shader DSL. Usa dnti_shaderdsl --help.\n');

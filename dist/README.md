@@ -20,6 +20,21 @@ repositorio original.
 
 ## Crear y servir un proyecto
 
+`dnti_shaderdsl tutorial` muestra 17 capitulos de sintaxis y copia el elegido
+a una carpeta nueva del directorio actual. Tambien puedes usar
+`dnti_shaderdsl tutorial 3` sin menu. Cada carpeta incluye un
+`parseTextC1.shaderdsl.ts`, GLSL especifico y un `index.html`; el capitulo de
+imports incluye ademas un DSL compartido y `parser_snippets/`. Dentro del
+capitulo ejecuta `dnti_shaderdsl parse . --serve` para generar y abrir el
+ejemplo. El modulo de mallas se llama actualmente `MeshCapsule`.
+
+Los capitulos tratan: anclas y `tick`; programas, recursos y texturas; modos
+de dibujo; `uniforms`; `rebind`; `attributes`; framebuffer y viewport;
+transferencias `<=` y sufijo `b`; `swap` y `pingpong`; backups; snippets e
+imports; dos partes de `MeshCapsule`; `derived`; y colores de `TexUnit` en la
+extension; sustituciones `glslFilters`; y eventos y bloques globales.
+La sintaxis experimental `--` no se incluye.
+
 `dnti_shaderdsl init` pregunta que ejemplo crear: un canvas sencillo, dos
 trayectorias sin `tick`, una simulacion de dos campos con WebGL2, o
 `pointSimulation` (dos canvases con puntos cuya posicion se actualiza en la GPU).
@@ -78,9 +93,13 @@ Para ejecutar solo la API, sin servir `index.html`, usa
 `dnti_shaderdsl servebackups [port] [path?]`. El codigo generado solicita
 `/api/backups` al mismo origen que sirve el HTML: por eso normalmente conviene
 usar `serve` o `parse --serve`. `servebackups` sirve para integrarla mediante
-un proxy o para usar la API por separado. La API admite listar (`GET /list`),
+un proxy o para usar la API por separado. Tambien se puede ejecutar
+`node dist/lib/backups.js [port] [path]` desde este repositorio. En Windows,
+si el borrado de backups falla por permisos, inicia esa terminal como
+administrador y autoriza el borrado cuando se solicite. La API admite listar (`GET /list`),
 leer (`GET /file?path=...`), escribir (`PUT /file`), anexar (`PUT /append`) y
-limpiar carpetas numericas de iteraciones (`PUT /clear-generations`). Al
+limpiar carpetas numericas de iteraciones (`PUT /clear-generations`) y limpiar
+solo los archivos de un draw antiguo (`PUT /clear-generation`). Al
 escribir un archivo fechado, solo se reemplaza el backup anterior mas reciente
 del mismo nombre base; el resto del historial permanece.
 
@@ -91,9 +110,9 @@ del mismo nombre base; el resto del historial permanece.
 2. Cada archivo puede usar `import <Mid> from ./parseTextC12.shaderdsl.ts`
    para reutilizar bloques Shader DSL. `backUpPathReplace /patron/g -> "texto"`
    sustituye rutas de backup en ese archivo y sus imports.
-3. El parser busca primero un par local `lib/Code/WebGL/webglParser.ts` y
-   `lib/Code/WebGL/webglMan.ts`. Por compatibilidad admite tambien
-   `lib/WebGL/`. Si no existe un par completo, usa la version incluida. Los
+3. El parser busca primero un par local `lib/Code/WebGL/parser/webglParser.ts` y
+   `lib/Code/WebGL/webglMan.ts`. Por compatibilidad admite tambien el par
+   antiguo en `lib/Code/WebGL/` o `lib/WebGL/`. Si no existe un par completo, usa la version incluida. Los
    imports `/Code/...` buscan primero `lib/Code/` del proyecto y despues los
    archivos incluidos en el paquete. Un parser local antiguo prevalece sobre
    las sintaxis nuevas del paquete: actualizalo o retira el par local para
@@ -136,6 +155,60 @@ salvo `commonImports.snippet.ts`; se pueden colocar con
 `at` admite `pre`, `post`, `before:MARCADOR` y `after:MARCADOR`. La configuracion
 se aplica a cada archivo parseado en esa ejecucion. Los `testParser*.ts` y los
 snippets propios del repositorio original **no** se incluyen en el paquete.
+
+## Modulos del parser
+
+`src/dependencies/Code/WebGL/parser/objects/` y `parser/functions/` separan
+los registros por tema. Cada archivo TS exporta `register(parser, services)`;
+El cargador Node descubre los archivos con `fs` al ejecutar el parser; `build:package` los incluye en el paquete sin generar `index.ts`.
+El cargador agrupa los registros directamente; no hay agregadores
+`registryModules/objects.ts` ni `functions.ts`.
+Los modos `drawPoints`, `drawLines`, `drawTriangles`, etc. son un mapa fijo del
+parser a constantes WebGL; no son modulos de objetos o funciones.
+
+Un modulo independiente en `registryModules/` exporta `id`, `detectUse(source)`
+y `register(parser, services)`. `register` puede devolver `objects`, `functions`,
+`transpile`, `browserImports` y `browserSetup`. `capsules.ts` contiene las
+clases, funciones y reglas de transpilacion de `MeshCapsule`; el antiguo
+`webglCapsules.ts` solo reexporta sus clases para imports existentes.
+
+`detectUse` puede devolver `true`, `false` o `"Toggled"`. Con `"Toggled"`, el
+modulo se activa si esta nombrado en `dnti.modules.json` del proyecto. El mismo
+archivo puede incluir rutas de modulos TS externos (relativas al proyecto):
+
+```json
+{
+  "modules": ["MeshCapsule", "./modules/MyModule.ts"]
+}
+```
+
+Un modulo externo debe exportar `detectUse` y `register`; `id` es opcional y,
+si falta, se usa el nombre del archivo. Incluir su ruta permite cargarlo:
+`true` lo activa, `false` lo omite y `"Toggled"` lo activa por estar listado.
+Tambien se
+admite `{ "MeshCapsule": true, "./modules/MyModule.ts": true }`. Para
+compatibilidad, `registryModules` en `shaderdsl.config.json` sigue pudiendo
+activar modulos incluidos por nombre.
+
+Las implementaciones de runtime se registran **a mano** en
+`DetailedParser.runtimeFeatures`. Cada archivo de `Code/WebGL/runtime/`
+exporta `runtimeFeature` con `imports` y `setup`, y termina con un export
+`detectUse(context)` del mismo nombre en todos los modulos. El parser importa
+primero esa funcion y carga el descriptor solo cuando hace falta.
+`detectUse` puede devolver `true`, `false` o `"Toggled"`; `"Toggled"` solo
+se activa desde `shaderdsl.config.json`. Por ejemplo:
+
+```json
+{
+  "registryModules": ["MeshCapsule"],
+  "runtimeFeatures": { "backup": true, "runtimeLet": false }
+}
+```
+
+`backup`, `runtimeLet` y `shaderFilters` se detectan automaticamente. Backup
+incluye `backUp:`, `backUp store`, `backUp restore`, `backUp log` y
+`readBackup(path)`. El parser emite imports y configuracion; la logica esta
+en `Code/WebGL/runtime/`. `init` crea el JSON vacio si la plantilla no lo trae.
 
 `GLSLTest/` muestra C1 y C2 importando un DSL C12 comun, dos trayectorias
 distintas, un helper TypeScript compartido y un canvas visible para cada una.

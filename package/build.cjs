@@ -5,11 +5,29 @@ const esbuild = require('esbuild');
 const root = path.resolve(__dirname, '..');
 const output = path.join(root, 'dist');
 const source = path.join(root, 'src', 'dependencies');
+const { registryEntry } = require('./registry-loader.cjs');
 
 async function main() {
   await fs.mkdir(path.join(output, 'lib'), { recursive: true });
+  for (const stale of [
+    'Code/WebGL/webglParser.ts',
+    'Code/WebGL/registryModules',
+    'Code/WebGL/runtimeFeatures',
+    'Code/WebGL/parser/runtimeFeatures',
+    'Code/WebGL/parser/registryModules/drawModes.ts',
+    'Code/WebGL/parser/objects/index.ts',
+    'Code/WebGL/parser/functions/index.ts',
+    'Code/WebGL/parser/registryModules/index.ts',
+    'Code/WebGL/parser/registryModules/objects.ts',
+    'Code/WebGL/parser/registryModules/functions.ts',
+  ]) {
+    const target = path.resolve(output, 'lib', stale);
+    if (!target.startsWith(path.resolve(output, 'lib') + path.sep)) throw new Error(`Invalid build path: ${target}`);
+    await fs.rm(target, { recursive: true, force: true });
+  }
+  const parserRoot = path.join(source, 'Code', 'WebGL', 'parser');
   const parser = await esbuild.build({
-    entryPoints: [path.join(source, 'Code', 'WebGL', 'webglParser.ts')],
+    stdin: { contents: await registryEntry(path.join(parserRoot, 'webglParser.ts'), parserRoot), resolveDir: parserRoot, sourcefile: path.join(parserRoot, 'registry-entry.ts'), loader: 'ts' },
     outfile: path.join(output, 'parser.cjs'),
     bundle: true,
     platform: 'node',
@@ -19,7 +37,13 @@ async function main() {
     logLevel: 'warning',
   });
   const browser = await esbuild.build({
-    entryPoints: [path.join(source, 'Code', 'WebGL', 'webglMan.ts')],
+    entryPoints: [
+      path.join(source, 'Code', 'WebGL', 'webglMan.ts'),
+      path.join(source, 'Code', 'WebGL', 'runtime', 'BackupRuntime.ts'),
+      path.join(source, 'Code', 'WebGL', 'runtime', 'RuntimeLetSource.ts'),
+      path.join(source, 'Code', 'WebGL', 'runtime', 'ShaderFilterSet.ts'),
+    ],
+    outdir: path.join(output, '.runtime-probe'),
     write: false,
     bundle: true,
     platform: 'browser',
@@ -48,11 +72,17 @@ async function main() {
   for (const relative of files) {
     const absolute = path.resolve(root, relative);
     if (!absolute.startsWith(source + path.sep)) continue;
+    if (path.basename(absolute) === 'registry-entry.ts') continue;
     const target = path.join(output, 'lib', path.relative(source, absolute));
     await fs.mkdir(path.dirname(target), { recursive: true });
     await fs.copyFile(absolute, target);
   }
-  for (const name of ['cli.cjs', 'runner.cjs', 'watch.cjs', 'initializer.cjs', 'README.md', 'EXTENSION_SYNTAX_PENDING.md']) {
+  for (const relative of ['Code/WebGL/parser/runtimeFeature.ts', 'Code/WebGL/parser/registryModules/types.ts']) {
+    const target = path.join(output, 'lib', relative);
+    await fs.mkdir(path.dirname(target), { recursive: true });
+    await fs.copyFile(path.join(source, relative), target);
+  }
+  for (const name of ['cli.cjs', 'runner.cjs', 'registry-loader.cjs', 'watch.cjs', 'initializer.cjs', 'tutorial.cjs', 'README.md', 'EXTENSION_SYNTAX_PENDING.md']) {
     await fs.copyFile(path.join(__dirname, name), path.join(output, name));
   }
   await fs.mkdir(path.join(output, 'lib'), { recursive: true });
@@ -66,6 +96,7 @@ async function main() {
   await fs.copyFile(path.join(__dirname, 'lib', '2DLinear.js'),
     path.join(output, 'lib', 'DNTI_Templates', 'LinearAlgebra', '2DLinear.js'));
   await fs.cp(path.join(__dirname, 'templates'), path.join(output, 'templates'), { recursive: true });
+  await fs.cp(path.join(__dirname, 'tutorials'), path.join(output, 'tutorials'), { recursive: true });
   const commonImports = await fs.readFile(path.join(root, 'src', 'parser_snippets', 'shared', 'commonImports.snippet.ts'), 'utf8');
   for (const [name, extras] of Object.entries({
     simple: '',
@@ -82,7 +113,7 @@ async function main() {
     description: 'Shader DSL parser and browser bundle generator',
     main: 'runner.cjs',
     bin: { dnti_shaderdsl: './cli.cjs' },
-    files: ['cli.cjs', 'runner.cjs', 'watch.cjs', 'initializer.cjs', 'parser.cjs', 'lib', 'templates', 'README.md', 'EXTENSION_SYNTAX_PENDING.md'],
+    files: ['cli.cjs', 'runner.cjs', 'registry-loader.cjs', 'watch.cjs', 'initializer.cjs', 'tutorial.cjs', 'parser.cjs', 'lib', 'templates', 'tutorials', 'README.md', 'EXTENSION_SYNTAX_PENDING.md'],
     engines: { node: '>=20' },
     dependencies: { esbuild: require('esbuild/package.json').version },
   };

@@ -19,6 +19,13 @@
       "match": "\\bderived\\b"
     },
     {
+      "name": "variable.other.assignment.parse-text-ts",
+      "match": "^\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*(?==(?!=))",
+      "captures": {
+        "1": { "name": "variable.other.definition.parse-text-ts" }
+      }
+    },
+    {
       "name": "keyword.control.anchor.parse-text-ts",
       "match": "<(?:Pre|Pre/|Pos|Mid)>"
     },
@@ -71,7 +78,7 @@
     },
     {
       "name": "support.function.parser-helpers.parse-text-ts",
-      "match": "\\b(?:lduse|use|start|stop|drawTriangles|viewport|log|framebuffer|program|resource|texturePreset|rebind|uniforms|glslFilters|tex2D|texture2DArray|tick|draw|OnKeyPress|opti-let|opti-var|defineTag|bindTexName2TexUnit|MeshProgram|MeshFillerProgram|Axis3DGroup|Camera3D|Camera2D|Program|createIdealMesh|fillMeshTexture)\\b"
+      "match": "\\b(?:lduse|use|start|stop|drawPoints|drawLineStrip|drawLineLoop|drawLines|drawTriangleStrip|drawTriangleFan|drawTriangles|viewport|log|framebuffer|program|resource|texturePreset|rebind-temp|rebind|temp|uniforms|attributes|pingpong|swap|glslFilters|tex2D|texture2DArray|tick|draw|OnKeyPress|opti-let|opti-var|defineTag|bindTexName2TexUnit|MeshProgram|MeshFillerProgram|Axis3DGroup|Camera3D|Camera2D|Program|createIdealMesh|fillMeshTexture)\\b"
     },
     {
       "name": "entity.name.type.parser-block.parse-text-ts",

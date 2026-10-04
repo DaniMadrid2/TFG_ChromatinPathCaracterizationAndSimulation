@@ -44,6 +44,10 @@ async function init(options = {}) {
   }
   await fs.mkdir(target, { recursive: true });
   await fs.cp(source, target, { recursive: true });
+  const configPath = path.join(target, 'shaderdsl.config.json');
+  if (!(await fs.stat(configPath).catch(() => null))) {
+    await fs.writeFile(configPath, JSON.stringify({ registryModules: [], runtimeFeatures: {} }, null, 2) + '\n');
+  }
   await fs.mkdir(path.join(target, 'parser_snippets'), { recursive: true });
   for (const directory of template === 'simple' ? ['shared'] : ['shared', 'c1', 'c2']) {
     await fs.mkdir(path.join(target, 'parser_snippets', directory), { recursive: true });

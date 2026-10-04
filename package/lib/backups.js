@@ -105,6 +105,29 @@ function createBackupHandler(directory = process.cwd(), { allowDeletion = false 
           if (entry.isDirectory() && /^(?:[2-9]|[1-9]\d+)$/.test(entry.name)) await fs.rm(path.join(target, entry.name), { recursive: true });
         }
         send(response, 200, { ok: true, path: path.relative(root, target).replace(/\\/g, '/') });
+      } else if (request.method === 'PUT' && route === '/clear-generation') {
+        if (!allowDeletion) throw Object.assign(new Error('Borrado de backups no autorizado'), { status: 403 });
+        const body = await bodyOf(request);
+        const target = backupPath(root, body.path);
+        await checkExistingParents(root, target);
+        const byName = Array.isArray(body.filenames);
+        if (byName) {
+          if (!body.filenames.length || body.filenames.some(name => typeof name !== 'string' || !/^[A-Za-z0-9_.-]+\.txt$/.test(name))) {
+            throw Object.assign(new Error('Nombres de archivo invalidos'), { status: 400 });
+          }
+        } else if (!/^[A-Za-z0-9_.-]+_$/.test(body.prefix)) {
+          throw Object.assign(new Error('Prefijo invalido'), { status: 400 });
+        }
+        const entries = await fs.readdir(target, { withFileTypes: true }).catch(error => {
+          if (error.code === 'ENOENT') return [];
+          throw error;
+        });
+        for (const entry of entries) {
+          if (entry.isFile() && (byName ? body.filenames.includes(entry.name) : entry.name.startsWith(body.prefix))) {
+            await fs.unlink(path.join(target, entry.name));
+          }
+        }
+        send(response, 200, { ok: true, path: path.relative(root, target).replace(/\\/g, '/') });
       } else if (request.method === 'PUT' && (route === '/file' || route === '/append')) {
         const body = await bodyOf(request);
         const name = body.directoryMode ? path.posix.join(String(body.path || ''), String(body.suggestedName || 'backup.txt')) : body.path;
@@ -149,3 +172,11 @@ async function startBackupServer(port = 4178, directory = process.cwd(), { allow
 }
 
 module.exports = { askBackupDeletionPermission, createBackupHandler, startBackupServer };
+
+if (require.main === module) {
+  const port = process.argv[2] === undefined ? 4178 : Number(process.argv[2]);
+  const directory = process.argv[3] || process.cwd();
+  askBackupDeletionPermission()
+    .then(allowDeletion => startBackupServer(port, directory, { allowDeletion }))
+    .catch(error => { console.error(error); process.exitCode = 1; });
+}

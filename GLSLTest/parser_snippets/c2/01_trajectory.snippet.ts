@@ -8,8 +8,9 @@ let trajectory: number[] = [
 
 const lastPoint = trajectory.slice(-2);
 const firstPoint = trajectory.slice(0, 2);
-for (let i = 1; i <= 300; i++) {
-  const t = i / 300;
+let count=1600;
+for (let i = 1; i <= count; i++) {
+  const t = i / count;
   const x = lastPoint[0] * (1 - t) + firstPoint[0] * t;
   const y = lastPoint[1] * (1 - t) + firstPoint[1] * t;
   trajectory.push(x, y);

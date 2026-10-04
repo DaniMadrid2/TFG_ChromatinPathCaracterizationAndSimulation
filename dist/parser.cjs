@@ -4,6 +4,14 @@ var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
 var __getOwnPropNames = Object.getOwnPropertyNames;
 var __getProtoOf = Object.getPrototypeOf;
 var __hasOwnProp = Object.prototype.hasOwnProperty;
+var __esm = (fn, res, err) => function __init() {
+  if (err) throw err[0];
+  try {
+    return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
+  } catch (e) {
+    throw err = [e], e;
+  }
+};
 var __export = (target, all) => {
   for (var name in all)
     __defProp(target, name, { get: all[name], enumerable: true });
@@ -26,12 +34,618 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 ));
 var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
-// src/dependencies/Code/WebGL/webglParser.ts
-var webglParser_exports = {};
-__export(webglParser_exports, {
+// src/dependencies/Code/WebGL/runtime/BackupRuntime.ts
+var BackupRuntime_exports = {};
+__export(BackupRuntime_exports, {
+  BackupRuntime: () => BackupRuntime,
+  detectUse: () => detectUse,
+  runtimeFeature: () => runtimeFeature
+});
+var BackupPaths, BackupServer, BackupValues, BackupGenerations, BackupDrawWriter, BackupReader, BackupConsoleLogger, BackupRuntime, runtimeFeature, detectUse;
+var init_BackupRuntime = __esm({
+  "src/dependencies/Code/WebGL/runtime/BackupRuntime.ts"() {
+    BackupPaths = class {
+      /** Captures the project-relative backup root. */
+      constructor(defaultScope) {
+        this.defaultScope = defaultScope;
+        /** Formats one date component for a stable timestamp. */
+        this.pad2 = (n) => String(n).padStart(2, "0");
+        /** Produces the timestamp used by saved filenames. */
+        this.stamp = () => {
+          const d = /* @__PURE__ */ new Date();
+          return String(d.getFullYear()) + this.pad2(d.getMonth() + 1) + this.pad2(d.getDate()) + this.pad2(d.getHours()) + this.pad2(d.getMinutes());
+        };
+        /** Prevents path separators and control characters in generated names. */
+        this.safeName = (name) => String(name ?? "backup").replace(/[^A-Za-z0-9_.-]+/g, "_").replace(/^_+|_+$/g, "") || "backup";
+        /** Names a standalone backup from its variable and texture metadata. */
+        this.defaultPath = (value, varName) => {
+          const isTex = value && typeof value === "object" && ("w" in value || "h" in value || "unit" in value || value instanceof WebGLTexture);
+          const parts = [this.safeName(varName)];
+          if (isTex) {
+            parts.push(String(value.w ?? value.width ?? "x"));
+            parts.push(String(value.h ?? value.height ?? "y"));
+            parts.push("TexUnit" + String(value.unit ?? "NA").replace(/^TexUnit/i, ""));
+            parts.push(this.safeName(value.__backupProgram ?? value.programName ?? value.program ?? "programNA"));
+          }
+          parts.push(this.stamp());
+          return parts.join("_") + ".txt";
+        };
+        /** Anchors a DSL path hint under the active backup scope. */
+        this.normalizeScopePath = (pathHint) => {
+          const raw = String(pathHint ?? "").trim().replace(/\\/g, "/");
+          const scope = String(this.defaultScope || "").replace(/^\/+|\/+$/g, "");
+          const withScope = (value) => {
+            const clean = String(value || "").replace(/^\/+/, "");
+            if (!scope) return clean;
+            if (!clean) return scope;
+            if (clean === scope || clean.startsWith(scope + "/")) return clean;
+            return scope + "/" + clean;
+          };
+          if (!raw || raw === "/" || raw === ".") return { path: withScope(""), directoryMode: true };
+          if (raw.startsWith("./")) {
+            const rest = raw.slice(2);
+            return { path: withScope(rest), directoryMode: !rest || /\/$/.test(rest) };
+          }
+          if (raw.startsWith("/")) return { path: withScope(raw.slice(1)), directoryMode: true };
+          return { path: withScope(raw), directoryMode: true };
+        };
+        /** Chooses the base folder or a numbered draw-iteration folder. */
+        this.resolveMultiTarget = (pathHint, defaultStem, suffix, generation = 1) => {
+          const target = this.normalizeScopePath(pathHint);
+          const stem = this.safeName(defaultStem);
+          const cleanSuffix = String(suffix ?? "").replace(/^_+/, "");
+          const fileName = stem + "_" + cleanSuffix + "_" + this.stamp() + ".txt";
+          const gen = Math.max(1, Number(generation) || 1);
+          if (target.directoryMode) {
+            const dirPath2 = gen > 1 ? target.path ? String(target.path).replace(/\/+$/g, "") + "/" + String(gen) : String(gen) : target.path;
+            return { path: dirPath2, directoryMode: true, suggestedName: fileName, generation: gen };
+          }
+          const p = target.path;
+          if (/\.txt$/i.test(p)) {
+            const slash = Math.max(p.lastIndexOf("/"), p.lastIndexOf("\\"));
+            const dir = slash >= 0 ? p.slice(0, slash + 1) : "";
+            const base = slash >= 0 ? p.slice(slash + 1) : p;
+            const dot = base.toLowerCase().endsWith(".txt") ? base.slice(0, -4) : base;
+            const genDir = gen > 1 ? dir ? dir.replace(/\/+$/g, "") + "/" + String(gen) + "/" : String(gen) + "/" : dir;
+            return { path: genDir + dot + "_" + cleanSuffix + ".txt", directoryMode: false, generation: gen };
+          }
+          const dirPath = gen > 1 ? p ? String(p).replace(/\/+$/g, "") + "/" + String(gen) : String(gen) : p;
+          return { path: dirPath, directoryMode: true, suggestedName: fileName, generation: gen };
+        };
+      }
+    };
+    BackupServer = class {
+      /** Binds path resolution to the API endpoint. */
+      constructor(paths, baseUrl = "/api/backups") {
+        this.paths = paths;
+        this.baseUrl = baseUrl;
+        /** Writes a file, appends a log, or requests generation cleanup. */
+        this.put = async (route, path, content, extra = {}) => {
+          const response = await fetch(this.baseUrl + route, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ path, content, ...extra })
+          });
+          const raw = await response.text();
+          if (!response.ok) throw new Error("Backup request failed: " + response.status + " " + raw);
+          try {
+            return raw ? JSON.parse(raw) : { ok: true, path: String(path ?? "") };
+          } catch {
+            return { ok: true, path: String(path ?? ""), raw };
+          }
+        };
+        /** Reads a saved backup file as text from the server. */
+        this.fetchText = async (pathHint) => {
+          const target = this.paths.normalizeScopePath(pathHint);
+          const response = await fetch(this.baseUrl + "/file?path=" + encodeURIComponent(target.path));
+          if (!response.ok) throw new Error("Backup restore failed: " + response.status + " " + await response.text());
+          return await response.text();
+        };
+      }
+    };
+    BackupValues = class {
+      /** Uses the active WebGL context for GPU readback. */
+      constructor(gl, TexExamples2) {
+        this.gl = gl;
+        this.TexExamples = TexExamples2;
+        /** Formats the texture grid as aligned, readable rows. */
+        this.texturePreview = (tex, varName) => {
+          if (!tex || tex.__backupType !== "texture2D") return "";
+          const w = Number(tex.w ?? 0) || 0;
+          const h = Number(tex.h ?? 0) || 0;
+          const dim = Number(tex.dim ?? 1) || 1;
+          const name = String(varName ?? "texture");
+          const program = String(tex.program ?? "programNA");
+          const values = Array.isArray(tex.data) ? tex.data : [];
+          const formatScalar = (value) => {
+            const num = Number(value);
+            if (!Number.isFinite(num)) return String(value ?? "").padStart(10, " ");
+            return num.toFixed(4).padStart(10, " ");
+          };
+          const lines = [name + " [" + w + " x " + h + "] " + program];
+          for (let y = 0; y < h; y++) {
+            const row = [];
+            for (let x = 0; x < w; x++) {
+              const base = (y * w + x) * dim;
+              for (let c = 0; c < dim; c++) {
+                row.push(formatScalar(values[base + c]));
+              }
+            }
+            lines.push(row.join(" "));
+          }
+          return lines.join("\n");
+        };
+        /** Reads GPU pixels into a serializable texture snapshot. */
+        this.readTexture2D = (tex) => {
+          if (!tex || typeof tex !== "object" || !(tex instanceof WebGLTexture)) return null;
+          const w = Number(tex.w ?? tex.width ?? 1) || 1;
+          const h = Number(tex.h ?? tex.height ?? 1) || 1;
+          const format = tex.format || this.TexExamples.RGBAFloat;
+          const dim = format?.[0] === this.gl.RED ? 1 : format?.[0] === this.gl.RG ? 2 : format?.[0] === this.gl.RGB ? 3 : 4;
+          const fbo = this.gl.createFramebuffer();
+          this.gl.bindFramebuffer(this.gl.READ_FRAMEBUFFER, fbo);
+          this.gl.framebufferTexture2D(this.gl.READ_FRAMEBUFFER, this.gl.COLOR_ATTACHMENT0, this.gl.TEXTURE_2D, tex, 0);
+          this.gl.readBuffer(this.gl.COLOR_ATTACHMENT0);
+          const data = new Float32Array(w * h * dim);
+          this.gl.readPixels(0, 0, w, h, format[0], format[2], data);
+          this.gl.bindFramebuffer(this.gl.READ_FRAMEBUFFER, null);
+          this.gl.deleteFramebuffer(fbo);
+          return { __backupType: "texture2D", w, h, dim, format: Array.from(format || []), unit: tex.unit, program: tex.__backupProgram, data: Array.from(data) };
+        };
+        /** Serializes a value, including a readable texture preview. */
+        this.serializeValue = (value, varName) => {
+          const tex = this.readTexture2D(value);
+          if (tex) {
+            const jsonLine = JSON.stringify({ varName, savedAt: (/* @__PURE__ */ new Date()).toISOString(), value: tex });
+            return this.texturePreview(tex, varName) + "\n" + jsonLine;
+          }
+          if (value instanceof Float32Array || value instanceof Int32Array || value instanceof Uint32Array || value instanceof Uint8Array) {
+            return JSON.stringify({ varName, savedAt: (/* @__PURE__ */ new Date()).toISOString(), value: { __backupType: value.constructor.name, data: Array.from(value) } });
+          }
+          try {
+            return JSON.stringify({ varName, savedAt: (/* @__PURE__ */ new Date()).toISOString(), value });
+          } catch {
+            return String(value);
+          }
+        };
+        /** Converts textures and typed arrays to JSON-safe values. */
+        this.normalizeValue = (value, varName) => {
+          const tex = this.readTexture2D(value);
+          if (tex) return { varName, value: tex };
+          if (value instanceof Float32Array || value instanceof Int32Array || value instanceof Uint32Array || value instanceof Uint8Array) {
+            return { varName, value: { __backupType: value.constructor.name, data: Array.from(value) } };
+          }
+          return { varName, value };
+        };
+        /** Decodes the final JSON line or a plain numeric backup. */
+        this.decodeValue = (text) => {
+          try {
+            const lines = String(text ?? "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+            const jsonLine = lines.length ? lines[lines.length - 1] : "";
+            const parsed = JSON.parse(jsonLine);
+            return parsed && Object.prototype.hasOwnProperty.call(parsed, "value") ? parsed.value : parsed;
+          } catch {
+            const nums = text.trim().split(/[\s,;]+/).map(Number).filter(Number.isFinite);
+            return nums.length ? new Float32Array(nums) : text;
+          }
+        };
+      }
+    };
+    BackupGenerations = class {
+      /** Starts with no counters or cleared scopes. */
+      constructor(paths, server, generationContext) {
+        this.paths = paths;
+        this.server = server;
+        this.generationContext = generationContext;
+        /** Holds counters and cleanup state for the current model stamp. */
+        this.drawGenerationState = { stamp: /* @__PURE__ */ Symbol("init"), counts: /* @__PURE__ */ new Map(), clearedScopes: /* @__PURE__ */ new Set() };
+        /** Resets counters when the model stamp changes. */
+        this.refreshGenerationState = () => {
+          try {
+            if (!this.generationContext().recomputeTau) return;
+            const stamp = this.generationContext().tauModelStamp ?? "__recompute__";
+            if (this.drawGenerationState.stamp !== stamp) {
+              this.drawGenerationState.stamp = stamp;
+              this.drawGenerationState.counts = /* @__PURE__ */ new Map();
+              this.drawGenerationState.clearedScopes = /* @__PURE__ */ new Set();
+            }
+          } catch {
+          }
+        };
+        /** Requests one cleanup per draw scope on recomputation. */
+        this.clearDrawScopeGenerationsIfNeeded = async (pathHint) => {
+          this.refreshGenerationState();
+          try {
+            if (!this.generationContext().recomputeTau) return;
+            const target = this.paths.normalizeScopePath(pathHint);
+            const key = String(target.path || "");
+            if (this.drawGenerationState.clearedScopes.has(key)) return;
+            this.drawGenerationState.clearedScopes.add(key);
+            await this.server.put("/clear-generations", target.path, "");
+          } catch (err) {
+            console.warn("[backUp clear-generations] failed", pathHint, err);
+          }
+        };
+        /** Returns the next numbered pass for one draw and shader. */
+        this.nextDrawGeneration = (drawKind, pathHint, program, trackWithoutRecompute = false) => {
+          this.refreshGenerationState();
+          try {
+            if (!trackWithoutRecompute && !this.generationContext().recomputeTau) return 1;
+            const target = this.paths.normalizeScopePath(pathHint);
+            const drawName = this.paths.safeName(drawKind || "draw");
+            const programName = this.paths.safeName(program?.ID ?? program?.fragPath ?? program?.name ?? "program");
+            const key = target.path + "::" + programName + "::" + drawName;
+            const next = (this.drawGenerationState.counts.get(key) || 0) + 1;
+            this.drawGenerationState.counts.set(key, next);
+            return next;
+          } catch {
+            return 1;
+          }
+        };
+      }
+    };
+    BackupDrawWriter = class {
+      /** Shares path, server, codec, and iteration state with the public runtime. */
+      constructor(paths, server, values, generations) {
+        this.paths = paths;
+        this.server = server;
+        this.values = values;
+        this.generations = generations;
+        this.writes = /* @__PURE__ */ new Map();
+        /** Captures uniforms and outputs, then uploads their snapshots. */
+        this.storeDrawBlock = async (drawKind, pathHint, outputTextures, uniformEntries, program, options = {}) => {
+          try {
+            const drawName = this.paths.safeName(drawKind || "draw");
+            const generation = this.generations.nextDrawGeneration(
+              drawKind,
+              pathHint,
+              program,
+              options?.maxBackUpIterations !== void 0 || options?.priority !== void 0
+            );
+            const maximum = Number(options?.maxBackUpIterations);
+            const limit = Number.isInteger(maximum) && maximum > 0 ? maximum : Infinity;
+            const priority = String(options?.priority || "first").toLowerCase();
+            const every = /^each-(\d+)$/.exec(priority);
+            if (priority !== "first" && priority !== "last" && (!every || Number(every[1]) < 1)) {
+              throw new Error(`Prioridad de backup invalida: ${priority}`);
+            }
+            if (priority === "first" && generation > limit) return { ok: true, skipped: true };
+            if (every && ((generation - 1) % Number(every[1]) !== 0 || Math.ceil(generation / Number(every[1])) > limit)) {
+              return { ok: true, skipped: true };
+            }
+            const outputs = Array.isArray(outputTextures) ? outputTextures.filter(Boolean) : [];
+            const outputSet = new Set(outputs.map((item) => item?.tex).filter(Boolean));
+            const programTextures = Array.isArray(program?.textures) ? program.textures.filter((tex) => tex && !outputSet.has(tex)) : [];
+            const prependedInputs = programTextures.map((tex, idx) => this.values.normalizeValue(tex, tex.__backupVarName || tex.__backupUniformName || "inputTex" + idx));
+            const normalizedUniforms = (Array.isArray(uniformEntries) ? uniformEntries : []).map((entry) => ({
+              kind: entry?.kind || "uniform",
+              name: entry?.name || "uniform",
+              ...this.values.normalizeValue(entry?.value, entry?.name || "uniform")
+            }));
+            const serializedOutputs = outputs.map((output) => {
+              const outputName = output?.name || "output";
+              try {
+                return { outputName, ok: true, payload: this.values.serializeValue(output?.tex, outputName) };
+              } catch (err) {
+                return {
+                  outputName,
+                  ok: false,
+                  payload: JSON.stringify({
+                    varName: outputName,
+                    savedAt: (/* @__PURE__ */ new Date()).toISOString(),
+                    error: String(err)
+                  })
+                };
+              }
+            });
+            const uniformPayload = JSON.stringify({
+              source: drawKind,
+              savedAt: (/* @__PURE__ */ new Date()).toISOString(),
+              entries: [
+                ...prependedInputs.map((entry) => ({ kind: "programTexture", name: entry.varName, value: entry.value })),
+                ...normalizedUniforms
+              ]
+            });
+            const scope = this.paths.normalizeScopePath(pathHint).path;
+            const prior = this.writes.get(scope) || Promise.resolve();
+            const work = prior.catch(() => void 0).then(async () => {
+              await this.generations.clearDrawScopeGenerationsIfNeeded(pathHint);
+              const uniformTarget = this.paths.resolveMultiTarget(pathHint, drawName, "uniforms", generation);
+              await this.server.put("/file", uniformTarget.path, uniformPayload, uniformTarget.directoryMode ? { directoryMode: true, suggestedName: uniformTarget.suggestedName } : {});
+              for (const snapshot of serializedOutputs) {
+                try {
+                  const outputTarget = this.paths.resolveMultiTarget(pathHint, drawName, this.paths.safeName(snapshot.outputName), generation);
+                  await this.server.put("/file", outputTarget.path, snapshot.payload, outputTarget.directoryMode ? { directoryMode: true, suggestedName: outputTarget.suggestedName } : {});
+                  if (!snapshot.ok) {
+                    console.warn("[backUp draw] stored output fallback payload", snapshot.outputName, pathHint);
+                  }
+                } catch (err) {
+                  console.error("[backUp draw] output store failed", snapshot.outputName, pathHint, err);
+                }
+              }
+              if (priority === "last" && Number.isFinite(limit) && generation > limit) {
+                const old = this.paths.resolveMultiTarget(pathHint, drawName, "uniforms", generation - limit);
+                if (old.directoryMode) {
+                  await this.server.put("/clear-generation", old.path, "", { prefix: drawName + "_" });
+                } else {
+                  const previous = [old, ...serializedOutputs.map((snapshot) => this.paths.resolveMultiTarget(pathHint, drawName, this.paths.safeName(snapshot.outputName), generation - limit))];
+                  const folder = old.path.replace(/\/[^/]*$/, "");
+                  await this.server.put("/clear-generation", folder, "", {
+                    filenames: previous.map((item) => item.path.slice(folder.length + 1))
+                  });
+                }
+              }
+              return { ok: true };
+            });
+            this.writes.set(scope, work);
+            void work.then(
+              () => {
+                if (this.writes.get(scope) === work) this.writes.delete(scope);
+              },
+              () => {
+                if (this.writes.get(scope) === work) this.writes.delete(scope);
+              }
+            );
+            return await work;
+          } catch (err) {
+            console.error("[backUp draw] failed", drawKind, pathHint, err);
+            return { ok: false, error: String(err) };
+          }
+        };
+      }
+    };
+    BackupReader = class {
+      /** Connects API text retrieval with value decoding. */
+      constructor(server, values) {
+        this.server = server;
+        this.values = values;
+        /** Fills a texture or returns an array/scalar from a backup. */
+        this.restoreInto = async (target, pathHint) => {
+          const value = await this.readBackup(pathHint);
+          if (target && typeof target.fill === "function" && value?.__backupType === "texture2D") {
+            target.fill(new Float32Array(value.data || []), 0, 0, value.w, value.h);
+            return target;
+          }
+          if (value?.__backupType && Array.isArray(value.data)) return new Float32Array(value.data);
+          return value;
+        };
+      }
+      /** Reads one backup without changing a target object. */
+      async readBackup(pathHint) {
+        return this.values.decodeValue(await this.server.fetchText(pathHint));
+      }
+    };
+    BackupConsoleLogger = class {
+      /** Uses the same scoped path and HTTP server as other backup operations. */
+      constructor(paths, server) {
+        this.paths = paths;
+        this.server = server;
+        /** Installs console mirrors for one DSL log destination. */
+        this.log = async (pathHint) => {
+          const target = this.paths.normalizeScopePath(pathHint);
+          const p = target.path;
+          const prevLog = console.log.bind(console);
+          const prevWarn = console.warn.bind(console);
+          const prevError = console.error.bind(console);
+          const append = (level, args) => {
+            const line = "[" + (/* @__PURE__ */ new Date()).toISOString() + "] " + level + " " + args.map((a) => {
+              try {
+                return typeof a === "string" ? a : JSON.stringify(a);
+              } catch {
+                return String(a);
+              }
+            }).join(" ") + "\n";
+            this.server.put("/append", p, line, target.directoryMode ? { directoryMode: true, suggestedName: "log_" + this.paths.stamp() + ".txt" } : {}).catch(prevError);
+          };
+          console.log = (...args) => {
+            prevLog(...args);
+            append("log", args);
+          };
+          console.warn = (...args) => {
+            prevWarn(...args);
+            append("warn", args);
+          };
+          console.error = (...args) => {
+            prevError(...args);
+            append("error", args);
+          };
+          console.log("[backUp log]", p);
+        };
+      }
+    };
+    BackupRuntime = class {
+      /** Connects the browser WebGL context and recomputation state to the backup API. */
+      constructor(gl, TexExamples2, defaultScope, generationContext = () => ({})) {
+        /** Stores one named value at a DSL path hint. */
+        this.store = async (value, varName, pathHint) => {
+          try {
+            const target = this.paths.normalizeScopePath(pathHint);
+            const result = await this.server.put("/file", target.path, this.values.serializeValue(value, varName), target.directoryMode ? { directoryMode: true, suggestedName: this.paths.defaultPath(value, varName) } : {});
+            console.log("[backUp store]", result.path);
+            return result;
+          } catch (err) {
+            console.error("[backUp store] failed", err);
+            return { ok: false, error: String(err) };
+          }
+        };
+        /** Restores a texture in place or returns decoded scalar/array data. */
+        this.restoreInto = (target, pathHint) => this.reader.restoreInto(target, pathHint);
+        /** Mirrors console messages to a backup log file. */
+        this.log = (pathHint) => this.logger.log(pathHint);
+        /** Captures all outputs of one draw block. */
+        this.storeDrawBlock = (drawKind, pathHint, outputTextures, uniformEntries, program, options = {}) => this.draws.storeDrawBlock(drawKind, pathHint, outputTextures, uniformEntries, program, options);
+        this.paths = new BackupPaths(defaultScope);
+        this.server = new BackupServer(this.paths);
+        this.values = new BackupValues(gl, TexExamples2);
+        this.generations = new BackupGenerations(this.paths, this.server, generationContext);
+        this.draws = new BackupDrawWriter(this.paths, this.server, this.values, this.generations);
+        this.reader = new BackupReader(this.server, this.values);
+        this.logger = new BackupConsoleLogger(this.paths, this.server);
+      }
+      /** Reads one backup value without mutating an existing target. */
+      async readBackup(pathHint) {
+        return this.reader.readBackup(pathHint);
+      }
+    };
+    runtimeFeature = {
+      imports: ['import { BackupRuntime } from "/Code/WebGL/runtime/BackupRuntime.js";'],
+      setup: ({ backupScope }) => [
+        `const backupRuntime = new BackupRuntime(gl, TexExamples, ${JSON.stringify(backupScope)}, () => ({`,
+        `    recomputeTau: typeof recomputeTau !== "undefined" && !!recomputeTau,`,
+        `    tauModelStamp: typeof tauModelStamp !== "undefined" ? tauModelStamp : undefined`,
+        `}));`,
+        `const readBackup = (path: string) => backupRuntime.readBackup(path);`
+      ]
+    };
+    detectUse = ({ source }) => /\bbackUp\s*(?::|store\b|restore\b|log\b)|\breadBackup\s*\(/i.test(source);
+  }
+});
+
+// src/dependencies/Code/WebGL/runtime/RuntimeLetSource.ts
+var RuntimeLetSource_exports = {};
+__export(RuntimeLetSource_exports, {
+  RuntimeLetSource: () => RuntimeLetSource,
+  detectUse: () => detectUse2,
+  runtimeFeature: () => runtimeFeature2
+});
+var RuntimeLetSource, runtimeFeature2, detectUse2;
+var init_RuntimeLetSource = __esm({
+  "src/dependencies/Code/WebGL/runtime/RuntimeLetSource.ts"() {
+    RuntimeLetSource = class {
+      /** Resolves relative paths against the generated module URL. */
+      constructor(baseUrl) {
+        this.baseUrl = baseUrl;
+        /** Keeps one parsed value per absolute URL. */
+        this.cache = /* @__PURE__ */ new Map();
+        /** Converts a text value into a JSON-like scalar where possible. */
+        this.coerceRuntimeLetValue = (raw) => {
+          const text = String(raw ?? "").trim();
+          if (!text) return void 0;
+          if (/^(true|false)$/i.test(text)) return text.toLowerCase() === "true";
+          if (/^null$/i.test(text)) return null;
+          if (/^[+-]?\d+(?:\.\d+)?(?:e[+-]?\d+)?$/i.test(text)) return Number(text);
+          if (text.startsWith("[") && text.endsWith("]") || text.startsWith("{") && text.endsWith("}")) {
+            try {
+              return JSON.parse(text);
+            } catch {
+            }
+          }
+          if (text.startsWith('"') && text.endsWith('"') || text.startsWith("'") && text.endsWith("'")) {
+            return text.slice(1, -1);
+          }
+          return text;
+        };
+        /** Makes array entries addressable by their object keys. */
+        this.mergeRuntimeLetArray = (arr) => {
+          const out = { __array: arr };
+          if (arr.every((item) => item && typeof item === "object" && !Array.isArray(item))) {
+            for (const item of arr) Object.assign(out, item);
+          }
+          return out;
+        };
+        /** Parses comma- or newline-delimited `name=value` text. */
+        this.parseRuntimeLetText = (text) => {
+          const out = {};
+          const chunks = String(text ?? "").split(/[\r\n]+/).flatMap((line) => line.split(","));
+          for (const chunk of chunks) {
+            const entry = chunk.trim();
+            if (!entry) continue;
+            const eq = entry.indexOf("=");
+            if (eq < 0) {
+              out[entry] = true;
+              continue;
+            }
+            const key = entry.slice(0, eq).trim();
+            const value = entry.slice(eq + 1).trim();
+            if (key) out[key] = this.coerceRuntimeLetValue(value);
+          }
+          return out;
+        };
+        /** Fetches, decodes, and caches one external variable source. */
+        this.load = async (sourcePath) => {
+          const rawPath = String(sourcePath ?? "").trim();
+          if (!rawPath) return {};
+          const resolvedPath = new URL(rawPath, this.baseUrl).toString();
+          if (this.cache.has(resolvedPath)) return this.cache.get(resolvedPath);
+          const response = await fetch(resolvedPath);
+          if (!response.ok) throw new Error("Could not load let source: " + rawPath + " (" + response.status + ")");
+          let parsed = {};
+          if (/\.json(?:$|\?)/i.test(rawPath)) {
+            const json = await response.json();
+            if (Array.isArray(json)) parsed = this.mergeRuntimeLetArray(json);
+            else if (json && typeof json === "object") parsed = json;
+            else parsed = { __array: json };
+          } else {
+            parsed = this.parseRuntimeLetText(await response.text());
+          }
+          this.cache.set(resolvedPath, parsed);
+          return parsed;
+        };
+      }
+    };
+    runtimeFeature2 = {
+      imports: ['import { RuntimeLetSource } from "/Code/WebGL/runtime/RuntimeLetSource.js";'],
+      setup: () => ["const runtimeLetSource = new RuntimeLetSource(import.meta.url);"]
+    };
+    detectUse2 = ({ source }) => /\b(?:let|var)\s+[^={\n]+?\s*\{/m.test(source);
+  }
+});
+
+// src/dependencies/Code/WebGL/runtime/ShaderFilterSet.ts
+var ShaderFilterSet_exports = {};
+__export(ShaderFilterSet_exports, {
+  ShaderFilterSet: () => ShaderFilterSet,
+  detectUse: () => detectUse3,
+  runtimeFeature: () => runtimeFeature3
+});
+var ShaderFilterSet, runtimeFeature3, detectUse3;
+var init_ShaderFilterSet = __esm({
+  "src/dependencies/Code/WebGL/runtime/ShaderFilterSet.ts"() {
+    ShaderFilterSet = class {
+      /** Retains rules without evaluating DSL expressions before shader load. */
+      constructor(rules) {
+        this.rules = rules;
+      }
+      /** Builds the stage- and file-specific source transform. */
+      make(stage, filePathRaw) {
+        return (source) => {
+          let out = String(source ?? "");
+          const filePath = String(filePathRaw ?? "");
+          for (const rule of this.rules) {
+            if (rule.stage !== "both" && rule.stage !== stage) continue;
+            const filePattern = rule.filePattern();
+            if (filePattern != null && filePattern !== "*") {
+              const matches = filePattern instanceof RegExp ? (filePattern.lastIndex = 0, filePattern.test(filePath)) : filePath.includes(String(filePattern));
+              if (!matches) continue;
+            }
+            const pattern = rule.searchPattern();
+            const search = pattern instanceof RegExp ? new RegExp(pattern.source, pattern.flags) : String(pattern ?? "");
+            const replacement = String(rule.replacement() ?? "");
+            out = search instanceof RegExp ? out.replace(search, replacement) : out.split(search).join(replacement);
+          }
+          return out;
+        };
+      }
+    };
+    runtimeFeature3 = {
+      imports: ['import { ShaderFilterSet } from "/Code/WebGL/runtime/ShaderFilterSet.js";'],
+      setup: ({ shaderFilterRules }) => [`const shaderFilters = new ShaderFilterSet([${shaderFilterRules}]);`]
+    };
+    detectUse3 = ({ shaderFilterRules }) => !!shaderFilterRules;
+  }
+});
+
+// src/dependencies/Code/WebGL/parser/registry-entry.ts
+var registry_entry_exports = {};
+__export(registry_entry_exports, {
   DetailedParser: () => DetailedParser
 });
-module.exports = __toCommonJS(webglParser_exports);
+module.exports = __toCommonJS(registry_entry_exports);
+
+// src/dependencies/Code/WebGL/parser/webglParser.ts
+init_BackupRuntime();
+init_RuntimeLetSource();
+init_ShaderFilterSet();
 
 // src/dependencies/Code/Matrix/Matrix.mjs
 var ObjList = class _ObjList {
@@ -1760,9 +2374,9 @@ var ObjectManager = class {
   }
 };
 var Layer = class extends ObjectManager {
-  constructor(id, canvas, scene = Scene.sc) {
+  constructor(id2, canvas, scene = Scene.sc) {
     super([]);
-    this.id = id;
+    this.id = id2;
     this.canvas = canvas;
     this.scene = scene;
     this.stack = new MatrixStack2D();
@@ -2077,21 +2691,21 @@ mouseclick.count = () => {
   }
   return count;
 };
-var getElementFromIdOrElement = (id) => {
+var getElementFromIdOrElement = (id2) => {
   let element;
-  if (typeof id == "string")
-    element = document.getElementById(id);
+  if (typeof id2 == "string")
+    element = document.getElementById(id2);
   if (!(element instanceof HTMLElement))
     return;
   return element;
 };
-var mousemove = (e, ic, id) => {
+var mousemove = (e, ic, id2) => {
   var _a2, _b2, _d, _e, _f, _g, _h, _j, _k;
   if (!ic)
     return;
-  let canvas = id;
-  if (typeof id == "string")
-    canvas = document.getElementById(id);
+  let canvas = id2;
+  if (typeof id2 == "string")
+    canvas = document.getElementById(id2);
   if (!(canvas instanceof HTMLElement))
     return;
   const pos = (_d = (_b2 = (_a2 = e === null || e === void 0 ? void 0 : e.currentTarget) === null || _a2 === void 0 ? void 0 : _a2.getBoundingClientRect) === null || _b2 === void 0 ? void 0 : _b2.call(_a2)) !== null && _d !== void 0 ? _d : { left: parseInt(canvas.style.marginLeft.substring(0, canvas.style.marginLeft.length - 2)), top: 0 };
@@ -2108,14 +2722,14 @@ var mousemove = (e, ic, id) => {
       }
       mouseposes[e.touches[i].identifier].x = x2m;
       mouseposes[e.touches[i].identifier].y = y2m;
-      calculatemousepos(x2m, y2m, id, mouseposes[e.touches[i].identifier]);
+      calculatemousepos(x2m, y2m, id2, mouseposes[e.touches[i].identifier]);
       mouseclick[e.touches[i].identifier] = true;
     }
   } else {
     x = (_j = e.clientX - pos.left) !== null && _j !== void 0 ? _j : e.offsetX;
     y = (_k = e.clientY - pos.top) !== null && _k !== void 0 ? _k : e.offsetY;
   }
-  calculatemousepos(x, y, id);
+  calculatemousepos(x, y, id2);
 };
 function isFullScreen() {
   return window.fullScreen || (window === null || window === void 0 ? void 0 : window.innerWidth) == screen.width && (window === null || window === void 0 ? void 0 : window.innerHeight) == screen.height;
@@ -5223,8 +5837,16 @@ var Camera3D = class {
   }
 };
 
-// src/dependencies/Code/WebGL/webglParser.ts
+// src/dependencies/Code/WebGL/parser/webglParser.ts
 var DetailedParser = class _DetailedParser {
+  static {
+    // Runtime features require an explicit entry here; registry entries are build-discovered.
+    this.runtimeFeatures = [
+      { id: "backup", detectUse, load: async () => (await Promise.resolve().then(() => (init_BackupRuntime(), BackupRuntime_exports))).runtimeFeature },
+      { id: "runtimeLet", detectUse: detectUse2, load: async () => (await Promise.resolve().then(() => (init_RuntimeLetSource(), RuntimeLetSource_exports))).runtimeFeature },
+      { id: "shaderFilters", detectUse: detectUse3, load: async () => (await Promise.resolve().then(() => (init_ShaderFilterSet(), ShaderFilterSet_exports))).runtimeFeature }
+    ];
+  }
   static {
     this.DRAW_BLOCK_MODES = {
       drawPoints: "POINTS",
@@ -5305,6 +5927,9 @@ var DetailedParser = class _DetailedParser {
     this.transpileTemplateBlocks = /* @__PURE__ */ new Map();
   }
   static {
+    this.temporaryRebindSerial = 0;
+  }
+  static {
     this.transpileFunctionBlocks = /* @__PURE__ */ new Map();
   }
   static {
@@ -5328,8 +5953,8 @@ var DetailedParser = class _DetailedParser {
           expr = expr.substring(0, lastComma).trim();
         }
       }
-      for (const id of _DetailedParser.extractRootIdentifiersFromExpr(expr)) {
-        if (!_DetailedParser.RESERVED_CONTEXT_NAMES.has(id)) names.add(id);
+      for (const id2 of _DetailedParser.extractRootIdentifiersFromExpr(expr)) {
+        if (!_DetailedParser.RESERVED_CONTEXT_NAMES.has(id2)) names.add(id2);
       }
       return "";
     });
@@ -5361,61 +5986,7 @@ var DetailedParser = class _DetailedParser {
   }
   static {
     // 2. Usamos el nombre completo de la clase para acceder a GlobalContext
-    this.ObjectRegistry = {
-      "Program": (params, gl) => {
-        if (!WebGLMan.stWebGLMan.gl)
-          WebGLMan.setGL(gl);
-        let program = _DetailedParser.gctx.WebGLMan.program(-1, params.get(0) || params.get("firstAlias"));
-        _DetailedParser.lastUsedProgram = program;
-        return program;
-      },
-      "MeshProgram": (params, gl) => {
-        let program = new _DetailedParser.gctx.MeshRenderingProgram(
-          gl,
-          params.get("input"),
-          params.get(0)[0],
-          params.get(0)[1]
-        ).includeInWebManList();
-        _DetailedParser.lastUsedProgram = program;
-        return program;
-      },
-      "MeshFillerProgram": async (params, gl) => {
-        let program = new _DetailedParser.gctx.MeshFillerProgram(
-          gl,
-          params.get(0)
-        ).includeInWebManList();
-        if (params.get(1)) {
-          program.generateProgram(params.get(1), _DetailedParser.ctx.vars, _DetailedParser.GlobalContext);
-          await program.loadProgram();
-        }
-        if (!_DetailedParser.lastFillerProgram) {
-          _DetailedParser.lastFillerProgram = program;
-        }
-        return program;
-      },
-      "Axis3DGroup": (params, gl) => new _DetailedParser.gctx.Axis3DGroup(
-        gl,
-        params.get("axisLength"),
-        params.get("drawArrows"),
-        params.get("heights"),
-        params.get("radii"),
-        params.get("planes")
-      ).includeInWebManList(),
-      "Camera3D": (params, gl) => {
-        let cam = new _DetailedParser.gctx.Camera3D(
-          params.get("pos"),
-          params.get("fov"),
-          params.get("aspectRatio") || params.get("ratio"),
-          params.get("near"),
-          params.get("far"),
-          params.get("walkspeed") || params.get("speed")
-        );
-        if (!_DetailedParser.gctx.cam) {
-          _DetailedParser.gctx.cam = cam;
-        }
-        return cam;
-      }
-    };
+    this.ObjectRegistry = {};
   }
   static {
     // --- Utilidad interna para procesar el cuerpo de las funciones matemáticas ---
@@ -5430,8 +6001,8 @@ var DetailedParser = class _DetailedParser {
             expr = expr.substring(0, lastComma).trim();
           }
         }
-        for (const id of _DetailedParser.extractRootIdentifiersFromExpr(expr)) {
-          if (!_DetailedParser.RESERVED_CONTEXT_NAMES.has(id)) contextVarSet.add(id);
+        for (const id2 of _DetailedParser.extractRootIdentifiersFromExpr(expr)) {
+          if (!_DetailedParser.RESERVED_CONTEXT_NAMES.has(id2)) contextVarSet.add(id2);
         }
         return `(${expr})`;
       });
@@ -5498,210 +6069,41 @@ var DetailedParser = class _DetailedParser {
     };
   }
   static {
-    this.FunctionRegistry = {
-      "createIdealMesh": (params, gl) => {
-        let allParts = [];
-        let k = 1;
-        while (params.has(k)) {
-          allParts.push(params.get(k));
-          k++;
-        }
-        let callbackString = allParts.join(" ").trim().replace(/;$/, "");
-        try {
-          const func = _DetailedParser.prepareMathFunction(callbackString);
-          if (!_DetailedParser.lastUsedProgram) return;
-          let texture = _DetailedParser.lastUsedProgram.createIdealTexture(params.get(0), func);
-          const texID = params.get(0).toString().match(/\d+/);
-          texture.lastPreparedFunc = callbackString;
-          _DetailedParser.ctx.vars.set("texture" + (texID ? texID : ""), texture);
-          _DetailedParser.ctx.vars.get("texture" + (texID ? texID : "")).func = func;
-          return texture;
-        } catch (e) {
-          console.error(e.message);
-        }
-      },
-      "fillMeshTexture": (params, gl) => {
-        const targetTexture = _DetailedParser.getVar(params.get(0));
-        if (!targetTexture) {
-          console.error(`fillMeshTexture: No se encontr\xF3 la variable ${params.get(0)}`);
-          return;
-        }
-        const texID = targetTexture.unit;
-        let allParts = [];
-        let k = 1;
-        while (params.has(k)) {
-          allParts.push(params.get(k));
-          k++;
-        }
-        let callbackString = allParts.join(" ").trim().replace(/;$/, "");
-        if (targetTexture.lastPreparedFunc != callbackString) {
-          const func = _DetailedParser.prepareMathFunction(callbackString);
-          targetTexture.func = func;
-          targetTexture.lastPreparedFunc = callbackString;
-        }
-        try {
-          let func = _DetailedParser.ctx.vars.get("texture" + (texID ? texID : "")).func;
-          if (!func)
-            func = _DetailedParser.prepareMathFunction(callbackString);
-          if (!_DetailedParser.lastUsedProgram) return;
-          _DetailedParser.lastUsedProgram.fillMeshTexture(targetTexture, func);
-        } catch (e) {
-          console.error(e.message);
-        }
-      },
-      "draw": (params, gl) => {
-        const obj = _DetailedParser.getVar(params.get(0));
-        if (obj && _DetailedParser.getVar("camera3D")) {
-          _DetailedParser.lastUsedProgram.use();
-          _DetailedParser.getVar("camera3D").calculateMatrices();
-          _DetailedParser.lastUsedProgram.draw(0, 0, params.get(1), params.get(2), params.get(3));
-        }
-      },
-      "viewport": (params, gl) => {
-        let program = _DetailedParser.lastUsedProgram;
-        let viewPort;
-        let p0txt = params.get(0);
-        if (!p0txt.startsWith("{")) {
-          p0txt = "{" + p0txt + "}";
-        }
-        let p0 = _DetailedParser.parseValue(p0txt);
-        let p1 = params.get(1);
-        if (p0?.isWebProgram?.()) {
-          program = p0;
-          Array.isArray(p1);
-          viewPort = p1;
-        } else if (Array.isArray(p0)) {
-          viewPort = params.get(0);
-        }
-        if (!viewPort) return;
-        program.use();
-        program.setViewport(...viewPort);
-      },
-      "depthTest": (params, gl) => {
-        if (_DetailedParser.lastUsedProgram) {
-          _DetailedParser.lastUsedProgram.isDepthTest = params.get(0);
-        }
-      },
-      "start": (params, gl) => {
-        start();
-      },
-      "startAsync": async (params, gl) => {
-        await startAsync();
-      },
-      "log": (params, gl) => {
-      },
-      "let": (params, gl) => {
-        let a = params.get("match0");
-        let b = params.get(params.get("match0"));
-        if (b === void 0) {
-          _DetailedParser.ctx.vars.set(a, null);
-          return;
-        }
-        _DetailedParser.ctx.vars.set(a.trim(), b);
-        return;
-      },
-      "lduse": async (params, gl) => {
-        const obj = _DetailedParser.getVar(params.get(0));
-        if (obj && typeof obj.use === "function" && typeof obj.loadProgram === "function") {
-          await _DetailedParser.loadProgramWithShaderFilters(obj, gl);
-          obj.use();
-          _DetailedParser.lastUsedProgram = obj;
-          return obj;
-        }
-      },
-      "use": async (params, gl) => {
-        const obj = _DetailedParser.getVar(params.get(0));
-        if (obj && typeof obj.use === "function") {
-          obj.use();
-          _DetailedParser.lastUsedProgram = obj;
-          return obj;
-        }
-      },
-      ...["uMat4", "uMat3", "uMat2", "uVec", "uNum", "uFloat", "uInt"].reduce((acc, fnName) => {
-        acc[fnName] = (params, gl) => {
-          const program = _DetailedParser.lastUsedProgram;
-          if (!program) return;
-          const name = params.get(0);
-          let args = [name];
-          if (fnName === "uVec") {
-            args = [
-              name,
-              params.get("dim") ?? params.get("dimension"),
-              params.get("isFloat") ?? true,
-              params.get("isUnsignedInt") ?? false
-            ];
-          } else if (fnName === "uNum") {
-            args = [
-              name,
-              params.get("isFloat") ?? true,
-              params.get("isUnsignedInt") ?? false
-            ];
-          }
-          const uniformObj = program[fnName](...args);
-          _DetailedParser.ctx.vars.set(`u_${name}`, uniformObj);
-          const potentialValueIdx = args.length;
-          if (params.has(2)) {
-            uniformObj.set(params.get(potentialValueIdx));
-          }
-          return uniformObj;
-        };
-        return acc;
-      }, {}),
-      // --- Operaciones de Buffer ---
-      "cFrameBuffer": (params, gl) => {
-        return _DetailedParser.lastUsedProgram?.cFrameBuffer();
-      },
-      "unbindFrameBuffer": (params, gl) => {
-        return _DetailedParser.lastUsedProgram?.unbindFrameBuffer();
-      },
-      "unbindFBO": (params, gl) => {
-        return _DetailedParser.lastUsedProgram?.unbindFBO();
-      },
-      // --- Dibujo Avanzado ---
-      "drawArrays": (params, gl) => {
-        const program = _DetailedParser.lastUsedProgram;
-        if (!program) return;
-        const modeStr = params.get(0) || "TRIANGLES";
-        const mode = gl[modeStr.toUpperCase()] || gl.TRIANGLES;
-        const vaoOff = params.get("off") ?? params.get(1) ?? 0;
-        const vertexCount = params.get("vCount") ?? params.get("length") ?? params.get("vertexCount") ?? params.get(2);
-        const instanceCount = params.get("instances") ?? params.get("instanceCount") ?? params.get(3) ?? 1;
-        return program.drawArrays(mode, vaoOff, vertexCount, instanceCount);
-      },
-      "drawElements": (params, gl) => {
-        const program = _DetailedParser.lastUsedProgram;
-        if (!program) return;
-        const modeStr = params.get(0) || "TRIANGLES";
-        const mode = gl[modeStr.toUpperCase()] || gl.TRIANGLES;
-        const elementCount = params.get("elCount") ?? params.get("elementCount") ?? params.get(1) ?? program.VAO?.eboLength;
-        const rawType = params.get("type") ?? params.get(2) ?? "US";
-        const typeMap = { "UB": "UNSIGNED_BYTE", "US": "UNSIGNED_SHORT", "UI": "UNSIGNED_INT" };
-        const type = typeMap[rawType] || rawType || "UNSIGNED_SHORT";
-        const eboOff = params.get("off") ?? params.get("eboOff") ?? params.get(3) ?? 0;
-        const instanceCount = params.get("instances") ?? params.get("instanceCount") ?? params.get(4) ?? 0;
-        return program.drawElements(mode, elementCount, type, eboOff, instanceCount);
-      },
-      "texture2DArray": (params, gl) => {
-        let sx = 0, sy = 0, sz = 0;
-        let sizeParam = params.get(4);
-        if (Array.isArray(sizeParam)) {
-          if (sizeParam[0] !== void 0) sx = sizeParam[0];
-          if (sizeParam[1] !== void 0) sy = sizeParam[1];
-          if (sizeParam[2] !== void 0) sz = sizeParam[2];
-        }
-        let datatxt = params.get(1);
-        if (!datatxt.startsWith("{")) {
-          datatxt = "{" + datatxt + "}";
-        }
-        return _DetailedParser.lastUsedProgram?.texture2DArray?.({
-          format: _DetailedParser.gctx.TexExamples[params.get(0)],
-          data: _DetailedParser.parseValue(datatxt),
-          name: params.get(2),
-          texUnit: params.get(3),
-          size: [sx, sy, sz]
-        });
-      }
-    };
+    this.FunctionRegistry = {};
+  }
+  static {
+    this.activeRegistryModules = [];
+  }
+  static {
+    this.RegistryTranspilers = [];
+  }
+  static {
+    this.registryDefinitions = [];
+  }
+  static get registryModuleNames() {
+    return this.registryDefinitions.map((module2) => module2.id);
+  }
+  static activateRegistries(source, configured = [], external = []) {
+    const objects = {};
+    const functions = {};
+    const transpilers = [];
+    const active = [];
+    for (const definition of [..._DetailedParser.registryDefinitions, ...external]) {
+      const detected = definition.detectUse?.(source);
+      const selected = configured.includes(definition.id) || detected === "Toggled" && external.includes(definition);
+      if (detected !== void 0 && detected !== true && !selected) continue;
+      const module2 = definition.register(_DetailedParser, { WebGLMan, start, startAsync });
+      const names = [...Object.keys(module2.objects || {}), ...Object.keys(module2.functions || {})];
+      if (detected === void 0 && !selected && !names.some((name) => new RegExp(`\\b${name}\\b`).test(source))) continue;
+      active.push(module2);
+      Object.assign(objects, module2.objects);
+      Object.assign(functions, module2.functions);
+      transpilers.push(...module2.transpile || []);
+    }
+    _DetailedParser.ObjectRegistry = objects;
+    _DetailedParser.FunctionRegistry = functions;
+    _DetailedParser.RegistryTranspilers = transpilers;
+    _DetailedParser.activeRegistryModules = active;
   }
   static get lastUsedProgram() {
     return _DetailedParser.context.lastUsedProgram;
@@ -6086,60 +6488,10 @@ var DetailedParser = class _DetailedParser {
   }
   static transpileShaderFilterFactory(stage, filePathExpr) {
     if (!(_DetailedParser.transpileShaderFilters || []).length) return `(source => source)`;
-    return `__makeTranspiledShaderFilter(${JSON.stringify(stage)}, ${filePathExpr})`;
+    return `shaderFilters.make(${JSON.stringify(stage)}, ${filePathExpr})`;
   }
   static buildTranspiledShaderFilterRulesSource() {
     return (_DetailedParser.transpileShaderFilters || []).map((rule) => `{ stage: ${JSON.stringify(rule.stage)}, filePattern: () => (${rule.filePatternExpr}), searchPattern: () => (${rule.searchPatternExpr}), replacement: () => (${rule.replacementExpr}) }`).join(", ");
-  }
-  static buildTranspiledShaderFilterHelperLines() {
-    const rules = _DetailedParser.buildTranspiledShaderFilterRulesSource();
-    if (!rules.length) return [];
-    return [
-      `var __transpiledShaderFilterRules = [${rules}];`,
-      ``,
-      `// Aplica reglas de sustitucion sobre en el texto del shader.`,
-      `// La lista de reglas se construye una sola vez al generar el parser; aqui solo`,
-      `// resolvemos si una regla afecta a este archivo y hacemos el replace correspondiente.`,
-      `var __makeTranspiledShaderFilter = (stage:any, filePathRaw:any) => {`,
-      `    return (source:any) => {`,
-      `        // 1) Normalizacion basica. Evita fallos si el cargador entrega null,`,
-      `        // undefined o cualquier valor no string durante una recompilacion parcial.`,
-      `        let out = String(source ?? "");`,
-      `        const filePath = String(filePathRaw ?? "");`,
-      ``,
-      `        // 2) Filtro por etapa y por ruta. Las reglas de otros shaders no deben`,
-      `        // tocar este fichero aunque compartan el mismo placeholder.`,
-      `        for (const rule of __transpiledShaderFilterRules) {`,
-      `            if (!rule) continue;`,
-      `            if (rule.stage !== "both" && rule.stage !== stage) continue;`,
-      ``,
-      `            const filePattern:any = typeof rule.filePattern === "function" ? rule.filePattern() : rule.filePattern;`,
-      `            if (filePattern !== undefined && filePattern !== null && filePattern !== "*") {`,
-      `                const matchesFile = (filePattern instanceof RegExp)`,
-      `                    ? ((filePattern.lastIndex = 0), filePattern.test(filePath))`,
-      `                    : filePath.includes(String(filePattern));`,
-      `                if (!matchesFile) continue;`,
-      `            }`,
-      ``,
-      `            // 3) Sustitucion. Si el patron es regex lo clonamos para no arrastrar`,
-      `            // estado interno entre llamadas consecutivas. Si es texto plano usamos`,
-      `            // split/join porque mantiene el codigo generado corto y predecible.`,
-      `            const searchPattern:any = typeof rule.searchPattern === "function" ? rule.searchPattern() : rule.searchPattern;`,
-      `            const search = (searchPattern instanceof RegExp)`,
-      `                ? new RegExp(searchPattern.source, searchPattern.flags)`,
-      `                : searchPattern;`,
-      `            const replacementValue = typeof rule.replacement === "function" ? rule.replacement() : rule.replacement;`,
-      `            const replacement = String(replacementValue ?? "");`,
-      ``,
-      `            out = (search instanceof RegExp)`,
-      `                ? out.replace(search, replacement)`,
-      `                : out.split(String(search ?? "")).join(replacement);`,
-      `        }`,
-      ``,
-      `        return out;`,
-      `    };`,
-      `};`
-    ];
   }
   static splitByWhitespaceTopLevel(input) {
     const out = [];
@@ -6300,357 +6652,6 @@ var DetailedParser = class _DetailedParser {
     const [, name, rawValue2] = m;
     return { name, expr: _DetailedParser.transpileExpr(rawValue2) };
   }
-  static buildRuntimeLetHelperLines() {
-    return [
-      `const __runtimeLetCache = new Map<string, any>();`,
-      `const __coerceRuntimeLetValue = (raw:any)=>{`,
-      `    const text = String(raw ?? "").trim();`,
-      `    if(!text) return undefined;`,
-      `    if(/^(true|false)$/i.test(text)) return text.toLowerCase()==="true";`,
-      `    if(/^null$/i.test(text)) return null;`,
-      `    if(/^[+-]?\\d+(?:\\.\\d+)?(?:e[+-]?\\d+)?$/i.test(text)) return Number(text);`,
-      `    if((text.startsWith("[") && text.endsWith("]")) || (text.startsWith("{") && text.endsWith("}"))){`,
-      `        try{ return JSON.parse(text); }catch{}`,
-      `    }`,
-      `    if((text.startsWith("\\"") && text.endsWith("\\"")) || (text.startsWith("'") && text.endsWith("'"))){`,
-      `        return text.slice(1,-1);`,
-      `    }`,
-      `    return text;`,
-      `};`,
-      ``,
-      `const __mergeRuntimeLetArray = (arr:any[])=>{`,
-      `    const out:any = { __array: arr };`,
-      `    if(arr.every(item => item && typeof item === "object" && !Array.isArray(item))){`,
-      `        for (const item of arr) Object.assign(out, item);`,
-      `    }`,
-      `    return out;`,
-      `};`,
-      ``,
-      `const __parseRuntimeLetText = (text:string)=>{`,
-      `    const out:any = {};`,
-      `    const chunks = String(text ?? "").split(/[\\r\\n]+/).flatMap(line => line.split(","));`,
-      `    for (const chunk of chunks) {`,
-      `        const entry = chunk.trim();`,
-      `        if(!entry) continue;`,
-      `        const eq = entry.indexOf("=");`,
-      `        if(eq<0){`,
-      `            out[entry] = true;`,
-      `            continue;`,
-      `        }`,
-      `        const key = entry.slice(0, eq).trim();`,
-      `        const value = entry.slice(eq + 1).trim();`,
-      `        if(key) out[key] = __coerceRuntimeLetValue(value);`,
-      `    }`,
-      `    return out;`,
-      `};`,
-      ``,
-      `const __loadRuntimeLetSource = async (sourcePath:any)=>{`,
-      `    const rawPath = String(sourcePath ?? "").trim();`,
-      `    if(!rawPath) return {};`,
-      `    const resolvedPath = new URL(rawPath, import.meta.url).toString();`,
-      `    if(__runtimeLetCache.has(resolvedPath)) return __runtimeLetCache.get(resolvedPath);`,
-      `    const response = await fetch(resolvedPath);`,
-      `    if(!response.ok) throw new Error("Could not load let source: " + rawPath + " (" + response.status + ")");`,
-      `    let parsed:any = {};`,
-      `    if(/\\.json(?:$|\\?)/i.test(rawPath)){`,
-      `        const json = await response.json();`,
-      `        if(Array.isArray(json)) parsed = __mergeRuntimeLetArray(json);`,
-      `        else if(json && typeof json === "object") parsed = json;`,
-      `        else parsed = { __array: json };`,
-      `    }else{`,
-      `        parsed = __parseRuntimeLetText(await response.text());`,
-      `    }`,
-      `    __runtimeLetCache.set(resolvedPath, parsed);`,
-      `    return parsed;`,
-      `};`
-    ];
-  }
-  static buildBackupRuntimeHelperLines(defaultScope) {
-    return [
-      `const __backupBaseUrl = "/api/backups";`,
-      `const __backupDefaultScope = ${JSON.stringify(defaultScope)};`,
-      `const __backupPad2 = (n:any)=>String(n).padStart(2, "0");`,
-      `const __backupStamp = ()=>{`,
-      `    const d = new Date();`,
-      `    return String(d.getFullYear()) + __backupPad2(d.getMonth()+1) + __backupPad2(d.getDate()) + __backupPad2(d.getHours()) + __backupPad2(d.getMinutes());`,
-      `};`,
-      `const __backupSafeName = (name:any)=>String(name ?? "backup").replace(/[^A-Za-z0-9_.-]+/g, "_").replace(/^_+|_+$/g, "") || "backup";`,
-      `const __backupDefaultPath = (value:any, varName:any)=>{`,
-      `    const isTex = value && typeof value === "object" && ("w" in value || "h" in value || "unit" in value || value instanceof WebGLTexture);`,
-      `    const parts = [__backupSafeName(varName)];`,
-      `    if(isTex){`,
-      `        parts.push(String(value.w ?? value.width ?? "x"));`,
-      `        parts.push(String(value.h ?? value.height ?? "y"));`,
-      `        parts.push("TexUnit" + String(value.unit ?? "NA").replace(/^TexUnit/i, ""));`,
-      `        parts.push(__backupSafeName(value.__backupProgram ?? value.programName ?? value.program ?? "programNA"));`,
-      `    }`,
-      `    parts.push(__backupStamp());`,
-      `    return parts.join("_") + ".txt";`,
-      `};`,
-      `const __backupTexturePreview = (tex:any, varName:any)=>{`,
-      `    if(!tex || tex.__backupType !== "texture2D") return "";`,
-      `    const w = Number(tex.w ?? 0) || 0;`,
-      `    const h = Number(tex.h ?? 0) || 0;`,
-      `    const dim = Number(tex.dim ?? 1) || 1;`,
-      `    const name = String(varName ?? "texture");`,
-      `    const program = String(tex.program ?? "programNA");`,
-      `    const values = Array.isArray(tex.data) ? tex.data : [];`,
-      `    const formatScalar = (value:any)=>{`,
-      `        const num = Number(value);`,
-      `        if(!Number.isFinite(num)) return String(value ?? "").padStart(10, " ");`,
-      `        return num.toFixed(4).padStart(10, " ");`,
-      `    };`,
-      `    const lines = [name + " [" + w + " x " + h + "] " + program];`,
-      `    for(let y = 0; y < h; y++){`,
-      `        const row:string[] = [];`,
-      `        for(let x = 0; x < w; x++){`,
-      `            const base = (y * w + x) * dim;`,
-      `            for(let c = 0; c < dim; c++){`,
-      `                row.push(formatScalar(values[base + c]));`,
-      `            }`,
-      `        }`,
-      `        lines.push(row.join(" "));`,
-      `    }`,
-      `    return lines.join("\\n");`,
-      `};`,
-      `const __backupNormalizeScopePath = (pathHint:any)=>{`,
-      `    const raw = String(pathHint ?? "").trim().replace(/\\\\/g, "/");`,
-      `    const scope = String(__backupDefaultScope || "").replace(/^\\/+|\\/+$/g, "");`,
-      `    const withScope = (value:string)=>{`,
-      `        const clean = String(value || "").replace(/^\\/+/, "");`,
-      `        if(!scope) return clean;`,
-      `        if(!clean) return scope;`,
-      `        if(clean === scope || clean.startsWith(scope + "/")) return clean;`,
-      `        return scope + "/" + clean;`,
-      `    };`,
-      `    if(!raw || raw === "/" || raw === ".") return { path: withScope(""), directoryMode: true };`,
-      `    if(raw.startsWith("./")){`,
-      `        const rest = raw.slice(2);`,
-      `        return { path: withScope(rest), directoryMode: !rest || /\\/$/.test(rest) };`,
-      `    }`,
-      `    if(raw.startsWith("/")) return { path: withScope(raw.slice(1)), directoryMode: true };`,
-      `    return { path: withScope(raw), directoryMode: true };`,
-      `};`,
-      `const __backupReadTexture2D = (tex:any)=>{`,
-      `    if(!tex || typeof tex !== "object" || !(tex instanceof WebGLTexture)) return null;`,
-      `    const w = Number(tex.w ?? tex.width ?? 1) || 1;`,
-      `    const h = Number(tex.h ?? tex.height ?? 1) || 1;`,
-      `    const format = tex.format || (TexExamples as any).RGBAFloat;`,
-      `    const dim = format?.[0] === gl.RED ? 1 : format?.[0] === gl.RG ? 2 : format?.[0] === gl.RGB ? 3 : 4;`,
-      `    const fbo = gl.createFramebuffer();`,
-      `    gl.bindFramebuffer(gl.READ_FRAMEBUFFER, fbo);`,
-      `    gl.framebufferTexture2D(gl.READ_FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);`,
-      `    gl.readBuffer(gl.COLOR_ATTACHMENT0);`,
-      `    const data = new Float32Array(w * h * dim);`,
-      `    gl.readPixels(0, 0, w, h, format[0], format[2], data);`,
-      `    gl.bindFramebuffer(gl.READ_FRAMEBUFFER, null);`,
-      `    gl.deleteFramebuffer(fbo);`,
-      `    return { __backupType: "texture2D", w, h, dim, format: Array.from(format || []), unit: tex.unit, program: tex.__backupProgram, data: Array.from(data) };`,
-      `};`,
-      `const __backupSerializeValue = (value:any, varName:any)=>{`,
-      `    const tex = __backupReadTexture2D(value);`,
-      `    if(tex){`,
-      `        const jsonLine = JSON.stringify({ varName, savedAt: new Date().toISOString(), value: tex });`,
-      `        return __backupTexturePreview(tex, varName) + "\\n" + jsonLine;`,
-      `    }`,
-      `    if(value instanceof Float32Array || value instanceof Int32Array || value instanceof Uint32Array || value instanceof Uint8Array){`,
-      `        return JSON.stringify({ varName, savedAt: new Date().toISOString(), value: { __backupType: value.constructor.name, data: Array.from(value) } });`,
-      `    }`,
-      `    try { return JSON.stringify({ varName, savedAt: new Date().toISOString(), value }); }`,
-      `    catch { return String(value); }`,
-      `};`,
-      `const __backupNormalizeValue = (value:any, varName:any)=>{`,
-      `    const tex = __backupReadTexture2D(value);`,
-      `    if(tex) return { varName, value: tex };`,
-      `    if(value instanceof Float32Array || value instanceof Int32Array || value instanceof Uint32Array || value instanceof Uint8Array){`,
-      `        return { varName, value: { __backupType: value.constructor.name, data: Array.from(value) } };`,
-      `    }`,
-      `    return { varName, value };`,
-      `};`,
-      `const __backupPut = async (route:string, path:any, content:any, extra:any={})=>{`,
-      `    const response = await fetch(__backupBaseUrl + route, {`,
-      `        method: "PUT",`,
-      `        headers: { "Content-Type": "application/json" },`,
-      `        body: JSON.stringify({ path, content, ...extra })`,
-      `    });`,
-      `    const raw = await response.text();`,
-      `    if(!response.ok) throw new Error("Backup request failed: " + response.status + " " + raw);`,
-      `    try { return raw ? JSON.parse(raw) : { ok: true, path: String(path ?? "") }; }`,
-      `    catch { return { ok: true, path: String(path ?? ""), raw }; }`,
-      `};`,
-      `const __backupStore = async (value:any, varName:any, pathHint?:any)=>{`,
-      `    try {`,
-      `        const target = __backupNormalizeScopePath(pathHint);`,
-      `        const result = await __backupPut("/file", target.path, __backupSerializeValue(value, varName), target.directoryMode ? { directoryMode: true, suggestedName: __backupDefaultPath(value, varName) } : {});`,
-      `        console.log("[backUp store]", result.path);`,
-      `        return result;`,
-      `    } catch (err) {`,
-      `        console.error("[backUp store] failed", err);`,
-      `        return { ok: false, error: String(err) };`,
-      `    }`,
-      `};`,
-      `const __backupFetchText = async (pathHint:any)=>{`,
-      `    const target = __backupNormalizeScopePath(pathHint);`,
-      `    const response = await fetch(__backupBaseUrl + "/file?path=" + encodeURIComponent(target.path));`,
-      `    if(!response.ok) throw new Error("Backup restore failed: " + response.status + " " + await response.text());`,
-      `    return await response.text();`,
-      `};`,
-      `const __backupDecodeValue = (text:string)=>{`,
-      `    try {`,
-      `        const lines = String(text ?? "").split(/\\r?\\n/).map(line=>line.trim()).filter(Boolean);`,
-      `        const jsonLine = lines.length ? lines[lines.length - 1] : "";`,
-      `        const parsed = JSON.parse(jsonLine);`,
-      `        return parsed && Object.prototype.hasOwnProperty.call(parsed, "value") ? parsed.value : parsed;`,
-      `    } catch {`,
-      `        const nums = text.trim().split(/[\\s,;]+/).map(Number).filter(Number.isFinite);`,
-      `        return nums.length ? new Float32Array(nums) : text;`,
-      `    }`,
-      `};`,
-      `const __backupRestoreInto = async (target:any, pathHint:any)=>{`,
-      `    const value = __backupDecodeValue(await __backupFetchText(pathHint));`,
-      `    if(target && typeof target.fill === "function" && value?.__backupType === "texture2D"){`,
-      `        target.fill(new Float32Array(value.data || []), 0, 0, value.w, value.h);`,
-      `        return target;`,
-      `    }`,
-      `    if(value?.__backupType && Array.isArray(value.data)) return new Float32Array(value.data);`,
-      `    return value;`,
-      `};`,
-      `const __backupLog = async (pathHint:any)=>{`,
-      `    const target = __backupNormalizeScopePath(pathHint);`,
-      `    const p = target.path;`,
-      `    const prevLog = console.log.bind(console);`,
-      `    const prevWarn = console.warn.bind(console);`,
-      `    const prevError = console.error.bind(console);`,
-      `    const append = (level:string, args:any[])=>{`,
-      `        const line = "[" + new Date().toISOString() + "] " + level + " " + args.map(a=>{ try{return typeof a === "string" ? a : JSON.stringify(a);}catch{return String(a);} }).join(" ") + "\\n";`,
-      `        __backupPut("/append", p, line, target.directoryMode ? { directoryMode: true, suggestedName: "log_" + __backupStamp() + ".txt" } : {}).catch(prevError);`,
-      `    };`,
-      `    console.log = (...args:any[])=>{ prevLog(...args); append("log", args); };`,
-      `    console.warn = (...args:any[])=>{ prevWarn(...args); append("warn", args); };`,
-      `    console.error = (...args:any[])=>{ prevError(...args); append("error", args); };`,
-      `    console.log("[backUp log]", p);`,
-      `};`,
-      `const __backupDrawGenerationState = { stamp: Symbol("init"), counts: new Map<string, number>(), clearedScopes: new Set<string>() };`,
-      `const __backupRefreshGenerationState = ()=>{`,
-      `    try {`,
-      `        if(typeof recomputeTau === "undefined" || !recomputeTau) return;`,
-      `        const stamp = (typeof tauModelStamp !== "undefined") ? tauModelStamp : "__recompute__";`,
-      `        if(__backupDrawGenerationState.stamp !== stamp){`,
-      `            __backupDrawGenerationState.stamp = stamp;`,
-      `            __backupDrawGenerationState.counts = new Map<string, number>();`,
-      `            __backupDrawGenerationState.clearedScopes = new Set<string>();`,
-      `        }`,
-      `    } catch {}`,
-      `};`,
-      `const __backupClearDrawScopeGenerationsIfNeeded = async (pathHint:any)=>{`,
-      `    __backupRefreshGenerationState();`,
-      `    try {`,
-      `        if(typeof recomputeTau === "undefined" || !recomputeTau) return;`,
-      `        const target = __backupNormalizeScopePath(pathHint);`,
-      `        const key = String(target.path || "");`,
-      `        if(__backupDrawGenerationState.clearedScopes.has(key)) return;`,
-      `        __backupDrawGenerationState.clearedScopes.add(key);`,
-      `        await __backupPut("/clear-generations", target.path, "");`,
-      `    } catch (err) {`,
-      `        console.warn("[backUp clear-generations] failed", pathHint, err);`,
-      `    }`,
-      `};`,
-      `const __backupNextDrawGeneration = (drawKind:any, pathHint:any, program:any)=>{`,
-      `    __backupRefreshGenerationState();`,
-      `    try {`,
-      `        if(typeof recomputeTau === "undefined" || !recomputeTau) return 1;`,
-      `        const target = __backupNormalizeScopePath(pathHint);`,
-      `        const drawName = __backupSafeName(drawKind || "draw");`,
-      `        const programName = __backupSafeName(program?.ID ?? program?.fragPath ?? program?.name ?? "program");`,
-      `        const key = target.path + "::" + programName + "::" + drawName;`,
-      `        const next = (__backupDrawGenerationState.counts.get(key) || 0) + 1;`,
-      `        __backupDrawGenerationState.counts.set(key, next);`,
-      `        return next;`,
-      `    } catch {`,
-      `        return 1;`,
-      `    }`,
-      `};`,
-      `const __backupResolveMultiTarget = (pathHint:any, defaultStem:any, suffix:any, generation:any=1)=>{`,
-      `    const target = __backupNormalizeScopePath(pathHint);`,
-      `    const stem = __backupSafeName(defaultStem);`,
-      `    const cleanSuffix = String(suffix ?? "").replace(/^_+/, "");`,
-      `    const fileName = stem + "_" + cleanSuffix + "_" + __backupStamp() + ".txt";`,
-      `    const gen = Math.max(1, Number(generation) || 1);`,
-      `    if(target.directoryMode){`,
-      `        const dirPath = gen > 1 ? (target.path ? String(target.path).replace(/\\/+$/g, "") + "/" + String(gen) : String(gen)) : target.path;`,
-      `        return { path: dirPath, directoryMode: true, suggestedName: fileName, generation: gen };`,
-      `    }`,
-      `    const p = target.path;`,
-      `    if(/\\.txt$/i.test(p)){`,
-      `        const slash = Math.max(p.lastIndexOf("/"), p.lastIndexOf("\\\\"));`,
-      `        const dir = slash >= 0 ? p.slice(0, slash + 1) : "";`,
-      `        const base = slash >= 0 ? p.slice(slash + 1) : p;`,
-      `        const dot = base.toLowerCase().endsWith(".txt") ? base.slice(0, -4) : base;`,
-      `        const genDir = gen > 1 ? (dir ? dir.replace(/\\/+$/g, "") + "/" + String(gen) + "/" : String(gen) + "/") : dir;`,
-      `        return { path: genDir + dot + "_" + cleanSuffix + ".txt", directoryMode: false, generation: gen };`,
-      `    }`,
-      `    const dirPath = gen > 1 ? (p ? String(p).replace(/\\/+$/g, "") + "/" + String(gen) : String(gen)) : p;`,
-      `    return { path: dirPath, directoryMode: true, suggestedName: fileName, generation: gen };`,
-      `};`,
-      `const __backupStoreDrawBlock = async (drawKind:any, pathHint:any, outputTextures:any[], uniformEntries:any[], program:any)=>{`,
-      `    try {`,
-      `        const drawName = __backupSafeName(drawKind || "draw");`,
-      `        const generation = __backupNextDrawGeneration(drawKind, pathHint, program);`,
-      `        const outputs = Array.isArray(outputTextures) ? outputTextures.filter(Boolean) : [];`,
-      `        const outputSet = new Set(outputs.map(item => item?.tex).filter(Boolean));`,
-      `        const programTextures = Array.isArray(program?.textures) ? program.textures.filter((tex:any)=>tex && !outputSet.has(tex)) : [];`,
-      `        const prependedInputs = programTextures.map((tex:any, idx:number)=>__backupNormalizeValue(tex, tex.__backupVarName || tex.__backupUniformName || ("inputTex" + idx)));`,
-      `        const normalizedUniforms = (Array.isArray(uniformEntries) ? uniformEntries : []).map((entry:any)=>({`,
-      `            kind: entry?.kind || "uniform",`,
-      `            name: entry?.name || "uniform",`,
-      `            ...__backupNormalizeValue(entry?.value, entry?.name || "uniform")`,
-      `        }));`,
-      `        const serializedOutputs = outputs.map((output:any)=>{`,
-      `            const outputName = output?.name || "output";`,
-      `            try {`,
-      `                return { outputName, ok: true, payload: __backupSerializeValue(output?.tex, outputName) };`,
-      `            } catch (err) {`,
-      `                return {`,
-      `                    outputName,`,
-      `                    ok: false,`,
-      `                    payload: JSON.stringify({`,
-      `                        varName: outputName,`,
-      `                        savedAt: new Date().toISOString(),`,
-      `                        error: String(err)`,
-      `                    })`,
-      `                };`,
-      `            }`,
-      `        });`,
-      `        const uniformPayload = JSON.stringify({`,
-      `            source: drawKind,`,
-      `            savedAt: new Date().toISOString(),`,
-      `            entries: [`,
-      `                ...prependedInputs.map((entry:any)=>({ kind: "programTexture", name: entry.varName, value: entry.value })),`,
-      `                ...normalizedUniforms`,
-      `            ]`,
-      `        });`,
-      `        await __backupClearDrawScopeGenerationsIfNeeded(pathHint);`,
-      `        const uniformTarget = __backupResolveMultiTarget(pathHint, drawName, "uniforms", generation);`,
-      `        await __backupPut("/file", uniformTarget.path, uniformPayload, uniformTarget.directoryMode ? { directoryMode: true, suggestedName: uniformTarget.suggestedName } : {});`,
-      `        for (const snapshot of serializedOutputs) {`,
-      `            try {`,
-      `                const outputTarget = __backupResolveMultiTarget(pathHint, drawName, __backupSafeName(snapshot.outputName), generation);`,
-      `                await __backupPut("/file", outputTarget.path, snapshot.payload, outputTarget.directoryMode ? { directoryMode: true, suggestedName: outputTarget.suggestedName } : {});`,
-      `                if(!snapshot.ok){`,
-      `                    console.warn("[backUp draw] stored output fallback payload", snapshot.outputName, pathHint);`,
-      `                }`,
-      `            } catch (err) {`,
-      `                console.error("[backUp draw] output store failed", snapshot.outputName, pathHint, err);`,
-      `            }`,
-      `        }`,
-      `        return { ok: true };`,
-      `    } catch (err) {`,
-      `        console.error("[backUp draw] failed", drawKind, pathHint, err);`,
-      `        return { ok: false, error: String(err) };`,
-      `    }`,
-      `};`
-    ];
-  }
   static transpileGroupedLetBlock(sourceToken, lines, declaredVars, declKeyword = "let") {
     const entries = _DetailedParser.collectCommaSeparatedEntries(lines);
     const parsedEntries = entries.map((entry) => {
@@ -6673,7 +6674,7 @@ var DetailedParser = class _DetailedParser {
     const out = [];
     const sourceExpr = /^[./]|^[A-Za-z]:[\\/]|\.json(?:$|\?)/i.test(sourceToken.trim()) ? JSON.stringify(sourceToken.trim()) : _DetailedParser.transpileExpr(sourceToken.trim());
     const tempName = `__letSource_${Math.random().toString(36).slice(2, 10)}`;
-    out.push(`const ${tempName} = await __loadRuntimeLetSource(${sourceExpr});`);
+    out.push(`const ${tempName} = await runtimeLetSource.load(${sourceExpr});`);
     out.push(`Object.assign(globalThis as any, ${tempName} || {});`);
     const allowArrayFallback = parsedEntries.length === 1;
     for (const entry of parsedEntries) {
@@ -6950,6 +6951,41 @@ var DetailedParser = class _DetailedParser {
     }
     return out;
   }
+  static transpileTemporaryRebind(lines) {
+    const before = [];
+    const after = [];
+    const serial = _DetailedParser.temporaryRebindSerial++;
+    const clauses = lines.flatMap((line) => _DetailedParser.splitTopLevelByChar(line.trim(), ";")).filter(Boolean);
+    for (const clause of clauses) {
+      const match = clause.match(/^(.+?)\s*->\s*(.+)$/);
+      if (!match) continue;
+      const names = _DetailedParser.splitTopLevelByChar(match[1], ",").map((x) => x.trim());
+      const units = _DetailedParser.splitTopLevelByChar(match[2], ",").map((x) => x.trim());
+      if (names.length !== units.length) throw new Error(`rebind temporal invalido: ${clause}`);
+      for (let i = 0; i < names.length; i++) {
+        const id2 = `__tempRebind_${serial}_${after.length}`;
+        const unit = _DetailedParser.normalizeTexUnitToken(units[i]);
+        const texture = _DetailedParser.transpileTexAliasToTextureVar.get(names[i]);
+        const uniform = _DetailedParser.transpileTexAliasToUniform.get(names[i]) || names[i];
+        before.push(`const ${id2}Unit = Number(String(${unit}).replace(/^TexUnit/i, ""));`);
+        before.push(`const ${id2}Active = gl.getParameter(gl.ACTIVE_TEXTURE);`);
+        before.push(`gl.activeTexture(gl.TEXTURE0 + ${id2}Unit);`);
+        before.push(`const ${id2}Old = gl.getParameter(gl.TEXTURE_BINDING_2D);`);
+        before.push(`const ${id2}Program = lastUsedProgram.textures[${id2}Unit];`);
+        before.push(`const ${id2}Global = lastUsedProgram.constructor.Textures[${id2}Unit];`);
+        before.push(`gl.activeTexture(${id2}Active);`);
+        if (texture) before.push(`const ${id2}TextureUnit = ${texture}.unit;`);
+        before.push(..._DetailedParser.transpileRebindBlock("lastUsedProgram", [`${names[i]} -> ${units[i]}`]));
+        after.unshift(`gl.activeTexture(${id2}Active);`);
+        after.unshift(`lastUsedProgram.constructor.Textures[${id2}Unit] = ${id2}Global;`);
+        after.unshift(`lastUsedProgram.textures[${id2}Unit] = ${id2}Program;`);
+        if (texture) after.unshift(`${texture}.unit = ${id2}TextureUnit;`);
+        after.unshift(`gl.bindTexture(gl.TEXTURE_2D, ${id2}Old);`);
+        after.unshift(`gl.activeTexture(gl.TEXTURE0 + ${id2}Unit);`);
+      }
+    }
+    return { before, after };
+  }
   static transpileFramebufferBlock(name, lines, declaredVars) {
     const entries = _DetailedParser.collectCommaSeparatedEntries(lines);
     const bindings = [];
@@ -7047,8 +7083,10 @@ var DetailedParser = class _DetailedParser {
     const runtimeLines = [];
     let framebufferAliases = [];
     let backupPathExpr = "undefined";
+    let backupOptionsExpr = "{}";
     const outputRefs = outTexRaw ? _DetailedParser.splitTopLevelByChar(outTexRaw, ",").map((x) => x.trim()).filter(Boolean) : [];
     const uniformSnapshotEntries = [];
+    const temporaryRestores = [];
     for (const rawLine of lines) {
       const trimmed = rawLine.trim();
       if (!trimmed) {
@@ -7062,7 +7100,17 @@ var DetailedParser = class _DetailedParser {
       }
       const backupMeta = trimmed.match(/^backUp\s*:\s*(.+)$/i);
       if (backupMeta) {
-        backupPathExpr = JSON.stringify(backupMeta[1].trim());
+        const fields = _DetailedParser.splitTopLevelByChar(backupMeta[1], ",").map((x) => x.trim()).filter(Boolean);
+        backupPathExpr = JSON.stringify(fields.shift() || "");
+        const options = [];
+        for (const field of fields) {
+          const option = /^(maxBackUpIterations|priority)\s*:\s*(.+)$/i.exec(field);
+          if (!option) throw new Error(`Opcion backUp desconocida: ${field}`);
+          const key = option[1].toLowerCase() === "priority" ? "priority" : "maxBackUpIterations";
+          const value = key === "priority" && /^(?:first|last|each-\d+)$/i.test(option[2].trim()) ? JSON.stringify(option[2].trim()) : _DetailedParser.transpileExpr(option[2]);
+          options.push(`${key}: ${value}`);
+        }
+        backupOptionsExpr = `{ ${options.join(", ")} }`;
         continue;
       }
       runtimeLines.push(rawLine);
@@ -7149,14 +7197,28 @@ var DetailedParser = class _DetailedParser {
         i++;
         continue;
       }
-      if (ln === "rebind {" || /^rebind(?:\s+-\w[\w-]*-)?\s*\{$/.test(ln)) {
+      if (ln === "rebind-temp {" || ln === "rebind {" || /^rebind(?:\s+-\w[\w-]*-)?\s*\{$/.test(ln)) {
         const rb = [];
+        const temporary = [];
+        const allTemporary = ln === "rebind-temp {";
         i++;
         while (i < runtimeLines.length && runtimeLines[i].trim() !== "}") {
-          rb.push(runtimeLines[i]);
+          if (runtimeLines[i].trim() === "temp {") {
+            i++;
+            while (i < runtimeLines.length && runtimeLines[i].trim() !== "}") {
+              temporary.push(runtimeLines[i]);
+              i++;
+            }
+          } else if (allTemporary) temporary.push(runtimeLines[i]);
+          else rb.push(runtimeLines[i]);
           i++;
         }
         out.push(..._DetailedParser.transpileRebindBlock("lastUsedProgram", rb));
+        if (temporary.length) {
+          const compiled = _DetailedParser.transpileTemporaryRebind(temporary);
+          out.push(...compiled.before);
+          temporaryRestores.push(compiled.after);
+        }
         i++;
         continue;
       }
@@ -7198,10 +7260,11 @@ var DetailedParser = class _DetailedParser {
     }
     if (hasAttributes) out.push(`lastUsedProgram.bindVAO();`);
     out.push(`lastUsedProgram?.drawArrays(${JSON.stringify(drawMode)}, ${firstVertex}, ${explicitCount ?? (hasAttributes ? "lastUsedProgram.VAO.vaoLength" : headerTexture ? `${headerTexture.value}.w * ${headerTexture.value}.h` : "6")});`);
+    for (const restore of temporaryRestores.reverse()) out.push(...restore);
     if (backupPathExpr !== "undefined") {
       const outputEntriesExpr = outputRefs.length ? `[${outputRefs.map((ref) => `{ name: ${JSON.stringify(ref)}, tex: ${_DetailedParser.transpileExpr(ref)} }`).join(", ")}]` : `[]`;
       const uniformEntriesExpr = `[${uniformSnapshotEntries.join(", ")}]`;
-      out.push(`void __backupStoreDrawBlock(${JSON.stringify(drawFn)}, ${backupPathExpr}, ${outputEntriesExpr}, ${uniformEntriesExpr}, lastUsedProgram);`);
+      out.push(`void backupRuntime.storeDrawBlock(${JSON.stringify(drawFn)}, ${backupPathExpr}, ${outputEntriesExpr}, ${uniformEntriesExpr}, lastUsedProgram, ${backupOptionsExpr});`);
     }
     return out;
   }
@@ -7388,7 +7451,7 @@ var DetailedParser = class _DetailedParser {
   }
   static extractAliasesAndCore(rawLine) {
     let aliases = [];
-    let core = rawLine.trim();
+    let core = rawLine.trim().replace(/;\s*$/, "");
     const leftMatch = core.match(/^\s*([a-zA-Z_]\w*(?:\s*\|=\s*[a-zA-Z_]\w*)*)\s*=/);
     if (leftMatch) {
       const leftAliases = leftMatch[1].split(/\|=/).map((s) => s.trim()).filter(Boolean);
@@ -7467,7 +7530,7 @@ var DetailedParser = class _DetailedParser {
     if (out.length === 0) {
       const base = className.charAt(0).toLowerCase() + className.slice(1);
       let candidate = base;
-      let counter = 1;
+      let counter = 2;
       while (declaredVars.has(candidate)) {
         candidate = `${base}${counter++}`;
       }
@@ -7533,94 +7596,6 @@ var DetailedParser = class _DetailedParser {
     }
     return out;
   }
-  static transpileMeshProgramObject(aliases, core) {
-    const m = core.match(/^MeshProgram(?:\s+(.+))?$/);
-    if (!m || aliases.length === 0) return null;
-    const firstAlias = aliases[0];
-    const paramsStr = (m[1] || "").trim();
-    const split = _DetailedParser.splitParamsAndChainTokens(paramsStr);
-    const params = /* @__PURE__ */ new Map();
-    const positional = [];
-    if (split.params.length) {
-      for (const token of split.params) {
-        const pm = token.match(/^([a-zA-Z_]\w*)=(.+)$/);
-        if (pm) {
-          params.set(pm[1], _DetailedParser.transpileExpr(pm[2]));
-        } else {
-          positional.push(_DetailedParser.transpileExpr(token));
-        }
-      }
-    }
-    const inputExpr = params.get("input") ?? positional[0] ?? "undefined";
-    const sizeExpr = positional[0] && params.has("input") ? positional[0] : positional[1] ?? "undefined";
-    const sizeArg = sizeExpr.includes("x") ? _DetailedParser.transpileSizeToken(sizeExpr) : sizeExpr.startsWith("[") ? sizeExpr : _DetailedParser.transpileExpr(sizeExpr);
-    const out = [
-      `var ${firstAlias} = new MeshRenderingProgram(gl, ${inputExpr}, (${sizeArg})[0], (${sizeArg})[1]).includeInWebManList();`,
-      `lastUsedProgram = ${firstAlias};`
-    ];
-    for (const chain of split.chains) out.push(`${firstAlias}${chain};`);
-    for (const alias of aliases.slice(1)) out.push(`var ${alias} = ${firstAlias};`);
-    return out;
-  }
-  static transpileAxis3DGroupObject(aliases, core) {
-    const m = core.match(/^Axis3DGroup(?:\s+(.+))?$/);
-    if (!m || aliases.length === 0) return null;
-    const firstAlias = aliases[0];
-    const paramsStr = (m[1] || "").trim();
-    const split = _DetailedParser.splitParamsAndChainTokens(paramsStr);
-    const params = /* @__PURE__ */ new Map();
-    if (split.params.length) {
-      for (const token of split.params) {
-        const pm = token.match(/^([a-zA-Z_]\w*)=(.+)$/);
-        if (!pm) continue;
-        params.set(pm[1], _DetailedParser.transpileExpr(pm[2]));
-      }
-    }
-    const out = [
-      `var ${firstAlias} = new Axis3DGroup(gl, ${params.get("axisLength") ?? "undefined"}, ${params.get("drawArrows") ?? "undefined"}, ${params.get("heights") ?? "undefined"}, ${params.get("radii") ?? "undefined"}, ${params.get("planes") ?? "undefined"}).includeInWebManList();`
-    ];
-    for (const chain of split.chains) out.push(`${firstAlias}${chain};`);
-    for (const alias of aliases.slice(1)) out.push(`var ${alias} = ${firstAlias};`);
-    return out;
-  }
-  static transpileMeshFillerProgramObject(aliases, core) {
-    const m = core.match(/^MeshFillerProgram(?:\s+(.+))?$/);
-    if (!m || aliases.length === 0) return null;
-    const firstAlias = aliases[0];
-    const paramsStr = (m[1] || "").trim();
-    const split = _DetailedParser.splitParamsAndChainTokens(paramsStr);
-    const tokens = split.params;
-    const texUnit = tokens[0] ? _DetailedParser.normalizeTexUnitToken(tokens[0]) : "undefined";
-    const programBody = tokens[1] ?? void 0;
-    const callbackToken = tokens[1] || "";
-    let callbackSource = callbackToken;
-    if (callbackSource.startsWith('"') && callbackSource.endsWith('"') || callbackSource.startsWith("'") && callbackSource.endsWith("'")) {
-      callbackSource = callbackSource.slice(1, -1);
-    }
-    callbackSource = callbackSource.replace(/\\(["'\\])/g, "$1");
-    const contextNames = _DetailedParser.extractContextNamesFromCallback(callbackSource).filter((n) => n !== "x" && n !== "y");
-    const out = [
-      `var ${firstAlias} = new MeshFillerProgram(gl, ${texUnit}).includeInWebManList();`
-    ];
-    if (programBody !== void 0) {
-      if (contextNames.length) {
-        const ctxName = `__ctx_${firstAlias}`;
-        out.push(`var ${ctxName} = {`);
-        contextNames.forEach((n) => {
-          out.push(`    get ${n}(){ return (typeof ${n} !== "undefined") ? ${n} : (globalThis as any).${n}; },`);
-        });
-        out.push(`};`);
-        out.push(`${firstAlias}.generateProgram(${programBody}, ${ctxName}, globalThis as any);`);
-      } else {
-        out.push(`${firstAlias}.generateProgram(${programBody}, globalThis as any);`);
-      }
-      out.push(`await ${firstAlias}.loadProgram?.();`);
-    }
-    for (const chain of split.chains) out.push(`${firstAlias}${chain};`);
-    out.push(`lastFillerProgram = ${firstAlias};`);
-    for (const alias of aliases.slice(1)) out.push(`var ${alias} = ${firstAlias};`);
-    return out;
-  }
   static transpileEscapedDestructuring(line, declaredVars) {
     const m = line.match(/^\[\s*([^\]]+)\s*\]\s*=\s*\$(\w+)\$\(([\s\S]*)\)$/);
     if (!m) return null;
@@ -7638,52 +7613,20 @@ var DetailedParser = class _DetailedParser {
     out.push(`${tuple} = ${funcName}(${args});`);
     return out;
   }
-  static transpileCreateIdealMesh(line, declaredVars) {
-    const m = line.match(/^(?:([a-zA-Z_]\w*)\s*=\s*)?createIdealMesh\s+([\s\S]+)$/);
-    if (!m) return null;
-    const alias = m[1]?.trim();
-    let rest = (m[2] || "").trim().replace(/;$/, "");
-    const tokens = _DetailedParser.splitByWhitespaceTopLevel(rest);
-    if (!tokens.length) return null;
-    const texToken = tokens[0];
-    rest = rest.slice(rest.indexOf(texToken) + texToken.length).trim();
-    let callbackRaw = rest;
-    let chainRaw = "";
-    const chainMatch = rest.match(/^(.*?)(\s*(?:\.[A-Za-z_]\w*\([^)]*\)\s*)+)$/);
-    if (chainMatch) {
-      callbackRaw = chainMatch[1].trim();
-      chainRaw = chainMatch[2].trim();
-    }
-    const texExpr = _DetailedParser.normalizeTexUnitToken(texToken);
-    const callbackStr = JSON.stringify(callbackRaw);
-    const targetName = alias ? alias : "__meshTexTmp";
-    const out = [];
-    if (alias && !declaredVars.has(alias)) {
-      declaredVars.add(alias);
-      out.push(`var ${alias};`);
-    }
-    out.push(`(()=>{`);
-    out.push(`    // createIdealMesh${alias ? ` ${alias}` : ""}`);
-    out.push(`    let compiledCreateIdealMeshFn = __prepareMathFunction(${callbackStr});`);
-    const createExpr = `lastUsedProgram?.createIdealTexture?.(${texExpr}, compiledCreateIdealMeshFn)`;
-    if (alias) out.push(`    ${alias} = ${createExpr};`);
-    else out.push(`    let ${targetName} = ${createExpr};`);
-    if (chainRaw) {
-      const chainCalls = chainRaw.match(/\.[A-Za-z_]\w*\([^)]*\)/g) || [];
-      for (const call of chainCalls) {
-        const cm = call.match(/^\.([A-Za-z_]\w*)\(([\s\S]*)\)$/);
-        if (!cm) continue;
-        const method = cm[1];
-        const args = cm[2].trim();
-        const transpiledArgs = args ? _DetailedParser.transpileExpr(args) : "";
-        out.push(`    ${targetName}?.${method}?.(${transpiledArgs});`);
-      }
-    }
-    out.push(`})();`);
-    return out;
-  }
   static transpileSimpleStatement(line, declaredVars) {
     const out = [];
+    const swap = /^swap\s*\{([^{}]+)\}$/.exec(line.trim());
+    if (swap) {
+      const names = _DetailedParser.splitTopLevelByChar(swap[1], ",").map((x) => x.trim());
+      if (names.length < 2 || names.some((name) => !/^[A-Za-z_]\w*$/.test(name))) throw new Error(`swap invalido: ${line}`);
+      return [`[${names.join(", ")}] = [${[...names.slice(1), names[0]].join(", ")}];`];
+    }
+    const swapPair = /^([A-Za-z_]\w*)\s*<=>\s*([A-Za-z_]\w*)$/.exec(line.trim());
+    if (swapPair) return [`[${swapPair[1]}, ${swapPair[2]}] = [${swapPair[2]}, ${swapPair[1]}];`];
+    for (const transpile of _DetailedParser.RegistryTranspilers) {
+      const result = transpile(line, declaredVars);
+      if (result) return result;
+    }
     const unbindFBO = /^unbindFBO\s+([A-Za-z_]\w*)$/.exec(line.trim());
     if (unbindFBO) return [`${unbindFBO[1]}.unbindFBO();`];
     const transfer = /^([A-Za-z_]\w*)\s*<=\s*([A-Za-z_]\w*)$/.exec(line.trim());
@@ -7705,8 +7648,6 @@ var DetailedParser = class _DetailedParser {
     }
     const escaped = _DetailedParser.transpileEscapedDestructuring(line, declaredVars);
     if (escaped) return escaped;
-    const createIdeal = _DetailedParser.transpileCreateIdealMesh(line, declaredVars);
-    if (createIdeal) return createIdeal;
     const singleLineIfMatch = line.match(/^if\s*\(([\s\S]+)\)\s+(.+)$/);
     if (singleLineIfMatch && !singleLineIfMatch[2].trim().startsWith("{")) {
       const [, condRaw, stmtRaw] = singleLineIfMatch;
@@ -7800,17 +7741,17 @@ var DetailedParser = class _DetailedParser {
     if (backupStoreMatch) {
       const [, valueRaw, pathRaw] = backupStoreMatch;
       const pathExpr = pathRaw !== void 0 ? JSON.stringify(pathRaw.trim()) : "undefined";
-      return [`void __backupStore(${_DetailedParser.transpileExpr(valueRaw)}, ${JSON.stringify(valueRaw)}, ${pathExpr});`];
+      return [`void backupRuntime.store(${_DetailedParser.transpileExpr(valueRaw)}, ${JSON.stringify(valueRaw)}, ${pathExpr});`];
     }
     const backupRestoreMatch = line.match(/^backUp\s+restore\s+([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\s+\/([\s\S]+)$/i);
     if (backupRestoreMatch) {
       const [, targetRaw, pathRaw] = backupRestoreMatch;
       const targetExpr = _DetailedParser.transpileExpr(targetRaw);
-      return [`${targetExpr} = await __backupRestoreInto(${targetExpr}, ${JSON.stringify(pathRaw.trim())});`];
+      return [`${targetExpr} = await backupRuntime.restoreInto(${targetExpr}, ${JSON.stringify(pathRaw.trim())});`];
     }
     const backupLogMatch = line.match(/^backUp\s+log\s+\/?([\s\S]+)$/i);
     if (backupLogMatch) {
-      return [`await __backupLog(${JSON.stringify(backupLogMatch[1].trim())});`];
+      return [`await backupRuntime.log(${JSON.stringify(backupLogMatch[1].trim())});`];
     }
     const depthTestMatch = line.match(/^depthTest\s+(.+)$/);
     if (depthTestMatch) {
@@ -7829,12 +7770,6 @@ var DetailedParser = class _DetailedParser {
     if (objectAliases.length > 0) {
       const asProgram = _DetailedParser.transpileProgramObject(objectAliases, core);
       if (asProgram) return asProgram;
-      const asMeshProgram = _DetailedParser.transpileMeshProgramObject(objectAliases, core);
-      if (asMeshProgram) return asMeshProgram;
-      const asMeshFillerProgram = _DetailedParser.transpileMeshFillerProgramObject(objectAliases, core);
-      if (asMeshFillerProgram) return asMeshFillerProgram;
-      const asAxis = _DetailedParser.transpileAxis3DGroupObject(objectAliases, core);
-      if (asAxis) return asAxis;
       const asCamera = _DetailedParser.transpileCamera3DObject(objectAliases, core);
       if (asCamera) return asCamera;
       const asTexArray = _DetailedParser.transpileTexture2DArrayObject(objectAliases, core);
@@ -7848,11 +7783,12 @@ var DetailedParser = class _DetailedParser {
     out.push(_DetailedParser.appendSemicolon(_DetailedParser.transpileExpr(line)));
     return out;
   }
-  static async transpileToFile(str, outPath, mainImportsPath, backupScopeHint, preserveGeneratedSections = true) {
+  static async transpileToFile(str, outPath, mainImportsPath, backupScopeHint, preserveGeneratedSections = true, runtimeFeatureFlags = {}, registryModules = [], externalRegistryModules = []) {
     const req = _DetailedParser.getNodeRequire();
     const pathMod = req ? req("path") : await import("node:path");
     const parseBaseDir = outPath ? pathMod.dirname(outPath) : void 0;
     str = await _DetailedParser.resolveParseTextImports(str, parseBaseDir);
+    _DetailedParser.activateRegistries(str, registryModules, externalRegistryModules);
     let resolvedMainPath = mainImportsPath;
     if (!resolvedMainPath) {
       try {
@@ -7869,6 +7805,22 @@ var DetailedParser = class _DetailedParser {
     let lines = processed.split("\n").map((l) => _DetailedParser.stripInlineComment(l).replace(/\r/g, ""));
     const extractedShaderFilters = _DetailedParser.extractShaderFilterLines(lines);
     _DetailedParser.loadTranspileShaderFiltersFromLines(extractedShaderFilters.filterLines);
+    const featureContext = {
+      source: lines.join("\n"),
+      backupScope: _DetailedParser.inferBackupDefaultScope(str, outPath, backupScopeHint),
+      shaderFilterRules: _DetailedParser.buildTranspiledShaderFilterRulesSource()
+    };
+    const enabledFeatures = [];
+    for (const feature of _DetailedParser.runtimeFeatures) {
+      const configured = runtimeFeatureFlags[feature.id];
+      const detected = feature.detectUse(featureContext);
+      if (configured === false && detected === true) {
+        throw new Error(`Runtime feature '${feature.id}' is required by this DSL but disabled in shaderdsl.config.json`);
+      }
+      if (configured === true || configured === void 0 && detected === true) {
+        enabledFeatures.push(await feature.load());
+      }
+    }
     lines = extractedShaderFilters.lines;
     lines = _DetailedParser.joinIndentedLines(lines);
     const body = [];
@@ -7891,12 +7843,8 @@ var DetailedParser = class _DetailedParser {
       body.push(`var lastFillerProgram: any = null;`);
       body.push(`void lastFillerProgram;`);
       body.push(`var __globalBlocks: Array<{priority:number, order:number, fn:(dt:any)=>any}> = [];`);
-      const shaderFilterHelper = _DetailedParser.buildTranspiledShaderFilterHelperLines();
-      if (shaderFilterHelper.length) {
-        body.push(...shaderFilterHelper);
-      }
-      body.push(..._DetailedParser.buildRuntimeLetHelperLines());
-      body.push(..._DetailedParser.buildBackupRuntimeHelperLines(_DetailedParser.inferBackupDefaultScope(str, outPath, backupScopeHint)));
+      for (const module2 of _DetailedParser.activeRegistryModules) body.push(...module2.browserSetup || []);
+      for (const feature of enabledFeatures) body.push(...feature.setup(featureContext));
       scaffoldInserted = true;
     };
     for (let i = 0; i < lines.length; i++) {
@@ -8016,6 +7964,15 @@ var DetailedParser = class _DetailedParser {
           loopCount: 0,
           buffer: []
         });
+        continue;
+      }
+      if (/^pingpong\b/.test(line)) {
+        const pairsRaw = line.match(/^pingpong\s+((?:\(\s*[A-Za-z_]\w*\s*,\s*[A-Za-z_]\w*\s*\)\s*)+)\{$/);
+        if (!pairsRaw) throw new Error(`pingpong invalido: ${line}`);
+        const pairs = [...pairsRaw[1].matchAll(/\(\s*([A-Za-z_]\w*)\s*,\s*([A-Za-z_]\w*)\s*\)/g)];
+        const names = pairs.flatMap((pair) => [pair[1], pair[2]]);
+        if (new Set(names).size !== names.length) throw new Error(`pingpong reutiliza variables: ${line}`);
+        blockStack.push({ kind: "pingpong", name: "pingpong", ifDepth: 0, loopCount: 0, swapNames: names });
         continue;
       }
       const functionStart = line.match(/^([A-Za-z_]\w*)\s*\(([^{}]*)\)\s*\{$/);
@@ -8298,6 +8255,12 @@ var DetailedParser = class _DetailedParser {
           continue;
         }
         const closing = blockStack.pop();
+        if (closing.kind === "pingpong") {
+          const names = closing.swapNames || [];
+          const reversed = names.flatMap((_, index) => index % 2 === 0 ? [] : [names[index], names[index - 1]]);
+          body.push(`${ind()}[${names.join(", ")}] = [${reversed.join(", ")}];`);
+          continue;
+        }
         if (closing.kind === "key") {
           indent--;
           body.push(`${ind()}});`);
@@ -8349,6 +8312,9 @@ var DetailedParser = class _DetailedParser {
       "// @ts-nocheck",
       ""
     ];
+    for (const feature of enabledFeatures) fileLines.push(...feature.imports);
+    for (const module2 of _DetailedParser.activeRegistryModules) fileLines.push(...module2.browserImports || []);
+    if (enabledFeatures.length) fileLines.push("");
     if (imports.length) {
       fileLines.push(...imports, "");
     }
@@ -8361,11 +8327,12 @@ var DetailedParser = class _DetailedParser {
   /**
    * Método principal para parsear y ejecutar la configuración del script.
    */
-  static async parse(str, gl, thiscontext, outPath, mainImportsPath, backupScopeHint, preserveGeneratedSections = true) {
+  static async parse(str, gl, thiscontext, outPath, mainImportsPath, backupScopeHint, preserveGeneratedSections = true, runtimeFeatureFlags = {}, registryModules = [], externalRegistryModules = []) {
     if (outPath) {
-      return await _DetailedParser.transpileToFile(str, outPath, mainImportsPath, backupScopeHint, preserveGeneratedSections);
+      return await _DetailedParser.transpileToFile(str, outPath, mainImportsPath, backupScopeHint, preserveGeneratedSections, runtimeFeatureFlags, registryModules, externalRegistryModules);
     }
     str = await _DetailedParser.resolveParseTextImports(str);
+    _DetailedParser.activateRegistries(str, thiscontext?.registryModules, externalRegistryModules);
     _DetailedParser.gctx.gl = gl;
     _DetailedParser.context = {
       vars: /* @__PURE__ */ new Map(),
@@ -8842,7 +8809,7 @@ var DetailedParser = class _DetailedParser {
     let isEscapedFunction = false;
     const extractAliasesAndCore = (rawLine) => {
       let aliases2 = [];
-      let core2 = rawLine.trim();
+      let core2 = rawLine.trim().replace(/;\s*$/, "");
       const leftMatch = core2.match(
         /^\s*([a-zA-Z_]\w*(?:\s*\|=\s*[a-zA-Z_]\w*)*)\s*=/
       );
@@ -8981,7 +8948,7 @@ var DetailedParser = class _DetailedParser {
     } else if (isClassInstanciation) {
       varName = identifier.charAt(0).toLowerCase() + identifier.slice(1);
       if (this.ctx.vars.has(varName)) {
-        let counter = 1;
+        let counter = 2;
         while (this.ctx.vars.has(varName + counter)) {
           counter++;
         }
@@ -9087,7 +9054,1137 @@ var DetailedParser = class _DetailedParser {
     };
   }
 };
+
+// src/dependencies/Code/WebGL/parser/objects/camera.ts
+var register = (parser) => ({
+  id: "camera",
+  objects: {
+    Camera3D: (params) => {
+      const camera = new parser.gctx.Camera3D(
+        params.get("pos"),
+        params.get("fov"),
+        params.get("aspectRatio") || params.get("ratio"),
+        params.get("near"),
+        params.get("far"),
+        params.get("walkspeed") || params.get("speed")
+      );
+      if (!parser.gctx.cam) parser.gctx.cam = camera;
+      return camera;
+    }
+  }
+});
+
+// src/dependencies/Code/WebGL/parser/objects/program.ts
+var register2 = (parser, { WebGLMan: WebGLMan3 }) => ({
+  id: "program",
+  objects: {
+    Program: (params, gl) => {
+      if (!WebGLMan3.stWebGLMan.gl) WebGLMan3.setGL(gl);
+      const program = parser.gctx.WebGLMan.program(-1, params.get(0) || params.get("firstAlias"));
+      parser.lastUsedProgram = program;
+      return program;
+    }
+  }
+});
+
+// src/dependencies/Code/WebGL/parser/functions/framebuffer.ts
+var register3 = (parser) => ({
+  id: "framebuffer",
+  functions: {
+    cFrameBuffer: () => parser.lastUsedProgram?.cFrameBuffer(),
+    unbindFrameBuffer: () => parser.lastUsedProgram?.unbindFrameBuffer(),
+    unbindFBO: () => parser.lastUsedProgram?.unbindFBO()
+  }
+});
+
+// src/dependencies/Code/WebGL/parser/functions/lifecycle.ts
+var register4 = (parser, { start: start2, startAsync: startAsync2 }) => ({
+  id: "lifecycle",
+  functions: {
+    start: () => start2(),
+    startAsync: async () => startAsync2(),
+    log: () => {
+    },
+    let: (params) => {
+      const name = params.get("match0");
+      const value = params.get(name);
+      parser.ctx.vars.set(value === void 0 ? name : name.trim(), value === void 0 ? null : value);
+    },
+    lduse: async (params, gl) => {
+      const program = parser.getVar(params.get(0));
+      if (program && typeof program.use === "function" && typeof program.loadProgram === "function") {
+        await parser.loadProgramWithShaderFilters(program, gl);
+        program.use();
+        parser.lastUsedProgram = program;
+        return program;
+      }
+    },
+    use: async (params) => {
+      const program = parser.getVar(params.get(0));
+      if (program && typeof program.use === "function") {
+        program.use();
+        parser.lastUsedProgram = program;
+        return program;
+      }
+    }
+  }
+});
+
+// src/dependencies/Code/WebGL/parser/functions/rendering.ts
+var register5 = (parser) => ({
+  id: "rendering",
+  functions: {
+    draw: (params) => {
+      const obj = parser.getVar(params.get(0));
+      if (obj && parser.getVar("camera3D")) {
+        parser.lastUsedProgram.use();
+        parser.getVar("camera3D").calculateMatrices();
+        parser.lastUsedProgram.draw(0, 0, params.get(1), params.get(2), params.get(3));
+      }
+    },
+    viewport: (params) => {
+      let program = parser.lastUsedProgram;
+      let viewport;
+      let raw = params.get(0);
+      if (!raw.startsWith("{")) raw = "{" + raw + "}";
+      const value = parser.parseValue(raw);
+      const next = params.get(1);
+      if (value?.isWebProgram?.()) {
+        program = value;
+        if (Array.isArray(next)) viewport = next;
+      } else if (Array.isArray(value)) {
+        viewport = params.get(0);
+      }
+      if (!viewport) return;
+      program.use();
+      program.setViewport(...viewport);
+    },
+    depthTest: (params) => {
+      if (parser.lastUsedProgram) parser.lastUsedProgram.isDepthTest = params.get(0);
+    },
+    drawArrays: (params, gl) => {
+      const program = parser.lastUsedProgram;
+      if (!program) return;
+      const mode = gl[String(params.get(0) || "TRIANGLES").toUpperCase()] || gl.TRIANGLES;
+      const offset = params.get("off") ?? params.get(1) ?? 0;
+      const count = params.get("vCount") ?? params.get("length") ?? params.get("vertexCount") ?? params.get(2);
+      const instances = params.get("instances") ?? params.get("instanceCount") ?? params.get(3) ?? 1;
+      return program.drawArrays(mode, offset, count, instances);
+    },
+    drawElements: (params, gl) => {
+      const program = parser.lastUsedProgram;
+      if (!program) return;
+      const mode = gl[String(params.get(0) || "TRIANGLES").toUpperCase()] || gl.TRIANGLES;
+      const count = params.get("elCount") ?? params.get("elementCount") ?? params.get(1) ?? program.VAO?.eboLength;
+      const rawType = params.get("type") ?? params.get(2) ?? "US";
+      const type = { UB: "UNSIGNED_BYTE", US: "UNSIGNED_SHORT", UI: "UNSIGNED_INT" }[rawType] || rawType;
+      const offset = params.get("off") ?? params.get("eboOff") ?? params.get(3) ?? 0;
+      const instances = params.get("instances") ?? params.get("instanceCount") ?? params.get(4) ?? 0;
+      return program.drawElements(mode, count, type, offset, instances);
+    }
+  }
+});
+
+// src/dependencies/Code/WebGL/parser/functions/textures.ts
+var register6 = (parser) => ({
+  id: "textures",
+  functions: {
+    texture2DArray: (params) => {
+      let sx = 0, sy = 0, sz = 0;
+      const size = params.get(4);
+      if (Array.isArray(size)) {
+        if (size[0] !== void 0) sx = size[0];
+        if (size[1] !== void 0) sy = size[1];
+        if (size[2] !== void 0) sz = size[2];
+      }
+      let data = params.get(1);
+      if (!data.startsWith("{")) data = "{" + data + "}";
+      return parser.lastUsedProgram?.texture2DArray?.({
+        format: parser.gctx.TexExamples[params.get(0)],
+        data: parser.parseValue(data),
+        name: params.get(2),
+        texUnit: params.get(3),
+        size: [sx, sy, sz]
+      });
+    }
+  }
+});
+
+// src/dependencies/Code/WebGL/parser/functions/uniforms.ts
+var register7 = (parser) => ({
+  id: "uniforms",
+  functions: Object.fromEntries(
+    ["uMat4", "uMat3", "uMat2", "uVec", "uNum", "uFloat", "uInt"].map((name) => [name, ((params) => {
+      const program = parser.lastUsedProgram;
+      if (!program) return;
+      const uniformName = params.get(0);
+      let args = [uniformName];
+      if (name === "uVec") {
+        args = [
+          uniformName,
+          params.get("dim") ?? params.get("dimension"),
+          params.get("isFloat") ?? true,
+          params.get("isUnsignedInt") ?? false
+        ];
+      } else if (name === "uNum") {
+        args = [uniformName, params.get("isFloat") ?? true, params.get("isUnsignedInt") ?? false];
+      }
+      const uniform = program[name](...args);
+      parser.ctx.vars.set(`u_${uniformName}`, uniform);
+      if (params.has(2)) uniform.set(params.get(args.length));
+      return uniform;
+    })])
+  )
+});
+
+// src/dependencies/Code/WebGL/parser/registryModules/capsules.ts
+var capsules_exports = {};
+__export(capsules_exports, {
+  Axis3DGroup: () => Axis3DGroup2,
+  AxisConesProgram: () => AxisConesProgram2,
+  AxisGridProgram: () => AxisGridProgram2,
+  AxisLinesProgram: () => AxisLinesProgram2,
+  MeshFillerProgram: () => MeshFillerProgram2,
+  MeshRenderingProgram: () => MeshRenderingProgram2,
+  detectUse: () => detectUse4,
+  id: () => id,
+  register: () => register8
+});
+var MeshRenderingProgram2 = class extends WebProgram {
+  constructor(gl, valsTexUnit = "TexUnit20", w = 1024, h = 1024, dx = 0.015, dy = 0.015) {
+    super(gl, "", "");
+    this.valsTexUnit = valsTexUnit;
+    this.w = w;
+    this.h = h;
+    this.dx = dx;
+    this.dy = dy;
+  }
+  async loadProgram(vs, fs) {
+    [this.program, this.vert, this.frag] = await loadShadersFromString(
+      this.gl,
+      //? vertex shader
+      `#version 300 es
+            precision highp float;
+
+            uniform sampler2D values;
+            uniform int msdLength;   
+            uniform int msdCount;    
+            uniform float dx;
+            uniform float dy;
+            uniform float xPer;
+            uniform float yPer;
+            uniform float yScale;
+            uniform vec3 offPos;
+
+            uniform mat4 u_viewMatrix;
+            uniform mat4 u_projectionMatrix;
+
+            flat out vec3 outPos;
+
+            vec4 getPoint(int x, int yTexel) {
+                // Ahora la textura tiene un \xFAnico canal (RED)
+                float val = texelFetch(values, ivec2(x, yTexel), 0).r;
+
+                float px = dx * float(x) - dx * float(msdLength) * (1.0 - xPer);
+                float py = val * yScale;
+                float pz = dy * float(yTexel) - dy * float(msdCount) * (1.0 - yPer);
+
+                return vec4(px, py, -pz, 1.0) + vec4(offPos, 0.0);
+            }
+
+            void main() {
+                int horizCount = (msdLength - 1) * msdCount;
+                int segment = gl_VertexID / 2;
+                bool first = (gl_VertexID % 2) == 0;
+
+                int x, y;
+                vec4 pos;
+
+                if (segment < horizCount) {
+                    // Segmento horizontal
+                    int base = segment;
+                    y = base / (msdLength - 1);
+                    x = base % (msdLength - 1);
+                    pos = getPoint(first ? x : x + 1, y);
+                } else {
+                    // Segmento vertical
+                    int base = segment - horizCount;
+                    x = base / (msdCount - 1);
+                    y = base % (msdCount - 1);
+                    pos = getPoint(x, first ? y : y + 1);
+                }
+
+                outPos = pos.xyz;
+                gl_Position = u_projectionMatrix * (u_viewMatrix * pos);
+            }`,
+      //? fragment shader
+      `#version 300 es
+            precision highp float;
+
+            flat in vec3 outPos;
+            out vec4 outColor;
+            uniform float colorHueScale;
+
+            float hue2rgb(float p, float q, float t){
+                if(t < 0.0) t += 1.0;
+                if(t > 1.0) t -= 1.0;
+                if(t < 1.0/6.0) return p + (q - p) * 6.0 * t;
+                if(t < 1.0/2.0) return q;
+                if(t < 2.0/3.0) return p + (q - p) * (2.0/3.0 - t) * 6.0;
+                return p;
+            }
+
+            vec3 hsl2rgb(float h, float s, float l){
+                float q = l < 0.5 ? l * (1.0 + s) : (l + s - l*s);
+                float p = 2.0 * l - q;
+                return vec3(
+                    hue2rgb(p, q, h + 1.0/3.0),
+                    hue2rgb(p, q, h),
+                    hue2rgb(p, q, h - 1.0/3.0)
+                );
+            }
+
+            void main(){
+                // Normalizamos la altura a hue (suponiendo alturas entre -1.5 y +1.5)
+                float h = (outPos.y * colorHueScale / 1.5); // ahora est\xE1 entre -1 y 1
+                h = (mod(-h,1.5) * 0.5) + 0.5;        // lo llevamos a 0..1
+
+                float s = 0.6;
+                float l = 0.5;
+
+                vec3 rgb = hsl2rgb(h, s, l);
+
+                outColor = vec4(rgb, 1.0);
+            }
+            `
+    );
+    return this;
+  }
+  setSize(w = this.w, h = this.h) {
+    this.w = w;
+    this.h = h;
+    let totalY = h;
+    let horizSegments = (w - 1) * totalY;
+    let vertSegments = w * (totalY - 1);
+    this.totalSegments = horizSegments + vertSegments;
+    this.uInt("msdLength").set(this.w);
+    this.uInt("msdCount").set(this.h);
+    return this;
+  }
+  setOffset(x, y, z) {
+    this.uVec("offPos", 3).set([x, y, z]);
+    return this;
+  }
+  setDXDY(dx, dy) {
+    this.uFloat("dx").set(dx);
+    this.uFloat("dy").set(dy);
+    return this;
+  }
+  /**
+   * Offsets depending on the total mesh size
+   * 0.5,0.5 = centered on 0,0
+   */
+  setPerXPerY(px = 0.5, py = 0.5) {
+    this.uFloat("xPer").set(px);
+    this.uFloat("yPer").set(py);
+    return this;
+  }
+  setColorHueScale(scale = 1) {
+    this.uFloat("colorHueScale").set(scale);
+    return this;
+  }
+  setYScale(scale = 0.5) {
+    this.uFloat("yScale").set(scale);
+    return this;
+  }
+  initUniforms() {
+    this.setSize(this.w, this.h).setOffset(0, 0, 0).setDXDY(this.dx, this.dy).setPerXPerY().setColorHueScale().setYScale();
+    return this;
+  }
+  /**
+   * Remember to check the texUnit texture must be active (use texture.bind(texUnit?))
+   */
+  draw(x = 0, y = 0, w = 1080, h = 720, camera, mode = "LINES") {
+    this.initDepthBefDraw();
+    this.bindTexName2TexUnit("values", this.valsTexUnit);
+    if (camera) {
+      camera.calculateMatrices().setUniformsProgram(this);
+    }
+    this.setViewport(x, y, w, h);
+    this.clearColor();
+    this.drawArrays(mode, 0, this.totalSegments * 2);
+  }
+  /**
+   * Creates and fills a texture for a 3d Mesh f(x,y)=>z
+   */
+  createIdealTexture(texUnit = this.valsTexUnit, data, w = this.w, h = this.h) {
+    let arrdata;
+    if (typeof data == "function" && typeof data(0, 0) == "number") {
+      arrdata = new Float32Array(w * h);
+      for (let j = 0; j < h; j++) {
+        for (let i = 0; i < w; i++) {
+          arrdata[i * w + j] = data(i, j) || 0;
+        }
+      }
+    }
+    return this.texture2D({
+      format: TexExamples.RFloat,
+      size: [w, h],
+      texUnit,
+      data: arrdata || data
+    });
+  }
+  fillMeshTexture(texture2D, data, w = this.w, h = this.h) {
+    let arrdata;
+    if (typeof data == "function" && typeof data(0, 0) == "number") {
+      arrdata = new Float32Array(w * h);
+      for (let j = 0; j < h; j++) {
+        for (let i = 0; i < w; i++) {
+          arrdata[i * w + j] = data(i, j) || 0;
+        }
+      }
+    }
+    texture2D.fill(arrdata, 0, 0, w, h);
+  }
+};
+function transpileCreateIdealMesh(line, declaredVars, parser) {
+  const m = line.match(/^(?:([a-zA-Z_]\w*)\s*=\s*)?createIdealMesh\s+([\s\S]+)$/);
+  if (!m) return null;
+  const alias = m[1]?.trim();
+  let rest = (m[2] || "").trim().replace(/;$/, "");
+  const tokens = parser.splitByWhitespaceTopLevel(rest);
+  if (!tokens.length) return null;
+  const texToken = tokens[0];
+  rest = rest.slice(rest.indexOf(texToken) + texToken.length).trim();
+  let callbackRaw = rest;
+  let chainRaw = "";
+  const chainMatch = rest.match(/^(.*?)(\s*(?:\.[A-Za-z_]\w*\([^)]*\)\s*)+)$/);
+  if (chainMatch) {
+    callbackRaw = chainMatch[1].trim();
+    chainRaw = chainMatch[2].trim();
+  }
+  const texExpr = parser.normalizeTexUnitToken(texToken);
+  const callbackStr = JSON.stringify(callbackRaw);
+  const targetName = alias ? alias : "__meshTexTmp";
+  const out = [];
+  if (alias && !declaredVars.has(alias)) {
+    declaredVars.add(alias);
+    out.push(`var ${alias};`);
+  }
+  out.push(`(()=>{`);
+  out.push(`    // createIdealMesh${alias ? ` ${alias}` : ""}`);
+  out.push(`    let compiledCreateIdealMeshFn = __prepareMathFunction(${callbackStr});`);
+  const createExpr = `lastUsedProgram?.createIdealTexture?.(${texExpr}, compiledCreateIdealMeshFn)`;
+  if (alias) out.push(`    ${alias} = ${createExpr};`);
+  else out.push(`    let ${targetName} = ${createExpr};`);
+  if (chainRaw) {
+    const chainCalls = chainRaw.match(/\.[A-Za-z_]\w*\([^)]*\)/g) || [];
+    for (const call of chainCalls) {
+      const cm = call.match(/^\.([A-Za-z_]\w*)\(([\s\S]*)\)$/);
+      if (!cm) continue;
+      const method = cm[1];
+      const args = cm[2].trim();
+      const transpiledArgs = args ? parser.transpileExpr(args) : "";
+      out.push(`    ${targetName}?.${method}?.(${transpiledArgs});`);
+    }
+  }
+  out.push(`})();`);
+  return out;
+}
+function transpileCapsuleObject(line, declaredVars, parser) {
+  const { aliases, core } = parser.extractAliasesAndCore(line);
+  const kind = core.match(/^(MeshProgram|MeshFillerProgram|Axis3DGroup)(?:\s+|$)/)?.[1];
+  if (!kind) return null;
+  const names = parser.ensureAliasesForClass(aliases, kind, declaredVars);
+  if (!names.length) return null;
+  const first = names[0];
+  const paramsStr = core.slice(kind.length).trim();
+  const split = parser.splitParamsAndChainTokens(paramsStr);
+  const out = [];
+  if (kind === "MeshProgram") {
+    const params = /* @__PURE__ */ new Map();
+    const positional = [];
+    for (const token of split.params) {
+      const match = token.match(/^([a-zA-Z_]\w*)=(.+)$/);
+      if (match) params.set(match[1], parser.transpileExpr(match[2]));
+      else positional.push(parser.transpileExpr(token));
+    }
+    const input = params.get("input") ?? positional[0] ?? "undefined";
+    const size = positional[0] && params.has("input") ? positional[0] : positional[1] ?? "undefined";
+    const dimensions = size.includes("x") ? parser.transpileSizeToken(size) : size.startsWith("[") ? size : parser.transpileExpr(size);
+    out.push(`var ${first} = new MeshRenderingProgram(gl, ${input}, (${dimensions})[0], (${dimensions})[1]).includeInWebManList();`);
+    out.push(`lastUsedProgram = ${first};`);
+  } else if (kind === "Axis3DGroup") {
+    const params = /* @__PURE__ */ new Map();
+    for (const token of split.params) {
+      const match = token.match(/^([a-zA-Z_]\w*)=(.+)$/);
+      if (match) params.set(match[1], parser.transpileExpr(match[2]));
+    }
+    out.push(`var ${first} = new Axis3DGroup(gl, ${params.get("axisLength") ?? "undefined"}, ${params.get("drawArrows") ?? "undefined"}, ${params.get("heights") ?? "undefined"}, ${params.get("radii") ?? "undefined"}, ${params.get("planes") ?? "undefined"}).includeInWebManList();`);
+  } else {
+    const texUnit = split.params[0] ? parser.normalizeTexUnitToken(split.params[0]) : "undefined";
+    const body = split.params[1];
+    let callback = body || "";
+    if (callback.startsWith('"') && callback.endsWith('"') || callback.startsWith("'") && callback.endsWith("'")) callback = callback.slice(1, -1);
+    callback = callback.replace(/\\(["'\\])/g, "$1");
+    const contextNames = parser.extractContextNamesFromCallback(callback).filter((name) => name !== "x" && name !== "y");
+    out.push(`var ${first} = new MeshFillerProgram(gl, ${texUnit}).includeInWebManList();`);
+    if (body !== void 0) {
+      if (contextNames.length) {
+        const context = `__ctx_${first}`;
+        out.push(`var ${context} = {`);
+        for (const name of contextNames) out.push(`    get ${name}(){ return (typeof ${name} !== "undefined") ? ${name} : (globalThis as any).${name}; },`);
+        out.push(`};`);
+        out.push(`${first}.generateProgram(${body}, ${context}, globalThis as any);`);
+      } else {
+        out.push(`${first}.generateProgram(${body}, globalThis as any);`);
+      }
+      out.push(`await ${first}.loadProgram?.();`);
+    }
+  }
+  for (const chain of split.chains) out.push(`${first}${chain};`);
+  if (kind === "MeshFillerProgram") out.push(`lastFillerProgram = ${first};`);
+  for (const alias of names.slice(1)) out.push(`var ${alias} = ${first};`);
+  return out;
+}
+function buildHandlers(parser) {
+  return {
+    objects: {
+      MeshProgram: (params, gl) => {
+        const [width, height] = params.get(0) || [1024, 1024];
+        const program = new MeshRenderingProgram2(gl, params.get("input"), width, height).includeInWebManList();
+        parser.lastUsedProgram = program;
+        return program;
+      },
+      MeshFillerProgram: async (params, gl) => {
+        const program = new MeshFillerProgram2(gl, params.get(0)).includeInWebManList();
+        if (params.get(1)) {
+          program.generateProgram(params.get(1), parser.ctx.vars, parser.GlobalContext);
+          await program.loadProgram();
+        }
+        if (!parser.lastFillerProgram) parser.lastFillerProgram = program;
+        return program;
+      },
+      Axis3DGroup: (params, gl) => new Axis3DGroup2(
+        gl,
+        params.get("axisLength"),
+        params.get("drawArrows"),
+        params.get("heights"),
+        params.get("radii"),
+        params.get("planes")
+      ).includeInWebManList()
+    },
+    functions: {
+      createIdealMesh: (params) => {
+        const callback = [...params.entries()].filter(([key]) => typeof key === "number" && key > 0).sort(([a], [b]) => Number(a) - Number(b)).map(([, value]) => value).join(" ").trim().replace(/;$/, "");
+        const program = parser.lastUsedProgram;
+        if (!program) return;
+        const fn = parser.prepareMathFunction(callback);
+        const texture = program.createIdealTexture(params.get(0), fn);
+        const unit = String(params.get(0)).match(/\d+/)?.[0] || "";
+        texture.lastPreparedFunc = callback;
+        texture.func = fn;
+        parser.ctx.vars.set(`texture${unit}`, texture);
+        return texture;
+      },
+      fillMeshTexture: (params) => {
+        const texture = parser.getVar(params.get(0));
+        const program = parser.lastUsedProgram;
+        if (!texture || !program) return;
+        const callback = [...params.entries()].filter(([key]) => typeof key === "number" && key > 0).sort(([a], [b]) => Number(a) - Number(b)).map(([, value]) => value).join(" ").trim().replace(/;$/, "");
+        if (texture.lastPreparedFunc !== callback) {
+          texture.func = parser.prepareMathFunction(callback);
+          texture.lastPreparedFunc = callback;
+        }
+        return program.fillMeshTexture(texture, texture.func);
+      }
+    },
+    transpile: [(line, declaredVars) => {
+      const object = transpileCapsuleObject(line, declaredVars, parser);
+      if (object) return object;
+      if (/^(?:[A-Za-z_]\w*\s*=\s*)?createIdealMesh\s+/.test(line)) {
+        return transpileCreateIdealMesh(line, declaredVars, parser);
+      }
+      const match = /^fillMeshTexture\s+(\S+)\s+([\s\S]+)$/.exec(line);
+      if (!match) return null;
+      const texture = parser.transpileExpr(match[1]);
+      const callback = JSON.stringify(match[2].trim().replace(/;$/, ""));
+      return [`lastUsedProgram?.fillMeshTexture?.(${texture}, __prepareMathFunction(${callback}));`];
+    }]
+  };
+}
+var AxisLinesProgram2 = class extends WebProgram {
+  constructor(gl, axisLengths = new Vector3D2(1, 1, 1)) {
+    super(gl, "", "");
+    this.axisLengths = axisLengths;
+  }
+  async loadProgram() {
+    [this.program, this.vert, this.frag] = await loadShadersFromString(
+      this.gl,
+      `#version 300 es
+            precision highp float;
+
+            const vec3 AXIS_COLORS[3] = vec3[3](
+                vec3(1.0, 0.0, 0.0),  // X
+                vec3(0.0, 1.0, 0.0),  // Y
+                vec3(0.0, 0.0, 1.0)   // Z
+            );
+
+            uniform vec3 axisLengths;
+            uniform mat4 u_viewMatrix;
+            uniform mat4 u_projectionMatrix;
+            out vec3 vColor;
+
+            void main() {
+                int axis = gl_VertexID / 2;
+                bool start = (gl_VertexID % 2) == 0;
+
+                vec3 pos = vec3(0.0);
+                if (!start) {
+                    if (axis == 0) pos.x = axisLengths.x;
+                    else if (axis == 1) pos.y = axisLengths.y;
+                    else pos.z = axisLengths.z;
+                }
+
+                gl_Position = u_projectionMatrix * u_viewMatrix * vec4(pos, 1.0);
+                vColor = AXIS_COLORS[axis];
+            }`,
+      `#version 300 es
+            precision highp float;
+            in vec3 vColor;
+            out vec4 outColor;
+            void main() { outColor = vec4(vColor, 1.0); }`
+    );
+    return this;
+  }
+  initUniforms() {
+    this.uVec("axisLengths", 3).set(this.axisLengths);
+  }
+  setAxisLengths(x, y, z) {
+    this.axisLengths = new Vector3D2(x, y, z);
+    this.uVec("axisLengths", 3).set(this.axisLengths);
+    return this;
+  }
+  draw(camera) {
+    if (camera) camera.calculateMatrices().setUniformsProgram(this);
+    this.drawArrays("LINES", 0, 6);
+  }
+};
+var AxisConesProgram2 = class extends WebProgram {
+  constructor(gl, arrowHeights = new Vector3D2(0.1, 0.1, 0.1), arrowRadii = new Vector3D2(0.03, 0.03, 0.03), axisLengths = new Vector3D2(1, 1, 1)) {
+    super(gl, "", "");
+    this.arrowHeights = arrowHeights;
+    this.arrowRadii = arrowRadii;
+    this.axisLengths = axisLengths;
+  }
+  async loadProgram() {
+    [this.program, this.vert, this.frag] = await loadShadersFromString(
+      this.gl,
+      // VS
+      `#version 300 es
+            precision highp float;
+            layout(location=0) in vec3 aPos;
+            layout(location=1) in vec3 aColor;
+
+            uniform mat4 u_viewMatrix;
+            uniform mat4 u_projectionMatrix;
+            out vec3 vColor;
+
+            void main(){
+                gl_Position = u_projectionMatrix * u_viewMatrix * vec4(aPos,1.0);
+                vColor = aColor;
+            }`,
+      // FS
+      `#version 300 es
+            precision highp float;
+            in vec3 vColor;
+            out vec4 outColor;
+            void main(){ outColor = vec4(vColor, 1.0); }`
+    );
+    return this;
+  }
+  /** Crea un simple VAO de conos para las puntas */
+  initVAO() {
+    const steps = 16;
+    const vertices = [];
+    const colors = [];
+    const addCone = (dir, length, height, radius, color) => {
+      for (let i = 0; i < steps; i++) {
+        const a1 = i / steps * Math.PI * 2;
+        const a2 = (i + 1) / steps * Math.PI * 2;
+        const base1 = new Vector3D2(
+          dir.x * length + radius * Math.cos(a1),
+          dir.y * length + radius * Math.sin(a1),
+          dir.z * length
+        );
+        const base2 = new Vector3D2(
+          dir.x * length + radius * Math.cos(a2),
+          dir.y * length + radius * Math.sin(a2),
+          dir.z * length
+        );
+        const tip = new Vector3D2(dir.x * (length + height), dir.y * (length + height), dir.z * (length + height));
+        vertices.push(
+          base1.x,
+          base1.y,
+          base1.z,
+          base2.x,
+          base2.y,
+          base2.z,
+          tip.x,
+          tip.y,
+          tip.z
+        );
+        colors.push(...color, ...color, ...color);
+      }
+    };
+    addCone(new Vector3D2(1, 0, 0), this.axisLengths.x, this.arrowHeights.x, this.arrowRadii.x, [1, 0, 0]);
+    addCone(new Vector3D2(0, 1, 0), this.axisLengths.y, this.arrowHeights.y, this.arrowRadii.y, [0, 1, 0]);
+    addCone(new Vector3D2(0, 0, 1), this.axisLengths.z, this.arrowHeights.z, this.arrowRadii.z, [0, 0, 1]);
+    let vao = this.createVAO().bind();
+    vao.attribute("aPos", vertices, 3);
+    vao.attribute("aColor", colors, 3);
+    return vao;
+  }
+  initUniforms() {
+    this.uVec("axisLengths", 3).set(this.axisLengths);
+    this.uVec("arrowHeights", 3).set(this.arrowHeights);
+    this.uVec("arrowRadii", 3).set(this.arrowRadii);
+  }
+  draw(camera) {
+    if (camera) camera.calculateMatrices().setUniformsProgram(this);
+    this.bindVAO();
+    this.drawArrays("TRIANGLES", 0, 3 * 16 * 3);
+  }
+};
+var AxisGridProgram2 = class extends WebProgram {
+  // tamaño del lado del cuadrado (calculado automáticamente)
+  constructor(gl, planes = ["XY"], axisLengths = new Vector3D2(1, 1, 1), divisions = 10) {
+    super(gl, "", "");
+    this.planes = planes;
+    this.axisLengths = axisLengths;
+    this.vertexCount = 0;
+    this.divisions = 10;
+    // nº de divisiones por eje
+    this.cellSize = 0.1;
+    this.setDivisions(divisions);
+  }
+  async loadProgram() {
+    [this.program, this.vert, this.frag] = await loadShadersFromString(
+      this.gl,
+      `#version 300 es
+            precision highp float;
+            layout(location=0) in vec3 aPos;
+            uniform mat4 u_viewMatrix;
+            uniform mat4 u_projectionMatrix;
+            out vec3 vColor;
+            void main(){
+                gl_Position = u_projectionMatrix * u_viewMatrix * vec4(aPos,1.0);
+                vColor = vec3(0.3);
+            }`,
+      `#version 300 es
+            precision highp float;
+            in vec3 vColor;
+            out vec4 outColor;
+            void main(){ outColor = vec4(vColor,1.0); }`
+    );
+    return this;
+  }
+  /** Inicializa uniforms comunes (axis lengths, matrices, etc.) */
+  initUniforms(axisLengths) {
+    if (axisLengths) this.axisLengths = axisLengths;
+    else if (!this.axisLengths) this.axisLengths = new Vector3D2(1, 1, 1);
+  }
+  /** Genera el VAO de la cuadrícula en función de cellSize o divisions */
+  initVAO() {
+    const vertices = [];
+    for (const plane of this.planes) this.addGrid(plane, vertices);
+    this.vertexCount = vertices.length / 3;
+    if (!this.VAO) this.createVAO();
+    this.VAO.bind().attribute("aPos", vertices, 3);
+    return this;
+  }
+  addGrid(plane, vertices) {
+    const sizeX = this.axisLengths?.x ?? 1;
+    const sizeY = this.axisLengths?.y ?? 1;
+    const sizeZ = this.axisLengths?.z ?? 1;
+    const stepX = sizeX / this.divisions;
+    const stepY = sizeY / this.divisions;
+    const stepZ = sizeZ / this.divisions;
+    if (plane === "XY") {
+      for (let i = 0; i <= this.divisions; i++) {
+        const x = i * stepX;
+        vertices.push(x, 0, 0, x, sizeY, 0);
+      }
+      for (let i = 0; i <= this.divisions; i++) {
+        const y = i * stepY;
+        vertices.push(0, y, 0, sizeX, y, 0);
+      }
+    } else if (plane === "XZ") {
+      for (let i = 0; i <= this.divisions; i++) {
+        const x = i * stepX;
+        vertices.push(x, 0, 0, x, 0, sizeZ);
+      }
+      for (let i = 0; i <= this.divisions; i++) {
+        const z = i * stepZ;
+        vertices.push(0, 0, z, sizeX, 0, z);
+      }
+    } else if (plane === "YZ") {
+      for (let i = 0; i <= this.divisions; i++) {
+        const y = i * stepY;
+        vertices.push(0, y, 0, 0, y, sizeZ);
+      }
+      for (let i = 0; i <= this.divisions; i++) {
+        const z = i * stepZ;
+        vertices.push(0, 0, z, 0, sizeY, z);
+      }
+    }
+  }
+  draw(camera) {
+    if (camera) camera.calculateMatrices().setUniformsProgram(this);
+    this.bindVAO();
+    if (this.vertexCount)
+      this.drawArrays("LINES", 0, this.vertexCount);
+  }
+  // ----------------------------
+  // 🔧 Nuevas funciones añadidas
+  // ----------------------------
+  /** Fija el número de divisiones (por eje) y calcula automáticamente el tamaño de cada celda */
+  setDivisions(divisions) {
+    this.divisions = Math.max(1, divisions);
+    const avgAxis = (this.axisLengths.x + this.axisLengths.y + this.axisLengths.z) / 3;
+    this.cellSize = avgAxis / this.divisions;
+    return this;
+  }
+  /** Fija el tamaño del lado de las celdas y calcula el nº de divisiones */
+  setCellSize(size) {
+    this.cellSize = Math.max(1e-3, size);
+    const avgAxis = (this.axisLengths.x + this.axisLengths.y + this.axisLengths.z) / 3;
+    this.divisions = Math.floor(avgAxis / this.cellSize);
+    return this;
+  }
+};
+var Axis3DGroup2 = class {
+  constructor(gl, axisLengths = new Vector3D2(1, 1, 1), drawArrows = false, arrowHeights = new Vector3D2(0.1, 0.1, 0.1), arrowRadii = new Vector3D2(0.03, 0.03, 0.03), planes = []) {
+    this.gl = gl;
+    this.axisLengths = axisLengths;
+    this.drawArrows = drawArrows;
+    this.arrowHeights = arrowHeights;
+    this.arrowRadii = arrowRadii;
+    this.planes = planes;
+    this.gridDivisions = 10;
+    this.lines = new AxisLinesProgram2(gl, axisLengths);
+    if (drawArrows) this.cones = new AxisConesProgram2(gl, this.arrowHeights, this.arrowRadii, axisLengths);
+    if (planes && planes.length > 0) this.grid = new AxisGridProgram2(gl, planes, this.axisLengths);
+  }
+  /**
+   * Inicializa uniforms y crea VAOs necesarios para cada subprograma.
+   * Llamar a esta función después de loadAll() y antes del primer draw().
+   */
+  initUniforms() {
+    this.lines.use();
+    this.lines.initUniforms?.();
+    this.lines.setAxisLengths(this.axisLengths.x, this.axisLengths.y, this.axisLengths.z);
+    if (this.cones) {
+      this.cones.axisLengths = this.axisLengths;
+      this.cones.arrowHeights = this.arrowHeights;
+      this.cones.arrowRadii = this.arrowRadii;
+      this.cones.use();
+      this.cones.initUniforms();
+      this.cones.initVAO();
+    }
+    if (this.grid) {
+      this.grid.use();
+      this.grid.planes = this.planes;
+      this.grid.axisLengths = this.axisLengths;
+      this.grid.setDivisions(this.gridDivisions);
+      this.grid.initVAO();
+      this.grid.initUniforms();
+    }
+    return this;
+  }
+  /** Dibuja los tres elementos (usa VAOs creados en initUniforms) */
+  draw(camera) {
+    if (this.lines) {
+      this.lines.use();
+      this.lines.uVec("axisLengths", 3).set([this.axisLengths.x, this.axisLengths.y, this.axisLengths.z]);
+      this.lines.draw(camera);
+    }
+    if (this.grid) {
+      this.grid.use();
+      if (!this.grid.VAO) this.grid.initVAO();
+      this.grid.draw(camera);
+    }
+    if (this.cones) {
+      this.cones.use();
+      this.cones.axisLengths = this.axisLengths;
+      this.cones.arrowHeights = this.arrowHeights;
+      this.cones.arrowRadii = this.arrowRadii;
+      if (!this.cones.VAO) this.cones.initVAO();
+      this.cones.draw(camera);
+    }
+  }
+  /** helpers para actualizar parámetros en caliente */
+  setAxisLengths(x, y, z) {
+    this.axisLengths = new Vector3D2(x, y, z);
+    this.lines.setAxisLengths(x, y, z);
+    if (this.cones) this.cones.axisLengths = this.axisLengths;
+    if (this.grid)
+      this.grid.axisLengths = this.axisLengths;
+    return this;
+  }
+  setArrowParams(heights, radii) {
+    this.arrowHeights = heights;
+    this.arrowRadii = radii;
+    if (this.cones) {
+      this.cones.arrowHeights = heights;
+      this.cones.arrowRadii = radii;
+      this.cones.initVAO();
+    }
+    return this;
+  }
+  setPlanes(planes) {
+    this.planes = planes;
+    if (this.grid) {
+      this.grid.planes = planes;
+      this.grid.initVAO();
+    } else {
+      this.grid = new AxisGridProgram2(this.gl, planes, this.axisLengths);
+    }
+    return this;
+  }
+  /** Fija el número de divisiones (por eje) y calcula automáticamente el tamaño de cada celda */
+  setDivisions(divisions) {
+    this.gridDivisions = divisions;
+    if (this.grid)
+      return this.grid.setDivisions(divisions);
+    return this;
+  }
+  /** Fija el tamaño del lado de las celdas y calcula el nº de divisiones */
+  setCellSize(size) {
+    if (this.grid)
+      return this.grid.setCellSize(size);
+    return this;
+  }
+  includeInWebManList() {
+    if (this.lines)
+      this.lines.includeInWebManList();
+    if (this.grid)
+      this.grid.includeInWebManList();
+    if (this.cones)
+      this.cones.includeInWebManList();
+    return this;
+  }
+  async loadProgram() {
+    if (this.lines)
+      await this.lines.loadProgram();
+    if (this.grid)
+      await this.grid.loadProgram();
+    if (this.cones)
+      await this.cones.loadProgram();
+    return this;
+  }
+  use() {
+    return this;
+  }
+};
+var MeshFillerProgram2 = class extends WebProgram {
+  constructor(gl, valsTexUnit = "TexUnit20", w = 1024, h = 1024, callBackString, varsContext = {}) {
+    super(gl, "", "");
+    this.valsTexUnit = valsTexUnit;
+    this.w = w;
+    this.h = h;
+    // Cambiamos la estructura para almacenar el objeto uniform devuelto por tus funciones
+    this.uniformsToUpdate = [];
+    if (callBackString)
+      this.generateProgram(callBackString, varsContext);
+    const ext = gl.getExtension("EXT_color_buffer_float");
+    if (!ext) {
+      console.error("Este navegador/GPU no permite renderizar en RFloat.");
+    }
+  }
+  async loadProgram(vs = this.vertPath, fs = this.fragPath) {
+    [this.program, this.vert, this.frag] = await loadShadersFromString(this.gl, vs, fs);
+    this.use();
+    this.uniformsToUpdate.forEach((u) => {
+      u.setterObj = this.uFloat(u.name);
+    });
+    return this;
+  }
+  /**
+   * Se ejecuta en cada frame del loop de renderizado (tick).
+   * Obtiene los valores actuales del contexto y los sube a la GPU.
+   */
+  tick() {
+    if (!this.program) return;
+    this.use();
+    this.uniformsToUpdate.forEach((u) => {
+      const currentVal = u.getter();
+      if (u.setterObj && typeof u.setterObj.set === "function") {
+        u.setterObj.set(currentVal);
+      }
+    });
+    return this;
+  }
+  /**
+   * 
+   * @param callbackString (x,y) => { cos(-(y/100-({u_time||0, float}*3))) }
+   * @param varsContext DetailedParser.ctx.vars, DetailedParser.GlobalContext
+   */
+  generateProgram(callbackString, ...varsContexts) {
+    this.uniformsToUpdate = [];
+    let uniformDecls = "";
+    const arrowMatch = callbackString.match(/=>\s*([\s\S]*)$/);
+    let body = arrowMatch ? arrowMatch[1].trim() : callbackString;
+    if (body.startsWith("{") && body.endsWith("}")) {
+      body = body.substring(1, body.length - 1).trim();
+    }
+    let glslBody = body.replace(/{([^}]+)}/g, (_, content) => {
+      let path = content;
+      let glslType = "float";
+      const lastComma = content.lastIndexOf(",");
+      if (lastComma !== -1) {
+        const possibleType = content.substring(lastComma + 1).trim();
+        if (/^(float|int|vec[2-4]|mat[2-4]|uint)$/.test(possibleType)) {
+          path = content.substring(0, lastComma).trim();
+          glslType = possibleType;
+        }
+      }
+      const safeName = "u_ctx_" + path.replace(/[^a-zA-Z0-9]/g, "_").replace(/__/g, "_").replace(/^_|_$/g, "");
+      if (!uniformDecls.includes(safeName)) {
+        uniformDecls += `uniform ${glslType} ${safeName};
+`;
+        this.uniformsToUpdate.push({
+          name: safeName,
+          setterObj: null,
+          getter: () => {
+            try {
+              const scope = new Proxy({}, {
+                has(target, prop) {
+                  if (typeof prop === "symbol") return false;
+                  return varsContexts.some(
+                    (ctx) => ctx instanceof Map ? ctx.has(prop) : prop in ctx
+                  );
+                },
+                get(target, prop) {
+                  if (prop === Symbol.unscopables) return void 0;
+                  for (let i = varsContexts.length - 1; i >= 0; i--) {
+                    const ctx = varsContexts[i];
+                    if (ctx instanceof Map) {
+                      if (ctx.has(prop)) return ctx.get(prop);
+                    } else {
+                      if (prop in ctx) return ctx[prop];
+                    }
+                  }
+                  return void 0;
+                }
+              });
+              const evalFunc = new Function("scope", `with(scope) { return ${path}; }`);
+              let res = evalFunc(scope);
+              return res;
+            } catch (e) {
+              return 0;
+            }
+          }
+        });
+      }
+      return safeName;
+    });
+    const transpileMath = (str) => {
+      str = str.replace(/Math\./g, "");
+      str = str.replace(/(?<![\w\.])(\d+)(?![\w\.])/g, "$1.0");
+      while (str.includes("**")) {
+        let opIdx = str.indexOf("**");
+        let left = opIdx - 1, base = "";
+        if (str[left] === ")") {
+          let count = 0, i = left;
+          for (; i >= 0; i--) {
+            if (str[i] === ")") count++;
+            if (str[i] === "(") count--;
+            if (count === 0) {
+              i--;
+              break;
+            }
+          }
+          base = str.substring(i + 1, left + 1);
+        } else {
+          let match = str.substring(0, opIdx).match(/([\w\.\$]+)$/);
+          base = match ? match[1] : "";
+        }
+        let right = opIdx + 2, exponent = "";
+        if (str[right] === "(") {
+          let count = 0, i = right;
+          for (; i < str.length; i++) {
+            if (str[i] === "(") count++;
+            if (str[i] === ")") count--;
+            if (count === 0) break;
+          }
+          exponent = str.substring(right, i + 1);
+        } else {
+          let match = str.substring(right).match(/^([\w\.\$]+)/);
+          exponent = match ? match[1] : "";
+        }
+        str = str.replace(base + "**" + exponent, `pow(${base}, ${exponent})`);
+      }
+      return str;
+    };
+    glslBody = transpileMath(glslBody);
+    if (glslBody.includes("return")) {
+      glslBody = glslBody.replace(/return\s+([^;]+);?/, "float res = $1;");
+    } else {
+      glslBody = `float res = ${glslBody.replace(/;$/, "")};`;
+    }
+    this.vertPath = `#version 300 es
+            const vec2 quad[6] = vec2[](
+                vec2(-1,-1), vec2(1,-1), vec2(-1,1),
+                vec2(-1,1), vec2(1,-1), vec2(1,1)
+            );
+            void main() { gl_Position = vec4(quad[gl_VertexID], 0.0, 1.0); }`;
+    this.fragPath = `#version 300 es
+            precision highp float;
+            ${uniformDecls}
+            layout(location = 0) out float outRed; 
+            void main() {
+                float x = gl_FragCoord.x;
+                float y = gl_FragCoord.y;
+                ${glslBody}
+                outRed = res;
+            }`;
+    console.log("Shader generado con uniforms complejos:", this.fragPath);
+  }
+  draw() {
+    if (!this.program) return;
+    const gl = this.gl;
+    this.use();
+    const tex = this.getTextureByUnit(parseTexUnitType(this.valsTexUnit));
+    if (!tex) return;
+    const tw = tex.w ?? this.w;
+    const th = tex.h ?? this.h;
+    let fbo = this.cFrameBuffer().bind([0]);
+    fbo.bindColorBuffer(tex, "ColAtch0");
+    const status = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
+    if (status !== gl.FRAMEBUFFER_COMPLETE) {
+      console.error("FBO status:", status, "tex:", tex, "texWH:", tw, th, "progWH:", this.w, this.h);
+      this.unbindFBO();
+      return this;
+    }
+    gl.viewport(0, 0, this.w, this.h);
+    gl.drawArrays(gl.TRIANGLES, 0, 6);
+    this.unbindFBO();
+    return this;
+  }
+};
+var id = "MeshCapsule";
+function detectUse4(source) {
+  return /\b(?:MeshProgram|MeshFillerProgram|Axis3DGroup|createIdealMesh|fillMeshTexture)\b/.test(source) ? true : "Toggled";
+}
+function register8(parser) {
+  return { id, ...buildHandlers(parser) };
+}
+
+// src/dependencies/Code/WebGL/parser/registry-entry.ts
+DetailedParser.registryDefinitions = [{ id: "objects", register: (parser, services) => ({ id: "objects", objects: Object.assign({}, ...[register, register2].map((register9) => register9(parser, services).objects || {})) }) }, { id: "functions", register: (parser, services) => ({ id: "functions", functions: Object.assign({}, ...[register3, register4, register5, register6, register7].map((register9) => register9(parser, services).functions || {})) }) }, capsules_exports];
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {
   DetailedParser
 });
+//! Program Capsules (templates)

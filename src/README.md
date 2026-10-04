@@ -6,6 +6,36 @@ Este directorio reúne las tres piezas que gobiernan el runtime generado:
 - `parser_snippets/*.snippet.ts`
 - `parsers/testParser*.ts`
 
+El parser por defecto esta en `dependencies/Code/WebGL/parser/webglParser.ts`.
+Los registros tematicos se descubren con `fs` en `parser/objects/` y
+`parser/functions/` al ejecutar el parser; no se generan `index.ts`.
+`parser/registryModules/capsules.ts`
+contiene las clases, funciones y reglas DSL de `MeshCapsule`;
+`webglCapsules.ts` es solo una ruta de importacion compatible.
+Los modulos de runtime (`backup`, `runtimeLet`, `shaderFilters`)
+se registran explicitamente en el parser y viven en `Code/WebGL/runtime/`.
+Consulta [WEBGL_PARSER_INVENTORY.md](WEBGL_PARSER_INVENTORY.md) para el mapa
+detallado y [package/README.md](../package/README.md) para la configuracion JSON.
+
+Los archivos de `Code/WebGL/runtime/` son distintos de los registros del
+parser: contienen clases ejecutadas en el navegador despues del parseo. Cada
+runtime exporta `detectUse` (decide si se importa) y `runtimeFeature` (imports
+y setup de la salida generada). `BackupRuntime` usa la API HTTP del servidor,
+`RuntimeLetSource` carga variables externas y `ShaderFilterSet` adapta GLSL.
+
+Dentro de un draw, `rebind-temp { textura -> TexUnit12 }` o `rebind { temp {
+textura -> TexUnit12 } }` conservan la textura anterior de esa unidad y la
+restauran tras el draw. `swap {a, b, c}` rota referencias a la izquierda;
+`a <=> b` intercambia dos. `pingpong (a, b) (c, d) { ... }` ejecuta el cuerpo
+y luego intercambia cada pareja, sin pasar datos por CPU. Los objetos textura
+conservan su unidad: si el shader espera otra, hay que rebindear el sampler.
+
+`backUp: /ruta/, maxBackUpIterations: 20, priority: first` guarda las primeras
+20 pasadas. `last` conserva las ultimas 20 y `each-5` guarda una de cada cinco
+hasta ese limite. La limpieza de `last` requiere permitir borrado en el
+servidor (`servebackups`, `serve` o `node dist/lib/backups.js`); en Windows
+puede requerir una terminal de administrador.
+
 La idea general es esta:
 
 1. los archivos `*.shaderdsl.ts` describen escenas, programas, texturas, pases y lógica de actualización en un DSL con sintaxis cercana a TypeScript

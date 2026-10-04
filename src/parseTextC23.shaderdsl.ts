@@ -380,7 +380,7 @@ tick {
       let tauAFPOptPass=0
       let tauAFPOptMaxPasses={Math.max(1,~~nelderIters)}
       let tauAFPOptCheckEvery={Math.max(1,~~nelderChunkIters)}
-      while(tauAFPOptPass<tauAFPOptMaxPasses && !tauAFPOptDone){
+      while(tauAFPOptPass<tauAFPOptMaxPasses && !tauAFPOptDone) {
          let tauAFPOptChunk={Math.min(tauAFPOptCheckEvery, tauAFPOptMaxPasses-tauAFPOptPass)}
          let tauNMInner=0
          while(tauNMInner<tauAFPOptChunk){
@@ -406,7 +406,6 @@ tick {
                   framebuffer: tauAdjFieldsFBO
                   backUp: /parseTextC23/tauAdjFields/
                }
-
                use tauAdjDiffOps
                drawTriangles -> [tauAdjDiffOpsTex] size [nBins*nBins,tauAdjCount*tauMaxVeces*9] {
                   uniforms {
