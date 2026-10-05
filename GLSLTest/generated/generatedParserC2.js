@@ -7590,21 +7590,20 @@ var BackupRuntime = class {
   ;
   var time = 0;
   ;
-  meshProgram.initUniforms().setDXDY(0.16 * scaleFactor, 0.16 * scaleFactor).setYScale(scaleFactor).setPerXPerY(0.5, 0.5).setColorHueScale(0.2).smoothColor(true).setRepeat(true);
+  meshProgram.initUniforms().setDXDY(0.16 * scaleFactor, 0.16 * scaleFactor).setYScale(scaleFactor).setPerXPerY(0.5, 0.5).setColorHueScale(0.223).smoothColor(true).setRepeat(true);
   meshProgram.setGridRadius(512).setFullResolutionCells(120).setFalloff(1640).setRepeatRadius(120);
   meshProgram.setLODOrigin(0, 0).setPriorityTexels([[512, 512]]);
   var surface;
   (() => {
     surface = lastUsedProgram?.createIdealTexture?.("TexUnit20");
     if (surface) {
-      surface.lastPreparedFunc = "(x, y) => { return sin(x / 20 + sin(y / 20 + {time})) * cos(y / 20 + cos(x / 20 + {time})) * 12; }";
+      surface.lastPreparedFunc = "(x, y) => {let dx = (x - 512) * 0.05;let dy = (y - 512) * 0.05;let r = Math.sqrt(dx * dx + dy * dy);if (r === 0) return 10; return (cos(r + {time}) / r) * 15;}";
       surface.meshContext = {
         get time() {
           return typeof time !== "undefined" ? time : globalThis.time;
         }
       };
     }
-    surface?.bind?.();
   })();
   var camera3D = new Camera3D(new Vector3D2(0, 4, 12));
   camera3D.direction = new Vector3D2(0, -0.3, -1);

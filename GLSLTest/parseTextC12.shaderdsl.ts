@@ -9,12 +9,12 @@ let scaleFactor=1;
 var time=0;
 
 //TODO añadir LOD mínimo/máximo, es decir que no se haga infinitamente con menos resolución
-meshProgram.initUniforms().setDXDY(0.16*scaleFactor,0.16*scaleFactor).setYScale(scaleFactor).setPerXPerY(0.5,0.5).setColorHueScale(0.2).smoothColor(true).setRepeat(true)
+meshProgram.initUniforms().setDXDY(0.16*scaleFactor,0.16*scaleFactor).setYScale(scaleFactor).setPerXPerY(0.5,0.5).setColorHueScale(0.223).smoothColor(true).setRepeat(true)
 meshProgram.setGridRadius(512).setFullResolutionCells(120).setFalloff(1640).setRepeatRadius(120)
 meshProgram.setLODOrigin(0,0).setPriorityTexels([[512,512]])
 // surface=createIdealMesh TexUnit20 (x,y)=>{return sin(x/4)*cos(y/4)+-exp(0.00001*((x-512)*(x-512)+(y-512)*(y-512)))*12} .bind()
 // surface=createIdealMesh TexUnit20 (x,y)=>{return sin(x/4)*cos(y/4)+(x+y/2)/100-10} .bind()
-// surface=createIdealMesh TexUnit20 (x, y) => {let dx = (x - 512) * 0.05;let dy = (y - 512) * 0.05;let r = Math.sqrt(dx * dx + dy * dy);if (r === 0) return 10; return (cos(r + {time}) / r) * 15;}
+surface=createIdealMesh TexUnit20 (x, y) => {let dx = (x - 512) * 0.05;let dy = (y - 512) * 0.05;let r = Math.sqrt(dx * dx + dy * dy);if (r === 0) return 10; return (cos(r + {time}) / r) * 15;}
 
 // surface=createIdealMesh TexUnit20 (x, y) => { return (sin(x / 16+ {time}) + sin(y / 16+ {time}) * cos((x / 16+ {time}) / 2)) * 8; } .bind()
 // surface=createIdealMesh TexUnit20 (x, y) => { return sin(x / 10 + {time}) * cos(y / 10) * 2 - 30 / (1 + (Math.pow((x-512)*0.03, 2) + Math.pow((y-512)*0.03, 2)) * 0.1); }.bind()
@@ -73,7 +73,7 @@ meshProgram.setLODOrigin(0,0).setPriorityTexels([[512,512]])
 // surface=createIdealMesh TexUnit20 (x, y) => { let dx = (x - 512) * 0.05; let dy = (y - 512) * 0.05; let r = Math.sqrt(dx * dx + dy * dy); let baseCono = 30 / (1 + r * 0.1); let lava = r < 5 ? (sin({time} * 5) * 3 + 25) : 0; return r < 5 ? lava : baseCono; }.bind()
 
 // 12. Pista de Baño de Ondas Moduladas (La superficie se retuerce sobre su propio eje)
-surface=createIdealMesh TexUnit20 (x, y) => { return sin(x / 20 + sin(y / 20 + {time})) * cos(y / 20 + cos(x / 20 + {time})) * 12; }.bind()
+// surface=createIdealMesh TexUnit20 (x, y) => { return sin(x / 20 + sin(y / 20 + {time})) * cos(y / 20 + cos(x / 20 + {time})) * 12; }.bind()
 
 
 camera3D = Camera3D pos=vec3(0,4,12);
