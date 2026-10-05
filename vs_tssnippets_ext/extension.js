@@ -2,6 +2,8 @@ const vscode = require("vscode");
 const { textureImage } = require("./backupHover");
 const { renderBackupPanel } = require("./backupPanel");
 const registrySyntax = require("./generated/registrySyntax.json");
+const { declarationAliases, inlineTagSpans, registryBindings, latestAssignment, staticValuePreview, stripComment } = require("./registryIntelligence");
+const { importedSnippetSymbols, invalidateSnippetImports, invalidateSnippetImportsForSource } = require("./snippetImports");
 
 const internalTextureObjects = registrySyntax.objects
     .filter((entry) => entry.tags.createsInternalTexture)
@@ -94,6 +96,14 @@ const branchDecoration = vscode.window.createTextEditorDecorationType({
 
 const derivedKeywordDecoration = vscode.window.createTextEditorDecorationType(DERIVED_STYLE);
 const derivedVariableDecoration = vscode.window.createTextEditorDecorationType(DERIVED_STYLE);
+const implicitObjectNameDecoration = vscode.window.createTextEditorDecorationType({
+    after: { color: "#aeb4bd", fontStyle: "italic" },
+});
+const taggedValueDecoration = vscode.window.createTextEditorDecorationType({
+    backgroundColor: "#252a32",
+    after: { backgroundColor: "#252a32" },
+});
+const tagBraceDecoration = vscode.window.createTextEditorDecorationType({ opacity: "0" });
 const optiKeywordDecoration = vscode.window.createTextEditorDecorationType(OPTI_LINE_STYLE);
 const optiFadedDecoration = vscode.window.createTextEditorDecorationType(OPTI_FADED_STYLE);
 
@@ -206,7 +216,7 @@ const SHADERDSL_GLOB = "**/*.shaderdsl.ts";
 const BACKUP_PATH_RESCAN_MIN_INTERVAL_MS = 5 * 60 * 1000;
 const searchUriCache = new Map();
 const searchDocumentCache = new Map();
-const TEX2D_DECL_KEYWORD_RE = "(?:new-|in-)?tex2D";
+const TEX2D_DECL_KEYWORD_RE = "(?:new-|in-)?(?:tex2D|tex3D|tex3DArray|texture3DArray)";
 const DRAW_BACKUP_PREVIEW_SCHEME = "shaderdsl-backup-preview";
 const drawBackupBlockCacheByDocument = new Map();
 const backupDirectoryEntryCache = new Map();
@@ -218,6 +228,26 @@ const backupHoverFilePage = new Map();
 const backupPanels = new Set();
 const backupPayloadCache = new Map();
 const backupImageCache = new Map();
+const taggedValueSignatures = new Map();
+const taggedReferencesByDocument = new Map();
+const observedTaggedFileCache = new Map();
+const observedScopeCache = new Map();
+
+function taggedReferences(document) {
+    const uri = document.uri.toString();
+    const cached = taggedReferencesByDocument.get(uri);
+    if (cached?.version === document.version) return cached.references;
+    const references = [];
+    for (const line of document.getText().split(/\r?\n/)) {
+        if (!line.includes("-") || !line.includes("{")) continue;
+        const block = line.trim().match(/^([A-Za-z_]\w*)/)?.[1] || "block";
+        for (const span of inlineTagSpans(line)) {
+            for (const variable of span.variables) references.push({ block, tag: span.tag, name: variable.name });
+        }
+    }
+    taggedReferencesByDocument.set(uri, { version: document.version, references, root: getProjectRootPath(document) });
+    return references;
+}
 
 function activate(context) {
     runtimeContext = context;
@@ -239,6 +269,9 @@ function activate(context) {
         branchDecoration,
         derivedKeywordDecoration,
         derivedVariableDecoration,
+        implicitObjectNameDecoration,
+        taggedValueDecoration,
+        tagBraceDecoration,
         optiDecoration,
         resourceNameDecoration,
         textureFormatDecoration,
@@ -492,6 +525,8 @@ function activate(context) {
             provideHover(document, position) {
                 const backupHover = provideDrawBackupHover(document, position);
                 if (backupHover) return backupHover;
+                const registryHover = provideRegistryAndTexUnitHover(document, position);
+                if (registryHover) return registryHover;
                 return provideShaderDslTagHover(document, position);
             },
         }),
@@ -510,6 +545,16 @@ function activate(context) {
                 return provideDrawBackupPreviewDocumentContent(uri);
             },
         }),
+        vscode.languages.registerCompletionItemProvider(SNIPPET_SELECTOR, {
+            provideCompletionItems(document, position) {
+                const prefix = document.lineAt(position.line).text.slice(0, position.character).match(/[A-Za-z_$][\w$]*$/)?.[0] || "";
+                if (!prefix) return [];
+                const symbols = importedSnippetSymbols(getProjectRootPath(document), document.uri.fsPath, __dirname, vscode.workspace.textDocuments);
+                return [...symbols.values()].filter((entry) => entry.name.toLowerCase().startsWith(prefix.toLowerCase()))
+                    .map((entry) => new vscode.CompletionItem(entry.name,
+                        entry.definition?.kind === "function" ? vscode.CompletionItemKind.Function : vscode.CompletionItemKind.Variable));
+            },
+        }),
         vscode.languages.registerCompletionItemProvider(
             SHADERDSL_SELECTOR,
             {
@@ -526,6 +571,10 @@ function activate(context) {
         vscode.window.onDidChangeActiveTextEditor((editor) => refreshEditorDecorations(editor)),
         vscode.window.onDidChangeVisibleTextEditors(refreshAllEditors),
         vscode.workspace.onDidChangeTextDocument((event) => {
+            if (/\.snippet\.ts$/i.test(event.document.fileName || "")) invalidateSnippetImports(getProjectRootPath(event.document));
+            else if (/\.[cm]?[jt]sx?$/i.test(event.document.fileName || "") && !/\.shaderdsl\.ts$/i.test(event.document.fileName || "")) {
+                invalidateSnippetImportsForSource(event.document.fileName);
+            }
             handleShaderDslBackupPathReplaceEdit(event);
             drawBackupBlockCacheByDocument.delete(event.document.uri.toString());
             const editor = vscode.window.visibleTextEditors.find(
@@ -542,6 +591,8 @@ function activate(context) {
             drawBackupCodeLensEmitter.fire();
         }),
         vscode.workspace.onDidCloseTextDocument((document) => {
+            taggedValueSignatures.delete(document.uri.toString());
+            taggedReferencesByDocument.delete(document.uri.toString());
             drawBackupBlockCacheByDocument.delete(document.uri.toString());
             backupPreviewStateByDocument.delete(document.uri.toString());
             backupPayloadCache.clear();
@@ -558,6 +609,25 @@ function activate(context) {
         vscode.workspace.onDidDeleteFiles(invalidateSearchCache),
         vscode.workspace.onDidRenameFiles(invalidateSearchCache),
     );
+
+    const taggedValueTimer = setInterval(() => {
+        for (const editor of vscode.window.visibleTextEditors) {
+            if (editor.document.languageId !== "parse-text-ts") continue;
+            const signatures = [];
+            for (const { block, tag, name } of taggedReferences(editor.document)) {
+                const observed = readObservedTaggedValue(editor.document, block, tag, name);
+                signatures.push(`${block}:${tag}:${name}:${observed?.scope || ""}:${observed?.mtime || ""}`);
+            }
+            if (!signatures.length) continue;
+            const uri = editor.document.uri.toString();
+            const signature = signatures.join("|");
+            const previous = taggedValueSignatures.get(uri);
+            taggedValueSignatures.set(uri, signature);
+            if (previous !== undefined && previous !== signature) refreshEditorDecorations(editor);
+        }
+    }, 1500);
+    taggedValueTimer.unref?.();
+    context.subscriptions.push({ dispose: () => clearInterval(taggedValueTimer) });
 
     refreshAllEditors();
 }
@@ -585,12 +655,15 @@ async function getCachedWorkspaceUris(document, family, includeGlob) {
 }
 
 function invalidateSearchCache() {
+    invalidateSnippetImports();
     searchUriCache.clear();
     searchDocumentCache.clear();
     backupDirectoryEntryCache.clear();
     backupPayloadCache.clear();
     backupImageCache.clear();
     projectRootCache.clear();
+    observedTaggedFileCache.clear();
+    observedScopeCache.clear();
     backupPathReplaceRegistry.clear();
 }
 
@@ -626,6 +699,9 @@ function pruneProjectCaches() {
         backupDirectoryEntryCache.clear();
         backupPayloadCache.clear();
         backupImageCache.clear();
+        observedTaggedFileCache.clear();
+        observedScopeCache.clear();
+        taggedValueSignatures.clear();
     }
     for (const key of searchUriCache.keys()) {
         if (![...active].some((root) => key.startsWith(`${root}::`))) searchUriCache.delete(key);
@@ -641,6 +717,9 @@ function pruneProjectCaches() {
     }
     for (const [directory, root] of projectRootCache) {
         if (!active.has(root)) projectRootCache.delete(directory);
+    }
+    for (const [uri, cached] of taggedReferencesByDocument) {
+        if (!active.has(cached.root)) taggedReferencesByDocument.delete(uri);
     }
 }
 
@@ -686,12 +765,11 @@ function diskDocumentSnapshot(uri, root) {
 }
 
 function stripLineComment(line) {
-    const commentIndex = line.indexOf("//");
-    return commentIndex >= 0 ? line.slice(0, commentIndex) : line;
+    return stripComment(line);
 }
 
 function stripLineCommentPreserveLength(line) {
-    const commentIndex = line.indexOf("//");
+    const commentIndex = stripComment(line).length;
     if (commentIndex < 0) return line;
     return line.slice(0, commentIndex) + " ".repeat(line.length - commentIndex);
 }
@@ -807,7 +885,7 @@ function collectTexUnitTokenSpans(code) {
         pushSpan(tokenStart, token, unitIndex);
     }
 
-    const tex2DArrayUnitRegex = /\btexture2DArray\b[\s\S]*?\b([A-Za-z_]\w*)\s+"[^"]*"\s+((?:TexUnit|texUnit)\d+|\d+)\b/g;
+    const tex2DArrayUnitRegex = /\b(?:texture2DArray|texture3DArray|tex3DArray|tex3D)\b[\s\S]*?\b([A-Za-z_]\w*)\s+"[^"]*"\s+((?:TexUnit|texUnit)\d+|\d+)\b/g;
     while ((match = tex2DArrayUnitRegex.exec(code)) !== null) {
         const token = match[2];
         const unitIndex = normalizeUnitToken(token);
@@ -855,7 +933,7 @@ function getOrCreateDecoration(style) {
 function parseDefineTagBlocks(text) {
     const defs = new Map();
     const aliases = new Map();
-    const blockRegex = /^\s*defineTag\s+([A-Za-z_]\w*)\s*\{([\s\S]*?)^\s*\}/gm;
+    const blockRegex = /^\s*defineTag\s+([A-Za-z0-9_]\w*)\s*\{([\s\S]*?)^\s*\}/gm;
     let match;
     while ((match = blockRegex.exec(text)) !== null) {
         const name = match[1];
@@ -976,6 +1054,8 @@ function getTexExampleNames() {
 async function provideShaderDslCompletions(document, position) {
     const linePrefix = document.lineAt(position.line).text.slice(0, position.character);
     const text = document.getText();
+    const registryCompletion = provideRegistryCompletions(text, linePrefix, position);
+    if (registryCompletion) return registryCompletion;
     const texExampleNames = Array.from(getTexExampleNames()).filter((name) => !["NEAREST", "LINEAR", "CLAMP", "REPEAT", "MIRROR"].includes(name));
     const resourceContext = findEnclosingResourceBlock(text, position);
     const glslFiltersContext = findEnclosingNamedBlock(text, position, "glslFilters");
@@ -1088,7 +1168,106 @@ async function provideShaderDslCompletions(document, position) {
         return await buildRebindTargetCompletions(document, text, rebindBlockProgram);
     }
 
-    return [];
+    const prefix = linePrefix.match(/[A-Za-z_$][\w$]*$/)?.[0] || "";
+    if (!prefix) return [];
+    const names = new Set();
+    for (const line of text.split(/\r?\n/)) {
+        const code = stripComment(line);
+        const declared = code.match(/^\s*(?:let|var|const)\s+(?:derived\s+)?([A-Za-z_$][\w$]*)\b/);
+        if (declared) names.add(declared[1]);
+        for (const alias of declarationAliases(code)) names.add(alias);
+    }
+    for (const name of registryBindings(text, registrySyntax.objects).bindings.keys()) names.add(name);
+    const snippetSymbols = importedSnippetSymbols(getProjectRootPath(document), document.uri.fsPath, __dirname, vscode.workspace.textDocuments);
+    for (const name of snippetSymbols.keys()) names.add(name);
+    const start = new vscode.Position(position.line, position.character - prefix.length);
+    return [...names].filter((name) => name !== prefix && name.toLowerCase().startsWith(prefix.toLowerCase())).map((name) => {
+        const imported = snippetSymbols.get(name);
+        const kind = imported?.definition?.kind === "function" ? vscode.CompletionItemKind.Function
+            : imported?.definition?.kind === "class" ? vscode.CompletionItemKind.Class : vscode.CompletionItemKind.Variable;
+        const item = new vscode.CompletionItem(name, kind);
+        item.range = new vscode.Range(start, position);
+        item.detail = imported ? `import from ${require("node:path").basename(imported.source || "snippet")}` : "shader DSL variable";
+        return item;
+    });
+}
+
+function provideRegistryCompletions(text, linePrefix, position) {
+    const call = linePrefix.match(/\b([A-Za-z_]\w*)\.([A-Za-z_]\w*)\((.*)$/);
+    if (call) {
+        const binding = registryBindings(text, registrySyntax.objects).bindings.get(call[1]);
+        const method = binding?.object.methods?.find((entry) => entry.name === call[2]);
+        const argumentsSoFar = splitRegistryArguments(call[3]);
+        const choices = method?.choices?.[argumentsSoFar.length - 1];
+        if (choices?.length) {
+            const typed = argumentsSoFar.at(-1).trim().replace(/^["']/, "").toUpperCase();
+            const start = position.character - argumentsSoFar.at(-1).trimStart().length;
+            return choices.filter((value) => value.startsWith(typed)).map((value) => {
+                const item = new vscode.CompletionItem(value, vscode.CompletionItemKind.EnumMember);
+                item.insertText = `"${value}"`;
+                item.range = new vscode.Range(new vscode.Position(position.line, start), position);
+                item.detail = `${binding.object.name}.${method.name}`;
+                return item;
+            });
+        }
+    }
+    const chain = linePrefix.match(/\b([A-Za-z_]\w*)(?:\.[A-Za-z_]\w*\([^)]*\))*\.([A-Za-z_]\w*)?$/);
+    if (chain) {
+        const binding = registryBindings(text, registrySyntax.objects).bindings.get(chain[1]);
+        if (binding) {
+            const typed = chain[2] || "";
+            return [
+                ...(binding.object.methods || []).map((method) => {
+                    const item = new vscode.CompletionItem(method.name, vscode.CompletionItemKind.Method);
+                    item.insertText = new vscode.SnippetString(`${method.name}(${method.parameters.map((_, index) => `\${${index + 1}:${method.parameters[index]}}`).join(", ")})`);
+                    item.detail = `${binding.object.className || binding.object.name} method`;
+                    return item;
+                }),
+                ...(binding.object.properties || []).map((property) => new vscode.CompletionItem(property, vscode.CompletionItemKind.Property)),
+            ].filter((item) => item.label.startsWith(typed));
+        }
+    }
+    const objectHeader = linePrefix.match(/^\s*(?:[A-Za-z_]\w*\s*=\s*)?([A-Z][A-Za-z0-9_]*)\b(.*)$/);
+    if (objectHeader) {
+        const object = registrySyntax.objects.find((entry) => entry.name === objectHeader[1]);
+        const tail = objectHeader[2];
+        const lastToken = tail.trim().split(/\s+/).at(-1);
+        if (object && /\s/.test(tail) && (/\s$/.test(tail) || /^[A-Za-z_]\w*$/.test(lastToken))) {
+            const used = new Set([...objectHeader[2].matchAll(/\b([A-Za-z_]\w*)\s*=/g)].map((match) => match[1]));
+            return (object.parameters || []).filter((name) => !used.has(name)).map((name) => {
+                const item = new vscode.CompletionItem(`${name}=`, vscode.CompletionItemKind.Property);
+                item.insertText = new vscode.SnippetString(`${name}=$0`);
+                item.detail = `${object.name} parameter`;
+                return item;
+            });
+        }
+    }
+    return null;
+}
+
+function splitRegistryArguments(raw) {
+    const parts = [""];
+    let quote = "";
+    let depth = 0;
+    for (let i = 0; i < raw.length; i++) {
+        const char = raw[i];
+        if (quote) {
+            parts[parts.length - 1] += char;
+            if (char === "\\") parts[parts.length - 1] += raw[++i] || "";
+            else if (char === quote) quote = "";
+        } else if (char === '"' || char === "'") {
+            quote = char;
+            parts[parts.length - 1] += char;
+        } else if ("([{".includes(char)) {
+            depth++;
+            parts[parts.length - 1] += char;
+        } else if (")]}".includes(char)) {
+            depth--;
+            parts[parts.length - 1] += char;
+        } else if (char === "," && depth === 0) parts.push("");
+        else parts[parts.length - 1] += char;
+    }
+    return parts;
 }
 
 function createSnippetCompletion(label, snippet, detail) {
@@ -3001,7 +3180,7 @@ function collectTextureUnitUsage(text) {
         for (const unit of internalTextureInputUnits(code)) {
             unitUseCount.set(unit, (unitUseCount.get(unit) || 0) + 1);
         }
-        const texArrayDecl = code.match(/\b([A-Za-z_]\w*)(?:\s*\|=\s*([A-Za-z_]\w*))?\s*=\s*texture2DArray\s+[A-Za-z_]\w*\s+([A-Za-z_]\w*)\s+"([^"]+)"\s+(?:TexUnit|texUnit)(\d+)\b/);
+        const texArrayDecl = code.match(/\b([A-Za-z_]\w*)(?:\s*\|=\s*([A-Za-z_]\w*))?\s*=\s*(?:texture2DArray|texture3DArray|tex3DArray|tex3D)\s+[A-Za-z_]\w*\s+([A-Za-z_]\w*)\s+"([^"]+)"\s+(?:TexUnit|texUnit)(\d+)\b/);
         if (texArrayDecl) {
             const unit = Number.parseInt(texArrayDecl[5], 10);
             unitUseCount.set(unit, (unitUseCount.get(unit) || 0) + 1);
@@ -3120,20 +3299,173 @@ function findInlineTagUsages(code) {
         });
     }
 
-    const inlineRegex = /(^|[^A-Za-z0-9_])-\s*([A-Za-z_]\w*)\s*-\s*([^{}]*?)(?=\s*(?:\{|$))/g;
-    let m;
-    while ((m = inlineRegex.exec(code)) !== null) {
-        const prefixLen = m[1].length;
+    for (const span of inlineTagSpans(code)) {
         usages.push({
-            tag: m[2],
-            tagStart: m.index + prefixLen,
-            tagEnd: m.index + prefixLen + m[0].length - prefixLen,
-            commentStart: m.index + prefixLen + m[0].indexOf(m[3]),
-            commentEnd: m.index + prefixLen + m[0].indexOf(m[3]) + m[3].length,
+            tag: span.tag,
+            tagStart: span.start,
+            tagEnd: span.end,
+            commentStart: span.start,
+            commentEnd: span.end,
             kind: "inline",
         });
     }
     return usages;
+}
+
+function provideRegistryAndTexUnitHover(document, position) {
+    const line = document.lineAt(position.line).text;
+    const code = stripLineComment(line);
+    const token = document.getWordRangeAtPosition(position, /[A-Za-z_$][A-Za-z0-9_$]*/);
+    if (!token) return null;
+    const name = document.getText(token);
+    const unit = /^TexUnit(\d+)$/i.exec(name);
+    if (unit) {
+        const number = Number(unit[1]);
+        const assignments = [];
+        for (const [lineNo, raw] of document.getText().split(/\r?\n/).entries()) {
+            const source = stripLineComment(raw);
+            if (!new RegExp(`\\b(?:TexUnit|texUnit)${number}\\b`, "i").test(source)) continue;
+            const texture = source.match(/^\s*(?:in-|new-)?(?:tex2D|tex3D|tex3DArray|texture3DArray)\s+([A-Za-z_]\w*)/)
+                || source.match(/^\s*(?:[A-Za-z_]\w*(?:\s*\|=\s*[A-Za-z_]\w*)*\s*=\s*)?(?:texture2DArray|texture3DArray|tex3DArray|tex3D)\s+\S+\s+([A-Za-z_]\w*)/)
+                || source.match(/^\s*([A-Za-z_]\w*)\s*->\s*TexUnit\d+/i);
+            const internal = internalTextureInputPattern && internalTextureObjects.find((type) => source.includes(type) && /\binput\s*=/.test(source));
+            if (!texture && !internal) continue;
+            const label = texture ? texture[1] : `${internal} (textura interna)`;
+            const link = vscode.Uri.file(document.uri.fsPath).with({ fragment: `L${lineNo + 1}` }).toString();
+            assignments.push(`- [${label}](${link}) (línea ${lineNo + 1})`);
+        }
+        const md = new vscode.MarkdownString(`**${name}**\n\n${assignments.length ? assignments.join("\n") : "Sin texturas declaradas en este documento."}`);
+        md.isTrusted = true;
+        return new vscode.Hover(md, token);
+    }
+
+    const tagged = inlineTagSpans(code).flatMap((span) => span.variables).find((variable) =>
+        variable.name === name && position.character >= variable.start + 1 && position.character < variable.end - 1);
+    if (tagged) {
+        const span = inlineTagSpans(code).find((item) => item.variables.some((variable) => variable.start === tagged.start));
+        const blockName = code.trim().match(/^([A-Za-z_]\w*)/)?.[1] || "block";
+        const observed = readObservedTaggedValue(document, blockName, span?.tag || "tag", name);
+        const estimate = latestAssignment(document.getText(), name, position.line);
+        const backedUp = readTaggedVariableBackup(document, name);
+        const initial = staticValuePreview(estimate) || estimate;
+        const value = [initial ? `Valor inicial: \`${initial.replace(/`/g, "\\`")}\`` : "Valor estático desconocido"];
+        if (observed) value.unshift(`Valor ejecutado (${observed.scope}): \`${observed.value.replace(/`/g, "\\`")}\``);
+        else value.unshift("Sin valor ejecutado capturado");
+        if (backedUp !== null) value.push(`backup: \`${backedUp.value.replace(/`/g, "\\`")}\` (linea ${backedUp.line})`);
+        const backupLines = backupLocationsForTag(document, name);
+        if (backupLines.length) {
+            const links = backupLines.map((lineNo) => `[linea ${lineNo + 1}](${vscode.Uri.file(document.uri.fsPath).with({ fragment: `L${lineNo + 1}` }).toString()})`);
+            value.push(`Backups en ${links.join(", ")}`);
+        }
+        return new vscode.Hover(new vscode.MarkdownString(`**${name}**\n\n${value.join(" | ")}`), token);
+    }
+
+    const text = document.getText();
+    const lines = text.split(/\r?\n/);
+    const objectBinding = registryBindings(text, registrySyntax.objects).bindings.get(name);
+    if (objectBinding && (objectBinding.names.length > 1 || lines[position.line].includes(objectBinding.object.name))) {
+        const link = vscode.Uri.file(document.uri.fsPath).with({ fragment: `L${objectBinding.line + 1}` }).toString();
+        const names = objectBinding.names.map((alias) => `\`${alias}\``).join(", ");
+        const md = new vscode.MarkdownString(`**${objectBinding.object.name}**: ${names}.\n\n[Declaracion](${link})`);
+        md.isTrusted = true;
+        return new vscode.Hover(md, token);
+    }
+    const declaredHere = registryBindings(text, registrySyntax.objects).implicit.find((binding) =>
+        binding.line === position.line && binding.className === name);
+    if (declaredHere) {
+        return new vscode.Hover(new vscode.MarkdownString(`**${name}** crea automaticamente \`${declaredHere.name}\`.`), token);
+    }
+    for (const [lineNo, raw] of lines.entries()) {
+        const aliases = declarationAliases(raw);
+        if (aliases.length < 2 || !aliases.includes(name)) continue;
+        const link = vscode.Uri.file(document.uri.fsPath).with({ fragment: `L${lineNo + 1}` }).toString();
+        const md = new vscode.MarkdownString(`**${name}** y ${aliases.filter((alias) => alias !== name).map((alias) => `\`${alias}\``).join(", ")} apuntan al mismo objeto.\n\n[Declaración](${link})`);
+        md.isTrusted = true;
+        return new vscode.Hover(md, token);
+    }
+    return null;
+}
+
+function readTaggedVariableBackup(document, name) {
+    const escaped = escapeRegExp(name);
+    const text = document.getText();
+    const match = text.match(new RegExp(`\\bbackUp\\s+store\\s+${escaped}(?:\\s+\\/([^\\s]+))?(?=\\s|$)`, "im"));
+    if (!match) return null;
+    const fs = require("node:fs");
+    const path = require("node:path");
+    const project = getProjectRootPath(document);
+    const backupBase = [project, path.dirname(project)].map((dir) => path.resolve(dir, "backups"))
+        .find((dir) => fs.existsSync(dir));
+    if (!backupBase) return null;
+    const scope = path.basename(document.uri.fsPath).replace(/\.shaderdsl\.ts$/i, "");
+    const hint = (match[1] || "").replace(/^\/+/, "");
+    const relative = hint === scope || hint.startsWith(scope + "/") ? hint : `${scope}/${hint}`;
+    const target = path.resolve(backupBase, relative);
+    if (target !== backupBase && !target.startsWith(backupBase + path.sep)) return null;
+    try {
+        let file = target;
+        if (fs.statSync(target).isDirectory()) {
+            const candidates = fs.readdirSync(target).filter((entry) => entry.endsWith(".txt") && entry.includes(name + "_"));
+            file = path.join(target, candidates.sort().at(-1));
+        }
+        if (!file || fs.statSync(file).size > 1024 * 1024) return null;
+        const value = JSON.parse(fs.readFileSync(file, "utf8").trim().split(/\r?\n/).at(-1)).value;
+        return { value: typeof value === "object" ? JSON.stringify(value) : String(value),
+            line: text.slice(0, match.index).split(/\r?\n/).length };
+    } catch {
+        return null;
+    }
+}
+
+function readObservedTaggedValue(document, block, tag, name) {
+    const fs = require("node:fs");
+    const path = require("node:path");
+    const project = getProjectRootPath(document);
+    const backupBase = [project, path.dirname(project)].map((dir) => path.resolve(dir, "backups"))
+        .find((dir) => fs.existsSync(dir));
+    if (!backupBase) return null;
+    const key = [block, tag, name].map((part) => String(part).replace(/[^A-Za-z0-9_.-]+/g, "_").replace(/^_+|_+$/g, "") || "backup").join("_") + ".json";
+    const ownScope = path.basename(document.uri.fsPath).replace(/\.shaderdsl\.ts$/i, "");
+    let best = null;
+    try {
+        let cachedScopes = observedScopeCache.get(backupBase);
+        if (!cachedScopes || Date.now() - cachedScopes.at > 2000) {
+            cachedScopes = { at: Date.now(), scopes: fs.readdirSync(backupBase, { withFileTypes: true })
+                .filter((entry) => entry.isDirectory() && /^parseText/i.test(entry.name))
+                .map((entry) => entry.name) };
+            observedScopeCache.set(backupBase, cachedScopes);
+        }
+        const scopes = [ownScope, ...cachedScopes.scopes];
+        for (const scope of new Set(scopes)) {
+            const file = path.join(backupBase, scope, ".dnti-tags", key);
+            if (!fs.existsSync(file)) continue;
+            const stat = fs.statSync(file);
+            if (stat.size > 8192 || best && best.mtime >= stat.mtimeMs) continue;
+            let cached = observedTaggedFileCache.get(file);
+            if (!cached || cached.mtime !== stat.mtimeMs) {
+                cached = { mtime: stat.mtimeMs, snapshot: JSON.parse(fs.readFileSync(file, "utf8")) };
+                observedTaggedFileCache.set(file, cached);
+                while (observedTaggedFileCache.size > 128) observedTaggedFileCache.delete(observedTaggedFileCache.keys().next().value);
+            }
+            const snapshot = cached.snapshot;
+            if (snapshot.name !== name || snapshot.tag !== tag || snapshot.block !== block) continue;
+            best = { value: String(snapshot.value), scope, mtime: stat.mtimeMs };
+        }
+    } catch {
+        return null;
+    }
+    return best;
+}
+
+function backupLocationsForTag(document, name) {
+    const lines = document.getText().split(/\r?\n/);
+    const escaped = escapeRegExp(name);
+    const direct = new RegExp(`\\bbackUp\\s+store\\s+${escaped}\\b|\\bbackupRuntime\\.store\\s*\\(\\s*${escaped}\\b`, "i");
+    const found = new Set();
+    for (let i = 0; i < lines.length; i++) {
+        if (direct.test(stripLineComment(lines[i]))) found.add(i);
+    }
+    return [...found].sort((a, b) => a - b).slice(0, 8);
 }
 
 function provideShaderDslTagHover(document, position) {
@@ -3199,6 +3531,9 @@ function refreshEditorDecorations(editor) {
     const tagRanges = OPTION_COLORS.map(() => []);
     const derivedKeywordRanges = [];
     const derivedVariableRanges = [];
+    const implicitObjectNameOptions = [];
+    const taggedValueOptions = [];
+    const tagBraceRanges = [];
     const optiRanges = [];
     const optiLineRanges = [];
     const optiFadedRanges = [];
@@ -3253,6 +3588,8 @@ function refreshEditorDecorations(editor) {
             optiFadedRanges,
             optiTextRanges,
             tagDefinitions,
+            taggedValueOptions,
+            tagBraceRanges,
         );
         collectTexUnitAndTextureDecorations(editor.document, text, texUnitRanges, textureRanges);
         collectResourceAndDslVisuals(
@@ -3276,6 +3613,16 @@ function refreshEditorDecorations(editor) {
         duplicateUniformErrorOptions.push(...uniformDiagnostics.duplicateErrorOptions);
         uniformOverrideOptions.push(...uniformDiagnostics.overrideOptions);
         drawBackupPreviewOptions.push(...buildDrawBackupPreviewOptions(editor, text));
+        for (const binding of registryBindings(text, registrySyntax.objects).implicit) {
+            const line = editor.document.lineAt(binding.line).text;
+            const at = line.indexOf(binding.className);
+            if (at < 0) continue;
+            const end = new vscode.Position(binding.line, at + binding.className.length);
+            implicitObjectNameOptions.push({
+                range: new vscode.Range(end, end),
+                renderOptions: { after: { contentText: `  ${binding.name}` } },
+            });
+        }
     }
 
     optionDecorations.forEach((decoration, index) => {
@@ -3288,6 +3635,9 @@ function refreshEditorDecorations(editor) {
     editor.setDecorations(branchDecoration, branchRanges);
     editor.setDecorations(derivedKeywordDecoration, derivedKeywordRanges);
     editor.setDecorations(derivedVariableDecoration, derivedVariableRanges);
+    editor.setDecorations(implicitObjectNameDecoration, implicitObjectNameOptions);
+    editor.setDecorations(taggedValueDecoration, taggedValueOptions);
+    editor.setDecorations(tagBraceDecoration, tagBraceRanges);
     tagDecorationPalette.forEach((d, i) => editor.setDecorations(d, tagRanges[i]));
     editor.setDecorations(optiDecoration, optiRanges);
     editor.setDecorations(optiKeywordDecoration, optiTextRanges);
@@ -3314,7 +3664,10 @@ function refreshEditorDecorations(editor) {
                 color: TEX_UNIT_COLORS[i],
             },
         });
-        editor.setDecorations(squareDecoration, rebindSquareRangesByUnit[i]);
+        editor.setDecorations(squareDecoration, rebindSquareRangesByUnit[i].filter((entry) => {
+            const range = entry?.range || entry;
+            return Number.isInteger(range?.start?.line) && Number.isInteger(range?.end?.line);
+        }));
     });
     editor.setDecorations(emptySquareDecoration, rebindEmptySquareRanges);
     editor.setDecorations(drawBackupPreviewDecoration, drawBackupPreviewOptions);
@@ -3336,7 +3689,7 @@ function refreshEditorDecorations(editor) {
     }
 }
 
-function collectTagDecorations(document, text, editor, tagRanges, derivedKeywordRanges, derivedVariableRanges, optiRanges, optiLineRanges, optiFadedRanges, optiTextRanges, tagDefinitionsInfo) {
+function collectTagDecorations(document, text, editor, tagRanges, derivedKeywordRanges, derivedVariableRanges, optiRanges, optiLineRanges, optiFadedRanges, optiTextRanges, tagDefinitionsInfo, taggedValueOptions, tagBraceRanges) {
     const lines = text.split(/\r?\n/);
     const colorById = new Map();
     const optiNames = new Set();
@@ -3409,32 +3762,32 @@ function collectTagDecorations(document, text, editor, tagRanges, derivedKeyword
             continue;
         }
 
-        const inlineTagRegex = /(^|[^A-Za-z0-9_])-\s*([A-Za-z0-9_][A-Za-z0-9_-]*)\s*-\s*([^{}]*?)(?=\s*(?:\{|$))/gi;
-        let tagMatch;
-        while ((tagMatch = inlineTagRegex.exec(code)) !== null) {
-            const prefixLen = tagMatch[1].length;
-            const tagTokenStart = lineStart + tagMatch.index + prefixLen;
-            const tagTokenEnd = tagTokenStart + tagMatch[2].length + 2;
-            const commentStartAbs = lineStart + tagMatch.index + prefixLen + tagMatch[0].indexOf(tagMatch[3]);
-            const commentEndAbs = commentStartAbs + tagMatch[3].length;
+        for (const span of inlineTagSpans(code)) {
+            const tagTokenStart = lineStart + span.start;
+            const tagTokenEnd = lineStart + span.end;
             const resolved = applyTagStyle(
-                tagMatch[2],
+                span.tag,
                 lineNo,
                 lineStart,
                 lineStart + code.length,
                 line,
                 rangeFromOffsets(document, tagTokenStart, tagTokenEnd),
-                commentEndAbs > commentStartAbs ? rangeFromOffsets(document, commentStartAbs, commentEndAbs) : null,
+                null,
             );
 
             if (!resolved.isOptiTag) {
-                const rawTagId = tagMatch[2].toLowerCase();
+                const rawTagId = span.tag.toLowerCase();
                 let paletteIndex = colorById.get(rawTagId);
                 if (paletteIndex === undefined) {
                     paletteIndex = stableColorIndex(rawTagId, tagRanges.length);
                     colorById.set(rawTagId, paletteIndex);
                 }
-                tagRanges[paletteIndex].push(rangeFromOffsets(document, tagTokenStart, tagTokenEnd));
+                const tagDef = tagDefs.get(resolveTagName(span.tag, tagAliases));
+                if (tagDef?.lineColor) {
+                    addDynamicRange({ color: tagDef.lineColor, fontWeight: "700" }, rangeFromOffsets(document, tagTokenStart, tagTokenEnd));
+                } else {
+                    tagRanges[paletteIndex].push(rangeFromOffsets(document, tagTokenStart, tagTokenEnd));
+                }
             } else {
                 optiRanges.push(rangeFromOffsets(document, tagTokenStart, tagTokenEnd));
                 optiTextRanges.push(rangeFromOffsets(document, lineStart, lineStart + code.length));
@@ -3442,6 +3795,22 @@ function collectTagDecorations(document, text, editor, tagRanges, derivedKeyword
                     new vscode.Position(lineNo, 0),
                     new vscode.Position(lineNo, code.length),
                 ));
+            }
+            const blockName = code.trim().match(/^([A-Za-z_]\w*)/)?.[1] || "block";
+            for (const variable of span.variables) {
+                const observed = readObservedTaggedValue(document, blockName, span.tag, variable.name);
+                const estimate = staticValuePreview(latestAssignment(text, variable.name, lineNo));
+                const fullValue = observed?.value || estimate || "sin ejecutar";
+                const shown = fullValue.length > 72 ? `${fullValue.slice(0, 69)}...` : fullValue;
+                const tagDef = tagDefs.get(resolveTagName(span.tag, tagAliases));
+                const color = tagDef?.lineColor || OPTION_COLORS[stableColorIndex(span.tag.toLowerCase(), OPTION_COLORS.length)].color;
+                const numeric = /^[-+]?\d+(?:\.\d+)?$/.test(fullValue);
+                taggedValueOptions.push({
+                    range: rangeFromOffsets(document, lineStart + variable.start, lineStart + variable.end),
+                    renderOptions: { after: { contentText: ` = ${shown}`, color: numeric ? "#ffffff" : color, fontWeight: numeric ? "700" : "normal" } },
+                });
+                tagBraceRanges.push(rangeFromOffsets(document, lineStart + variable.start, lineStart + variable.start + 1));
+                tagBraceRanges.push(rangeFromOffsets(document, lineStart + variable.end - 1, lineStart + variable.end));
             }
         }
 
@@ -3506,11 +3875,21 @@ function collectTagDecorations(document, text, editor, tagRanges, derivedKeyword
 
     const derivedRegex = /\b(?:let|var)\s+(derived)\s+([A-Za-z_]\w*)/g;
     let m;
+    const derivedNames = new Set();
     while ((m = derivedRegex.exec(text)) !== null) {
+        derivedNames.add(m[2]);
         const derivedStart = m.index + m[0].indexOf(m[1]);
-        const varStart = m.index + m[0].lastIndexOf(m[2]);
         derivedKeywordRanges.push(rangeFromOffsets(document, derivedStart, derivedStart + m[1].length));
-        derivedVariableRanges.push(rangeFromOffsets(document, varStart, varStart + m[2].length));
+    }
+    if (derivedNames.size) {
+        for (const [lineNo, line] of lines.entries()) {
+            const code = stripLineComment(line);
+            const lineStart = document.offsetAt(new vscode.Position(lineNo, 0));
+            for (const match of code.matchAll(/\b[A-Za-z_]\w*\b/g)) {
+                if (!derivedNames.has(match[0])) continue;
+                derivedVariableRanges.push(rangeFromOffsets(document, lineStart + match.index, lineStart + match.index + match[0].length));
+            }
+        }
     }
 
     for (const [decoration, ranges] of dynamicRanges.entries()) {
@@ -3570,7 +3949,7 @@ function collectTexUnitAndTextureDecorations(document, text, texUnitRanges, text
             }
             return;
         }
-        const texArrAliasMatch = line.match(/\b([A-Za-z_]\w*)(?:\s*\|=\s*([A-Za-z_]\w*))?\s*=\s*texture2DArray\s+[A-Za-z_]\w*\s+([A-Za-z_]\w*)\s+"[^"]*"\s+(?:TexUnit|texUnit)?(\d+)\b/);
+        const texArrAliasMatch = line.match(/\b([A-Za-z_]\w*)(?:\s*\|=\s*([A-Za-z_]\w*))?\s*=\s*(?:texture2DArray|texture3DArray|tex3DArray|tex3D)\s+[A-Za-z_]\w*\s+([A-Za-z_]\w*)\s+"[^"]*"\s+(?:TexUnit|texUnit)?(\d+)\b/);
         if (texArrAliasMatch) {
             const unitIndex = Number.parseInt(texArrAliasMatch[4], 10);
             registerAssociation(texArrAliasMatch[1], unitIndex);
@@ -3578,7 +3957,7 @@ function collectTexUnitAndTextureDecorations(document, text, texUnitRanges, text
             registerAssociation(texArrAliasMatch[3], unitIndex);
             return;
         }
-        const texArrMatch = line.match(/\btexture2DArray\s+[A-Za-z_]\w*\s+([A-Za-z_]\w*)\s+"[^"]*"\s+(?:TexUnit|texUnit)?(\d+)\b/);
+        const texArrMatch = line.match(/\b(?:texture2DArray|texture3DArray|tex3DArray|tex3D)\s+[A-Za-z_]\w*\s+([A-Za-z_]\w*)\s+"[^"]*"\s+(?:TexUnit|texUnit)?(\d+)\b/);
         if (texArrMatch) {
             const unitIndex = Number.parseInt(texArrMatch[2], 10);
             registerAssociation(texArrMatch[1], unitIndex);
@@ -3646,7 +4025,7 @@ function collectTexUnitAndTextureDecorations(document, text, texUnitRanges, text
             pushExplicitRange(tokenStart, token, unitIndex);
         }
 
-        const tex2DArrayUnitRegex = /(?:\b[A-Za-z_]\w*(?:\s*\|=\s*[A-Za-z_]\w*)?\s*=\s*)?\btexture2DArray\b[\s\S]*?\b([A-Za-z_]\w*)\s+"[^"]*"\s+((?:TexUnit|texUnit)\d+|\d+)\b/g;
+        const tex2DArrayUnitRegex = /(?:\b[A-Za-z_]\w*(?:\s*\|=\s*[A-Za-z_]\w*)?\s*=\s*)?\b(?:texture2DArray|texture3DArray|tex3DArray|tex3D)\b[\s\S]*?\b([A-Za-z_]\w*)\s+"[^"]*"\s+((?:TexUnit|texUnit)\d+|\d+)\b/g;
         while ((match = tex2DArrayUnitRegex.exec(code)) !== null) {
             const token = match[2];
             const unitIndex = normalizeUnitToken(token);
@@ -4242,6 +4621,9 @@ async function provideSnippetDefinition(document, position) {
         return null;
     }
 
+    const registryLocation = resolveRegistryDefinition(document, position, symbol);
+    if (registryLocation) return registryLocation;
+
     if (symbol.kind === "programPath") {
         const path = require("path");
         const resolved = path.resolve(path.dirname(document.uri.fsPath), "glsl", symbol.text.endsWith(".frag") ? symbol.text : `${symbol.text}.frag`);
@@ -4296,6 +4678,12 @@ async function provideSnippetDefinition(document, position) {
         return localDslLoc;
     }
 
+    const imported = importedSnippetSymbols(getProjectRootPath(document), document.uri.fsPath, __dirname, vscode.workspace.textDocuments).get(symbol.text);
+    if (imported?.definition) {
+        const { file, line, character } = imported.definition;
+        return new vscode.Location(vscode.Uri.file(file), new vscode.Position(line, character));
+    }
+
     const declarationMatchers = buildDeclarationMatchers(symbol.text);
     const docs = await getSearchDocuments(document, { family: "code" });
 
@@ -4318,6 +4706,24 @@ async function provideSnippetDefinition(document, position) {
     }
 
     return null;
+}
+
+function resolveRegistryDefinition(document, position, symbol) {
+    if (symbol.kind !== "text") return null;
+    const line = stripLineComment(document.lineAt(position.line).text);
+    const before = line.slice(0, symbol.range.start.character);
+    let definition = null;
+    const member = before.match(/\b([A-Za-z_]\w*)\.$/);
+    if (member) {
+        const binding = registryBindings(document.getText(), registrySyntax.objects).bindings.get(member[1]);
+        definition = binding?.object.methods?.find((method) => method.name === symbol.text)?.definition;
+    } else if (/^\s*[A-Za-z_]\w*\s*\(/.test(line) || before.trim() === "") {
+        definition = registrySyntax.functions.find((entry) => entry.name === symbol.text)?.definition;
+    }
+    if (!definition?.file) return null;
+    const file = require("node:path").resolve(__dirname, "generated", "registrySources", definition.file);
+    if (!require("node:fs").existsSync(file)) return null;
+    return new vscode.Location(vscode.Uri.file(file), new vscode.Position(definition.line, definition.character));
 }
 
 async function provideSnippetReferences(document, position) {
@@ -4739,10 +5145,11 @@ function findParseTextImportSymbolAtPosition(line, character) {
 }
 
 function findProgramPathSymbolAtPosition(line, character) {
-    const match = line.match(/^\s*program\s+([A-Za-z_]\w*)(?:\s*\|\s*[A-Za-z_]\w*)?\s+"([^"]+)"\s*\{/);
-    if (!match) return null;
-    const pathText = match[2];
-    const start = line.indexOf(`"${pathText}"`) + 1;
+    const blockMatch = line.match(/^\s*program\s+([A-Za-z_]\w*)(?:\s*\|\s*[A-Za-z_]\w*)?\s+"([^"]+)"\s*\{/);
+    const objectMatch = line.match(/^\s*(?:[A-Za-z_]\w*\s*=\s*)?Program\s+([^\s|]+)(?:\s*\|=\s*[A-Za-z_]\w*)?\s*$/);
+    if (!blockMatch && !objectMatch) return null;
+    const pathText = blockMatch ? blockMatch[2] : objectMatch[1];
+    const start = blockMatch ? line.indexOf(`"${pathText}"`) + 1 : line.indexOf(pathText, line.indexOf("Program") + "Program".length);
     const end = start + pathText.length;
     if (character < start || character > end) return null;
     return {
@@ -5033,12 +5440,19 @@ function buildDeclarationMatchers(symbol) {
         new RegExp(`^\\s*${name}\\s*:\\s*\\(`, "m"),
         new RegExp(`^\\s*program\\s+[^\\n{]*\\b${name}\\b`, "m"),
         new RegExp(`^\\s*(?:new-|in-)?tex2D\\s+[^\\n]*\\b${name}\\b`, "m"),
+        new RegExp(`^\\s*${name}\\s*=\\s*[A-Z][A-Za-z0-9_]*\\b`, "m"),
     ];
 }
 
 function findDslDefinition(document, symbol) {
     const escaped = escapeRegExp(symbol);
     const text = stripLineCommentsPreserveOffsets(document.getText());
+    for (const match of text.matchAll(/^.*$/gm)) {
+        if (declarationAliases(match[0]).length < 2 || !declarationAliases(match[0]).includes(symbol)) continue;
+        const token = new RegExp(`\\b${escaped}\\b`).exec(match[0]);
+        if (token) return new vscode.Location(document.uri, rangeFromOffsets(document,
+            match.index + token.index, match.index + token.index + symbol.length));
+    }
     const checks = [
         new RegExp(`^\\s*(?:const|let|var)\\s+${escaped}\\b`, "m"),
         new RegExp(`^\\s*(?:let|var)\\s*\\{[\\s\\S]*?\\b${escaped}\\s*=`, "m"),
@@ -5049,6 +5463,8 @@ function findDslDefinition(document, symbol) {
         new RegExp(`^\\s*(?:new-|in-)?tex2D\\s+${escaped}(?:\\s*(?:\\||~|\\[|\\b))`, "m"),
         new RegExp(`^\\s*(?:new-|in-)?tex2D\\s+[A-Za-z_$][A-Za-z0-9_$]*\\s*(?:\\||~)\\s*${escaped}\\b`, "m"),
         new RegExp(`^\\s*texture2DArray\\s+[A-Za-z_][A-Za-z0-9_$]*\\s+${escaped}\\s+"`, "m"),
+        new RegExp(`^\\s*${escaped}\\s*=\\s*[A-Z][A-Za-z0-9_]*\\b`, "m"),
+        new RegExp(`^\\s*[A-Za-z_]\\w*\\s*=\\s*[A-Z][^\\n]*\\|=\\s*${escaped}\\b`, "m"),
         new RegExp(`^\\s*resource\\s+${escaped}\\b`, "m"),
         new RegExp(`^\\s*texturePreset\\s+${escaped}\\b`, "m"),
     ];

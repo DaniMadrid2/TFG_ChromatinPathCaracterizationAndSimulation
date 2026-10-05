@@ -17,11 +17,12 @@ test('builds registry highlighting and object rules from TypeScript modules', ()
         fs.writeFileSync(path.join(extension, 'syntaxes', 'parse-text-ts.tmLanguage.json'),
             JSON.stringify({ patterns: [{ name: 'support.function.parser-helpers.parse-text-ts', match: 'draw' }] }));
         fs.writeFileSync(path.join(parser, 'registryModules', 'example.ts'), `
+            export class FilledProgram { draw(count: number) {} setHue(value: number) {} }
             function buildHandlers() { return {
                 objects: {
                     //@dnti-color #12ab34
                     //@dnti-createsInternalTexture
-                    Filled: () => {},
+                    Filled: (params) => { const program = new FilledProgram(); params.get("input"); return program; },
                 },
                 functions: { ping: () => {} },
             }; }
@@ -32,7 +33,16 @@ test('builds registry highlighting and object rules from TypeScript modules', ()
         });
         assert.equal(result.status, 0, result.stderr);
         const metadata = JSON.parse(fs.readFileSync(path.join(extension, 'generated', 'registrySyntax.json'), 'utf8'));
-        assert.deepEqual(metadata.objects, [{ name: 'Filled', tags: { color: '#12ab34', createsInternalTexture: true } }]);
+        assert.equal(metadata.objects.length, 1);
+        const filled = metadata.objects[0];
+        assert.equal(filled.name, 'Filled');
+        assert.deepEqual(filled.tags, { color: '#12ab34', createsInternalTexture: true });
+        assert.equal(filled.className, 'FilledProgram');
+        assert.deepEqual(filled.parameters, ['input']);
+        assert.deepEqual(filled.methods.map((method) => method.name), ['draw', 'setHue']);
+        assert.deepEqual(filled.methods[0].parameters, ['count']);
+        assert.match(filled.methods[0].definition.file, /registryModules\/example\.ts$/);
+        assert.ok(fs.existsSync(path.join(extension, 'generated', 'registrySources', filled.methods[0].definition.file)));
         assert.deepEqual(metadata.functions.map((item) => item.name), ['ping']);
         const grammar = JSON.parse(fs.readFileSync(path.join(extension, 'syntaxes', 'parse-text-ts.tmLanguage.json'), 'utf8'));
         assert.match(grammar.patterns[0].match, /Filled/);
@@ -47,4 +57,5 @@ test('generated metadata includes MeshCapsule internal texture markers', () => {
     for (const name of ['MeshProgram', 'SolidMeshProgram']) {
         assert.equal(metadata.objects.find((item) => item.name === name)?.tags.createsInternalTexture, true);
     }
+    assert.ok(metadata.objects.find((item) => item.name === 'SolidMeshProgram').methods.some((method) => method.name === 'smoothColor'));
 });

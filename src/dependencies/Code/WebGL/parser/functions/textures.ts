@@ -21,5 +21,18 @@ export const register: RegistryFactory = parser => ({
                 size: [sx, sy, sz],
             });
         },
+        texture3DArray: (params) => {
+            const size = params.get(4);
+            const data = params.get(1);
+            return parser.lastUsedProgram?.texture3DArray?.({
+                format: parser.gctx.TexExamples[params.get(0)],
+                data: parser.parseValue(data.startsWith("{") ? data : `{${data}}`),
+                name: params.get(2),
+                texUnit: params.get(3),
+                size: Array.isArray(size) ? size : [1, 1, 1],
+            });
+        },
+        tex3D: (params) => parser.FunctionRegistry.texture3DArray(params),
+        tex3DArray: (params) => parser.FunctionRegistry.texture3DArray(params),
     },
 });

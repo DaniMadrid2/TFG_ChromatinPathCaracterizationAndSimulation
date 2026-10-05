@@ -1,4 +1,4 @@
-import { __mountGlobalBlocks, __prepareMathFunction } from "/Code/opengl/opengl.js";
+import { __mountGlobalBlocks } from "/Code/opengl/opengl.js";
 import {Camera2D, createCanvas, createLayer, GameObject, ImgLoader, ModernCtx, Scene,MouseManager, ListenerManager, openFullscreen, keypress, mousepos, mouseclick, KeyManager} from "/Code/Game/Game.js";
 import { Matrix2D, MatrixStack2D, Vector2D, Vector3D } from "/Code/Matrix/Matrix.js";
 import {Funcion, Arrow, Field,Axis,Axis2D,Funcion2D,Funcion3D,MatrixObject,axisprops,addMapStyle,mapstyle, setMapStyle,
@@ -17,6 +17,8 @@ import { BindableTexture, GLMode, TexExamples, TextureUnitType, WebGLMan, WebPro
 
 
 // @ts-nocheck
+
+import { BackupRuntime } from "/Code/WebGL/runtime/BackupRuntime.js";
 
 //<Pre>
 (async () => {
@@ -53,18 +55,29 @@ var lastUsedProgram: any = null;
 var lastFillerProgram: any = null;
 void lastFillerProgram;
 var __globalBlocks: Array<{priority:number, order:number, fn:(dt:any)=>any}> = [];
+const backupRuntime = new BackupRuntime(gl, TexExamples, "parseTextC1", () => ({
+    recomputeTau: typeof recomputeTau !== "undefined" && !!recomputeTau,
+    tauModelStamp: typeof tauModelStamp !== "undefined" ? tauModelStamp : undefined
+}));
+const readBackup = (path: string) => backupRuntime.readBackup(path);
 var meshProgram = new SolidMeshRenderingProgram(gl, "TexUnit20", ([1024, 1024])[0], ([1024, 1024])[1]).includeInWebManList();
 lastUsedProgram = meshProgram;
 await meshProgram.loadProgram(meshProgram.vertPath, meshProgram.fragPath, (source => source), (source => source));
 await meshProgram.use?.();
 lastUsedProgram = meshProgram;
 let scaleFactor = 1;;
-meshProgram.initUniforms().setPerXPerY(0.5,0.5).setDXDY(0.16*scaleFactor,0.16*scaleFactor).setYScale(scaleFactor).setColorHueScale(1);
+var time = 0;;
+meshProgram.initUniforms().smoothColor(false).setPerXPerY(0.5,0.5).smoothColor(true).setDXDY(0.16*scaleFactor,0.16*scaleFactor).setYScale(scaleFactor).setColorHueScale(0.2).setRepeat(true);
 var surface;
 (()=>{
     // createIdealMesh surface
-    let compiledCreateIdealMeshFn = __prepareMathFunction("(x,y)=>{return sin(x/4)*cos(y/4)}");
-    surface = lastUsedProgram?.createIdealTexture?.("TexUnit20", compiledCreateIdealMeshFn);
+    surface = lastUsedProgram?.createIdealTexture?.("TexUnit20");
+    if (surface) {
+        surface.lastPreparedFunc = "(x, y) => { return sin(x / 10 + {time}) * cos(y / 10) * 2 - 30 / (1 + (Math.pow((x-512)*0.03, 2) + Math.pow((y-512)*0.03, 2)) * 0.1); }";
+        surface.meshContext = {
+            get time(){ return (typeof time !== "undefined") ? time : (globalThis as any).time; },
+        };
+    }
     surface?.bind?.();
 })();
 var camera3D = new Camera3D(new Vector3D(0,4,12));
@@ -77,8 +90,7 @@ lastUsedProgram = axis3DGroup;
 axis3DGroup.setDivisions(4).initUniforms();
 camera3D.bindRKey("z");
 var meshFillerProgram = new MeshFillerProgram(gl, "TexUnit20").includeInWebManList();
-meshFillerProgram.generateProgram("(x,y)=>{ sin(x/4)*cos(y/4) }", globalThis as any);
-await meshFillerProgram.loadProgram?.();
+await meshFillerProgram.loadFromTexture();
 lastFillerProgram = meshFillerProgram;
 let offset = new Vector2D(0, 0);
 var demo = webglMan.program(-1, "demo");
@@ -108,12 +120,20 @@ var positionTextureNext = movePoints.createTexture2D("positionTextureNext", [1, 
 (positionTextureNext as any).__backupProgram = (movePoints as any)?.ID ?? (movePoints as any)?.fragPath ?? "movePoints";
 let movePointsFBO = null;
 var __globalBlockFn_0 = async (dt)=>{ // tick
+    void backupRuntime.captureTaggedValue("tick", "2", "offset", offset);
+    time += dt*3;;
     camera3D.tick( (dt) , (keypress) , (mousepos) , (mouseclick) );
+    await meshFillerProgram.use?.();
+    lastUsedProgram = meshFillerProgram;
+    meshFillerProgram.tick().draw();
     await meshProgram.use?.();
     lastUsedProgram = meshProgram;
     meshProgram.draw(0,0,640,480,(camera3D),"TRIANGLE_STRIP");
 };
 __globalBlocks.push({ priority: 10, order: 0, fn: __globalBlockFn_0 });
+KeyManager.OnKey("f", async (e)=>{ // OnKey
+if((e as any)?.repeat) return;
+});
 KeyManager.OnKey("a", async (e)=>{ // OnKey
 if((e as any)?.repeat) return;
     offset.x += 0.1;

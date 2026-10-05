@@ -16,7 +16,7 @@ async function registryEntry(parserFile, registryRoot) {
   const modules = (await read('registryModules', ['index.ts', 'types.ts']))
     .map(file => add(file, 'module'));
   const group = (id, members, field) =>
-    `{ id: ${JSON.stringify(id)}, register: (parser, services) => ({ id: ${JSON.stringify(id)}, ${field}: Object.assign({}, ...[${members.map(name => `${name}.register`).join(',')}].map(register => register(parser, services).${field} || {})) }) }`;
+    `{ id: ${JSON.stringify(id)}, register: (parser, services) => { const parts = [${members.map(name => `${name}.register`).join(',')}].map(register => register(parser, services)); return { id: ${JSON.stringify(id)}, ${field}: Object.assign({}, ...parts.map(part => part.${field} || {})), namedParamsOnly: parts.flatMap(part => part.namedParamsOnly || []) }; } }`;
   return [
     ...imports,
     `DetailedParser.registryDefinitions = [${group('objects', objects, 'objects')}, ${group('functions', functions, 'functions')}, ${modules.join(',')}];`,

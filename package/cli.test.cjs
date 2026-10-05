@@ -32,7 +32,7 @@ test('discovers registry modules without editing the parser', async () => {
 test('capsule implementation contributes object and function DSL handlers', async () => {
   await temporaryWorkspace(async (root) => {
     const { DetailedParser } = await loadParser(root);
-    DetailedParser.activateRegistries('MeshProgram SolidMeshProgram createIdealMesh fillMeshTexture');
+    DetailedParser.activateRegistries('MeshProgram SolidMeshProgram Camera3D Axis3DGroup createIdealMesh fillMeshTexture');
     assert.equal(typeof DetailedParser.ObjectRegistry.MeshProgram, 'function');
     assert.equal(typeof DetailedParser.ObjectRegistry.SolidMeshProgram, 'function');
     assert.equal(typeof DetailedParser.FunctionRegistry.createIdealMesh, 'function');
@@ -41,9 +41,94 @@ test('capsule implementation contributes object and function DSL handlers', asyn
     assert.match(DetailedParser.transpileSimpleStatement('mesh = MeshProgram input=TexUnit20 4x4', new Set()).join('\n'), /new MeshRenderingProgram/);
     assert.match(DetailedParser.transpileSimpleStatement('MeshProgram input=TexUnit20 1024x1024', new Set()).join('\n'), /var meshProgram = new MeshRenderingProgram/);
     assert.match(DetailedParser.transpileSimpleStatement('SolidMeshProgram input=TexUnit20 4x3', new Set()).join('\n'), /var solidMeshProgram = new SolidMeshRenderingProgram/);
+    const cameraAliases = DetailedParser.transpileSimpleStatement('Camera3D camera2D|cam3D pos=vec3(0,4,20) |= cam2|cam4,cam5', new Set()).join('\n');
+    assert.match(cameraAliases, /var camera2D = new Camera3D/);
+    assert.match(cameraAliases, /var cam3D = camera2D;/);
+    assert.match(cameraAliases, /var cam2 = camera2D;/);
+    assert.match(cameraAliases, /var cam4 = camera2D;/);
+    assert.match(cameraAliases, /var cam5 = camera2D;/);
+    assert.doesNotMatch(cameraAliases, /var camera3D/);
+    assert.match(DetailedParser.transpileSimpleStatement('Camera3D pos=vec3(0,0,0) |= cam2', new Set()).join('\n'), /var camera3D = new Camera3D/);
+    const seededMesh = DetailedParser.transpileSimpleStatement('surface=createIdealMesh TexUnit20 (x,y)=>{return sin(x+{time})+{offset.x,float};}.bind()', new Set()).join('\n');
+    assert.match(seededMesh, /createIdealTexture\?\.\("TexUnit20"\)/);
+    assert.doesNotMatch(seededMesh, /__prepareMathFunction|compiledCreateIdealMeshFn/);
+    assert.match(seededMesh, /get time\(\)/);
+    assert.match(seededMesh, /lastPreparedFunc =/);
+    assert.match(seededMesh, /meshContext =/);
+    const reusedMesh = DetailedParser.transpileSimpleStatement('MeshFillerProgram TexUnit20', new Set()).join('\n');
+    assert.match(reusedMesh, /await meshFillerProgram\.loadFromTexture\(\)/);
+    const filler = DetailedParser.GlobalContext.MeshFillerProgram;
+    const calls = [];
+    await filler.prototype.loadFromTexture.call({
+      valsTexUnit: 'TexUnit20',
+      getTextureByUnit: () => ({ lastPreparedFunc: '(x,y)=>{return {time};}', meshContext: { time: 7 } }),
+      generateProgram: (...args) => calls.push(args),
+      loadProgram: async () => calls.push('loaded'),
+    });
+    assert.equal(calls[0][0], '(x,y)=>{return {time};}');
+    assert.equal(calls[0].at(-1).time, 7);
+    assert.equal(calls[1], 'loaded');
+    assert.deepEqual(DetailedParser.extractContextNamesFromCallback('(x,y)=>{let r=1;if(r) return r;}'), []);
+    assert.deepEqual(DetailedParser.extractContextNamesFromCallback('(x,y)=>{let r={time};if(r) return r;}'), ['time']);
+    const complexTexture = { lastPreparedFunc: '(x,y)=>{let r=x+{time};if(r>2) return 10;return r;}', meshContext: { get time() { return 2; } } };
+    const gpuFiller = Object.create(filler.prototype);
+    gpuFiller.valsTexUnit = 'TexUnit20';
+    gpuFiller.getTextureByUnit = () => complexTexture;
+    gpuFiller.generateProgram = (...args) => calls.push(args);
+    gpuFiller.loadProgram = async () => calls.push('loaded');
+    await gpuFiller.loadFromTexture();
+    assert.equal(calls.at(-2)[0], complexTexture.lastPreparedFunc);
+    const shaderFiller = Object.create(filler.prototype);
+    shaderFiller.uniformsToUpdate = [];
+    shaderFiller.generateProgram('(x,y)=>{let r=x+y;if(r===0) return 10;return cos(r)/r;}');
+    assert.match(shaderFiller.fragPath, /float r =\s*x\+y;/);
+    assert.match(shaderFiller.fragPath, /if\(r==0\.0\) \{ outRed = 10\.0; return; \}/);
+    assert.doesNotMatch(shaderFiller.fragPath, /get if|float res/);
+    shaderFiller.generateProgram('(x,y)=>{let r=0;for(let i=0;i<3;i++){r+=i;}while(r<4){r+=1;}return r;}');
+    assert.match(shaderFiller.fragPath, /for\(float i =\s*0\.0;i<3\.0;i\+\+\)/);
+    assert.match(shaderFiller.fragPath, /while\(r<4\.0\)/);
+    shaderFiller.generateProgram('(x, y) => {let dx = (x - 512) * 0.05;let dy = (y - 512) * 0.05;let r = Math.sqrt(dx * dx + dy * dy);if (r === 0) return 10; return (cos(r) / r) * 15;}');
+    assert.match(shaderFiller.fragPath, /float r =\s*sqrt\(dx \* dx \+ dy \* dy\)/);
+    assert.match(shaderFiller.fragPath, /if \(r == 0\.0\) \{ outRed = 10\.0; return; \}/);
+    const fillerWithoutProgram = Object.create(filler.prototype);
+    assert.equal(fillerWithoutProgram.tick(), fillerWithoutProgram);
+    assert.equal(fillerWithoutProgram.tick().draw(), fillerWithoutProgram);
+    const updatedMesh = DetailedParser.transpileSimpleStatement('fillMeshTexture surface (x,y)=>{return sin(x+{time});}', new Set()).join('\n');
+    assert.match(updatedMesh, /fillMeshTexture.*__prepareMathFunction/);
+    assert.match(updatedMesh, /"time": time/);
     const SolidMesh = DetailedParser.GlobalContext.SolidMeshRenderingProgram;
     const solid = new SolidMesh({}, 'TexUnit20', 4, 3);
-    solid.uInt = () => ({ set() {} });
+    const uniformChanges = [];
+    solid.uInt = (name) => ({ set(value) { uniformChanges.push([name, value]); } });
+    solid.smoothColor(false);
+    assert.deepEqual(uniformChanges.at(-1), ['smoothColor', 0]);
+    solid.smoothColor();
+    assert.deepEqual(uniformChanges.at(-1), ['smoothColor', 1]);
+    const repeatCalls = [];
+    const repeatTexture = {};
+    const repeatGl = {
+      ACTIVE_TEXTURE: 1, TEXTURE_BINDING_2D: 2, TEXTURE0: 100, TEXTURE_2D: 3,
+      TEXTURE_WRAP_S: 4, TEXTURE_WRAP_T: 5, REPEAT: 6, CLAMP_TO_EDGE: 7,
+      getParameter: (key) => key === 1 ? 120 : null,
+      activeTexture: (unit) => repeatCalls.push(['active', unit]),
+      bindTexture: (target, texture) => repeatCalls.push(['bind', target, texture]),
+      texParameteri: (target, axis, wrap) => repeatCalls.push(['wrap', axis, wrap]),
+    };
+    const repeatedMesh = new SolidMesh(repeatGl, 'TexUnit20', 4, 3);
+    repeatedMesh.program = {};
+    repeatedMesh.use = () => repeatedMesh;
+    repeatedMesh.uInt = (name) => ({ set(value) { repeatCalls.push(['uniform', name, value]); } });
+    repeatedMesh.getTextureByUnit = () => repeatTexture;
+    assert.equal(repeatedMesh.setRepeat(true), repeatedMesh);
+    assert.deepEqual(repeatCalls.filter((entry) => entry[0] === 'wrap'), [['wrap', 4, 6], ['wrap', 5, 6]]);
+    assert.equal(repeatedMesh.setRepeat(false), repeatedMesh);
+    assert.deepEqual(repeatCalls.filter((entry) => entry[0] === 'wrap').slice(-2), [['wrap', 4, 7], ['wrap', 5, 7]]);
+    repeatedMesh.getTextureByUnit = () => undefined;
+    assert.equal(repeatedMesh.setRepeat(true), repeatedMesh);
+    repeatedMesh.getTextureByUnit = () => repeatTexture;
+    repeatedMesh.setRepeat(true);
+    assert.deepEqual(repeatCalls.filter((entry) => entry[0] === 'wrap').slice(-2), [['wrap', 4, 6], ['wrap', 5, 6]]);
+    assert.match(DetailedParser.transpileSimpleStatement('meshProgram.setRepeat(true)', new Set()).join('\n'), /meshProgram\.setRepeat\(true\)/);
     solid.setSize(4, 3);
     assert.equal(solid.totalSegments * 2, 18);
     assert.match(solid.vertexPositionCode(), /rowStride = msdLength \* 2 \+ 2/);
@@ -81,6 +166,50 @@ test('capsule implementation contributes object and function DSL handlers', asyn
     assert.ok([...cells.values()].every((count) => count === 2));
     assert.match(DetailedParser.transpileSimpleStatement('Axis3DGroup axisLength=vec3(15.3)', new Set()).join('\n'), /new Axis3DGroup/);
     assert.match(DetailedParser.transpileSimpleStatement('MeshFillerProgram TexUnit20 "(x,y)=>x"', new Set()).join('\n'), /new MeshFillerProgram/);
+  });
+});
+
+test('math callbacks receive typed and untyped DSL values at creation time', async () => {
+  const source = await fs.readFile(path.join(__dirname, '..', 'src', 'dependencies', 'Code', 'opengl', 'opengl.js'), 'utf8');
+  const helpers = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
+  const callback = helpers.__prepareMathFunction('(x,y)=>{return sin(x+{time})+{offset.x,float};}', { time: 1, 'offset.x': 2 });
+  assert.equal(callback(0, 0), Math.sin(1) + 2);
+  const later = helpers.__prepareMathFunction('(x,y)=>{return sin(x+{time});}', { time: 3 });
+  assert.equal(later(0, 0), Math.sin(3));
+});
+
+test('transpiles 3D textures inside programs and object-style aliases', () => {
+  const { DetailedParser: parser } = require('../dist/parser.cjs');
+  const declared = new Set(['samples']);
+  const texture = parser.transpileTex2DResourceLine('demo', 'tex3D volume RES [4 x 4 x 3] RGFloat TexUnit7 <= samples', declared).join('\n');
+  assert.match(texture, /demo\.createTexture3D\("volume", \[4, 4, 3\]/);
+  assert.match(texture, /TexUnit7/);
+  const object = parser.transpileSimpleStatement('volume |= other = texture3DArray RGFloat {samples} "volume" TexUnit7 [4 x 4 x 3]', new Set()).join('\n');
+  assert.match(object, /texture3DArray/);
+  assert.match(object, /var other = volume/);
+  const program = parser.transpileSimpleStatement('calcPCAProgram = Program pca\/1_calcPCA |= calcPCA', new Set()).join('\n');
+  assert.match(program, /var calcPCA = calcPCAProgram/);
+});
+
+test('parses a complete program with tex3D using the bundled runtime', async () => {
+  await temporaryWorkspace(async (root) => {
+    const name = 'parseTextC1.shaderdsl.ts';
+    await fs.writeFile(path.join(root, name), `<Pre/>
+let samples = new Float32Array(4 * 4 * 3 * 2)
+program demo "demo" {
+    tex3D volume RES [4 x 4 x 3] RGFloat TexUnit7 <= samples
+}
+volumeCopy = texture3DArray RGFloat {samples} "volumeCopy" TexUnit8 [4 x 4 x 3]
+layers |= layerAlias = texture2DArray RFloat {samples} "layers" TexUnit9 [4 x 4 x 1]
+<Pos>
+`);
+    const [output] = await parseFiles([name], { cwd: root });
+    const generated = await fs.readFile(output.tsFile, 'utf8');
+    assert.match(generated, /demo\.createTexture3D\("volume", \[4, 4, 3\]/);
+    assert.match(generated, /var volumeCopy = lastUsedProgram\?\.texture3DArray\?\./);
+    assert.match(generated, /var layers = lastUsedProgram\?\.texture2DArray\?\./);
+    assert.match(generated, /var layerAlias = layers/);
+    assert.ok((await fs.stat(output.jsFile)).size > 0);
   });
 });
 
@@ -254,6 +383,7 @@ test('transpiles line modes, inferred counts and attribute templates', () => {
 
 test('object declarations accept a trailing semicolon and number implicit aliases from 2', () => {
   const { DetailedParser: parser } = require('../dist/parser.cjs');
+  parser.activateRegistries('Camera3D MeshProgram');
   const declared = new Set();
   const explicit = parser.transpileSimpleStatement('camera = Camera3D pos=vec3(0,4,12);', declared).join('\n');
   assert.match(explicit, /var camera = new Camera3D\(new Vector3D\(0,4,12\)\);/);
@@ -262,6 +392,39 @@ test('object declarations accept a trailing semicolon and number implicit aliase
   const second = parser.transpileSimpleStatement('Camera3D pos=vec3(0,0,5);', declared).join('\n');
   assert.match(first, /var camera3D = new Camera3D/);
   assert.match(second, /var camera3D2 = new Camera3D/);
+  const added = parser.transpileSimpleStatement('Camera3D pos=vec3(0,0,1) |= cam2', declared).join('\n');
+  assert.match(added, /var camera3D3 = new Camera3D/);
+  assert.match(added, /var cam2 = camera3D3/);
+  const named = parser.transpileSimpleStatement('Camera3D camera2D pos=vec3(0,0,0)', declared).join('\n');
+  assert.match(named, /var camera2D = new Camera3D/);
+  const underscore = parser.transpileSimpleStatement('MeshProgram _mesh input=TexUnit20 4x4', declared).join('\n');
+  assert.match(underscore, /var _mesh = new MeshRenderingProgram/);
+});
+
+test('tagged runtime values overwrite one scoped snapshot without writing every tick', async () => {
+  const esbuild = require('esbuild');
+  const file = path.join(__dirname, '..', 'src', 'dependencies', 'Code', 'WebGL', 'runtime', 'BackupRuntime.ts');
+  const built = await esbuild.build({ entryPoints: [file], bundle: true, write: false, platform: 'node', format: 'cjs' });
+  const module = { exports: {} };
+  new Function('module', 'exports', 'require', built.outputFiles[0].text)(module, module.exports, require);
+  const { BackupRuntime } = module.exports;
+  const requests = [];
+  const originalFetch = global.fetch;
+  global.fetch = async (url, options) => {
+    requests.push({ url, body: JSON.parse(options.body) });
+    return { ok: true, text: async () => '{}' };
+  };
+  try {
+    const runtime = new BackupRuntime({}, {}, 'parseTextC1');
+    runtime.captureTaggedValue('tick', '2', 'offset', { x: 1 });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    runtime.captureTaggedValue('tick', '2', 'offset', { x: 2 });
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0].body.path, 'parseTextC1/.dnti-tags/tick_2_offset.json');
+    assert.equal(JSON.parse(requests[0].body.content).value, '{"x":1}');
+  } finally {
+    global.fetch = originalFetch;
+  }
 });
 
 test('transpiles swaps, temporary rebinding and backup retention options', async () => {

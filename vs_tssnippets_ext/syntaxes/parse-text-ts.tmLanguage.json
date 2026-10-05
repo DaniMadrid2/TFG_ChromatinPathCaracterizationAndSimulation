@@ -93,7 +93,7 @@
     },
     {
       "name": "support.function.registry-generated.parse-text-ts",
-      "match": "\\b(?:cFrameBuffer|createIdealMesh|depthTest|draw|drawArrays|drawElements|fillMeshTexture|lduse|let|log|start|startAsync|texture2DArray|unbindFBO|unbindFrameBuffer|use|viewport)\\b"
+      "match": "\\b(?:cFrameBuffer|createIdealMesh|depthTest|draw|drawArrays|drawElements|fillMeshTexture|lduse|let|log|start|startAsync|tex3D|tex3DArray|texture2DArray|texture3DArray|unbindFBO|unbindFrameBuffer|use|viewport)\\b"
     },
     {
       "name": "support.function.parser-helpers.parse-text-ts",

@@ -456,6 +456,7 @@ var init_BackupRuntime = __esm({
     BackupRuntime = class {
       /** Connects the browser WebGL context and recomputation state to the backup API. */
       constructor(gl, TexExamples2, defaultScope, generationContext = () => ({})) {
+        this.taggedValues = /* @__PURE__ */ new Map();
         /** Stores one named value at a DSL path hint. */
         this.store = async (value, varName, pathHint) => {
           try {
@@ -486,6 +487,33 @@ var init_BackupRuntime = __esm({
       async readBackup(pathHint) {
         return this.reader.readBackup(pathHint);
       }
+      /** Saves the latest value observed at a tagged DSL block, at most once per second. */
+      captureTaggedValue(block, tag, name, value) {
+        const key = [block, tag, name].map(this.paths.safeName).join("_");
+        const previous = this.taggedValues.get(key);
+        const now = Date.now();
+        if (previous?.pending || previous && now - previous.time < 1e3) return;
+        let formatted;
+        try {
+          formatted = JSON.stringify(value) ?? String(value);
+        } catch {
+          formatted = String(value);
+        }
+        if (formatted.length > 4096) formatted = formatted.slice(0, 4096) + "...";
+        if (previous && previous.value === formatted) {
+          previous.time = now;
+          return;
+        }
+        const state = { time: now, pending: true, value: formatted };
+        this.taggedValues.set(key, state);
+        const scope = this.paths.normalizeScopePath("./.dnti-tags/").path.replace(/\/+$/, "");
+        void this.server.put("/file", `${scope}/${key}.json`, JSON.stringify({ block, tag, name, value: formatted, at: new Date(now).toISOString() })).catch(() => {
+          state.time = Date.now() + 3e4;
+          state.value = "";
+        }).finally(() => {
+          state.pending = false;
+        });
+      }
     };
     runtimeFeature = {
       imports: ['import { BackupRuntime } from "/Code/WebGL/runtime/BackupRuntime.js";'],
@@ -497,7 +525,7 @@ var init_BackupRuntime = __esm({
         `const readBackup = (path: string) => backupRuntime.readBackup(path);`
       ]
     };
-    detectUse = ({ source }) => /\bbackUp\s*(?::|store\b|restore\b|log\b)|\breadBackup\s*\(/i.test(source);
+    detectUse = ({ source }) => /\bbackUp\s*(?::|store\b|restore\b|log\b)|\breadBackup\s*\(|\b\w+\s+-\s*[A-Za-z0-9_]+\s*-[^\n]*\{[A-Za-z_$][\w$]*\}[^\n]*-\s*\{/i.test(source);
   }
 });
 
@@ -4893,6 +4921,10 @@ var MeshRenderingProgram = class extends WebProgram {
     this.h = h;
     this.dx = dx;
     this.dy = dy;
+    this.smoothColorEnabled = true;
+    this.repeatEnabled = false;
+    this.repeatTexture = null;
+    this.repeatTextureState = null;
   }
   async loadProgram(vs, fs) {
     [this.program, this.vert, this.frag] = await loadShadersFromString(
@@ -4909,16 +4941,20 @@ var MeshRenderingProgram = class extends WebProgram {
             uniform float xPer;
             uniform float yPer;
             uniform float yScale;
+            uniform bool repeatMesh;
             uniform vec3 offPos;
 
             uniform mat4 u_viewMatrix;
             uniform mat4 u_projectionMatrix;
 
-            flat out vec3 outPos;
+            out vec3 outPos;
+            flat out vec3 outFlatPos;
 
             vec4 getPoint(int x, int yTexel) {
                 // Ahora la textura tiene un \xFAnico canal (RED)
-                float val = texelFetch(values, ivec2(x, yTexel), 0).r;
+                float val = repeatMesh
+                    ? texture(values, (vec2(float(x), float(yTexel)) + 0.5) / vec2(textureSize(values, 0))).r
+                    : texelFetch(values, ivec2(x, yTexel), 0).r;
 
                 float px = dx * float(x) - dx * float(msdLength) * (1.0 - xPer);
                 float py = val * yScale;
@@ -4931,15 +4967,18 @@ var MeshRenderingProgram = class extends WebProgram {
                 ${this.vertexPositionCode()}
 
                 outPos = pos.xyz;
+                outFlatPos = pos.xyz;
                 gl_Position = u_projectionMatrix * (u_viewMatrix * pos);
             }`,
       //? fragment shader
       `#version 300 es
             precision highp float;
 
-            flat in vec3 outPos;
+            in vec3 outPos;
+            flat in vec3 outFlatPos;
             out vec4 outColor;
             uniform float colorHueScale;
+            uniform bool smoothColor;
 
             float hue2rgb(float p, float q, float t){
                 if(t < 0.0) t += 1.0;
@@ -4963,6 +5002,7 @@ var MeshRenderingProgram = class extends WebProgram {
             void main(){
                 // Normalizamos la altura a hue (suponiendo alturas entre -1.5 y +1.5)
                 float h = (outPos.y * colorHueScale / 1.5); // ahora est\xE1 entre -1 y 1
+                h = (smoothColor ? outPos.y : outFlatPos.y) * colorHueScale / 1.5;
                 h = (mod(-h,1.5) * 0.5) + 0.5;        // lo llevamos a 0..1
 
                 float s = 0.6;
@@ -5027,12 +5067,41 @@ var MeshRenderingProgram = class extends WebProgram {
     this.uFloat("colorHueScale").set(scale);
     return this;
   }
+  smoothColor(is = true) {
+    this.smoothColorEnabled = is;
+    this.uInt("smoothColor").set(is ? 1 : 0);
+    return this;
+  }
+  setRepeat(repeat = true) {
+    this.repeatEnabled = repeat;
+    if (this.program) {
+      this.use();
+      this.uInt("repeatMesh").set(repeat ? 1 : 0);
+    }
+    const texture = this.getTextureByUnit(this.valsTexUnit);
+    if (!texture || this.repeatTexture === texture && this.repeatTextureState === repeat) return this;
+    const gl = this.gl;
+    const previousUnit = gl.getParameter(gl.ACTIVE_TEXTURE);
+    gl.activeTexture(gl.TEXTURE0 + parseTexUnitType(this.valsTexUnit));
+    const previousTexture = gl.getParameter(gl.TEXTURE_BINDING_2D);
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    const wrap = repeat ? gl.REPEAT : gl.CLAMP_TO_EDGE;
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, wrap);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, wrap);
+    gl.bindTexture(gl.TEXTURE_2D, previousTexture);
+    gl.activeTexture(previousUnit);
+    this.repeatTexture = texture;
+    this.repeatTextureState = repeat;
+    return this;
+  }
   setYScale(scale = 0.5) {
     this.uFloat("yScale").set(scale);
     return this;
   }
   initUniforms() {
     this.setSize(this.w, this.h).setOffset(0, 0, 0).setDXDY(this.dx, this.dy).setPerXPerY().setColorHueScale().setYScale();
+    this.smoothColor(this.smoothColorEnabled);
+    this.setRepeat(this.repeatEnabled);
     return this;
   }
   /**
@@ -5040,6 +5109,7 @@ var MeshRenderingProgram = class extends WebProgram {
    */
   draw(x = 0, y = 0, w = 1080, h = 720, camera, mode = "LINES") {
     this.initDepthBefDraw();
+    if (this.repeatTexture !== this.getTextureByUnit(this.valsTexUnit)) this.setRepeat(this.repeatEnabled);
     this.bindTexName2TexUnit("values", this.valsTexUnit);
     if (camera) {
       camera.calculateMatrices().setUniformsProgram(this);
@@ -5047,26 +5117,17 @@ var MeshRenderingProgram = class extends WebProgram {
     this.setViewport(x, y, w, h);
     this.clearColor();
     this.drawArrays(mode, 0, this.totalSegments * 2);
+    return this;
   }
-  /**
-   * Creates and fills a texture for a 3d Mesh f(x,y)=>z
-   */
-  createIdealTexture(texUnit = this.valsTexUnit, data, w = this.w, h = this.h) {
-    let arrdata;
-    if (typeof data == "function" && typeof data(0, 0) == "number") {
-      arrdata = new Float32Array(w * h);
-      for (let j = 0; j < h; j++) {
-        for (let i = 0; i < w; i++) {
-          arrdata[i * w + j] = data(i, j) || 0;
-        }
-      }
-    }
-    return this.texture2D({
+  /** Allocates the height texture; MeshFillerProgram evaluates its function on the GPU. */
+  createIdealTexture(texUnit = this.valsTexUnit, w = this.w, h = this.h) {
+    const texture = this.texture2D({
       format: TexExamples.RFloat,
       size: [w, h],
-      texUnit,
-      data: arrdata || data
+      texUnit
     });
+    if (parseTexUnitType(texUnit) === parseTexUnitType(this.valsTexUnit)) this.setRepeat(this.repeatEnabled);
+    return texture;
   }
   fillMeshTexture(texture2D, data, w = this.w, h = this.h) {
     let arrdata;
@@ -5074,14 +5135,19 @@ var MeshRenderingProgram = class extends WebProgram {
       arrdata = new Float32Array(w * h);
       for (let j = 0; j < h; j++) {
         for (let i = 0; i < w; i++) {
-          arrdata[i * w + j] = data(i, j) || 0;
+          arrdata[j * w + i] = data(i, j) || 0;
         }
       }
     }
     texture2D.fill(arrdata, 0, 0, w, h);
+    return this;
   }
 };
 var SolidMeshRenderingProgram = class extends MeshRenderingProgram {
+  constructor() {
+    super(...arguments);
+    this.smoothColorEnabled = true;
+  }
   vertexPositionCode() {
     return `int rowStride = msdLength * 2 + 2;
                 int row = gl_VertexID / rowStride;
@@ -5103,8 +5169,17 @@ var SolidMeshRenderingProgram = class extends MeshRenderingProgram {
   }
   draw(x = 0, y = 0, w = 1080, h = 720, camera, _mode = "TRIANGLE_STRIP") {
     super.draw(x, y, w, h, camera, "TRIANGLE_STRIP");
+    return this;
   }
 };
+function transpileMeshCallback(callback, parser) {
+  const names = /* @__PURE__ */ new Set();
+  for (const match of callback.matchAll(/\{\s*([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\s*(?:,\s*(?:float|int|uint|vec[2-4]|mat[2-4]))?\s*\}/g)) {
+    names.add(match[1]);
+  }
+  const context = [...names].map((name) => `${JSON.stringify(name)}: ${parser.transpileExpr(name)}`).join(", ");
+  return `__prepareMathFunction(${JSON.stringify(callback)}, {${context}})`;
+}
 function transpileCreateIdealMesh(line, declaredVars, parser) {
   const m = line.match(/^(?:([a-zA-Z_]\w*)\s*=\s*)?createIdealMesh\s+([\s\S]+)$/);
   if (!m) return null;
@@ -5122,7 +5197,6 @@ function transpileCreateIdealMesh(line, declaredVars, parser) {
     chainRaw = chainMatch[2].trim();
   }
   const texExpr = parser.normalizeTexUnitToken(texToken);
-  const callbackStr = JSON.stringify(callbackRaw);
   const targetName = alias ? alias : "__meshTexTmp";
   const out = [];
   if (alias && !declaredVars.has(alias)) {
@@ -5131,10 +5205,18 @@ function transpileCreateIdealMesh(line, declaredVars, parser) {
   }
   out.push(`(()=>{`);
   out.push(`    // createIdealMesh${alias ? ` ${alias}` : ""}`);
-  out.push(`    let compiledCreateIdealMeshFn = __prepareMathFunction(${callbackStr});`);
-  const createExpr = `lastUsedProgram?.createIdealTexture?.(${texExpr}, compiledCreateIdealMeshFn)`;
+  const createExpr = `lastUsedProgram?.createIdealTexture?.(${texExpr})`;
   if (alias) out.push(`    ${alias} = ${createExpr};`);
   else out.push(`    let ${targetName} = ${createExpr};`);
+  out.push(`    if (${targetName}) {`);
+  out.push(`        ${targetName}.lastPreparedFunc = ${JSON.stringify(callbackRaw)};`);
+  const contextNames = parser.extractContextNamesFromCallback(callbackRaw).filter((name) => name !== "x" && name !== "y");
+  if (contextNames.length) {
+    out.push(`        ${targetName}.meshContext = {`);
+    for (const name of contextNames) out.push(`            get ${name}(){ return (typeof ${name} !== "undefined") ? ${name} : (globalThis as any).${name}; },`);
+    out.push(`        };`);
+  }
+  out.push(`    }`);
   if (chainRaw) {
     const chainCalls = chainRaw.match(/\.[A-Za-z_]\w*\([^)]*\)/g) || [];
     for (const call of chainCalls) {
@@ -5150,10 +5232,11 @@ function transpileCreateIdealMesh(line, declaredVars, parser) {
   return out;
 }
 function transpileCapsuleObject(line, declaredVars, parser) {
-  const { aliases, core } = parser.extractAliasesAndCore(line);
+  const { leftAliases, rightAliases, core } = parser.extractAliasesAndCore(line);
   const kind = core.match(/^(MeshProgram|SolidMeshProgram|MeshFillerProgram|Axis3DGroup)(?:\s+|$)/)?.[1];
   if (!kind) return null;
-  const names = parser.ensureAliasesForClass(aliases, kind, declaredVars);
+  const names = [...parser.ensureAliasesForClass(leftAliases, kind, declaredVars), ...rightAliases];
+  rightAliases.forEach((name) => declaredVars.add(name));
   if (!names.length) return null;
   const first = names[0];
   const paramsStr = core.slice(kind.length).trim();
@@ -5199,6 +5282,8 @@ function transpileCapsuleObject(line, declaredVars, parser) {
         out.push(`${first}.generateProgram(${body}, globalThis as any);`);
       }
       out.push(`await ${first}.loadProgram?.();`);
+    } else {
+      out.push(`await ${first}.loadFromTexture();`);
     }
   }
   for (const chain of split.chains) out.push(`${first}${chain};`);
@@ -5228,6 +5313,8 @@ function buildHandlers(parser) {
         if (params.get(1)) {
           program.generateProgram(params.get(1), parser.ctx.vars, parser.GlobalContext);
           await program.loadProgram();
+        } else {
+          await program.loadFromTexture(parser.ctx.vars, parser.GlobalContext);
         }
         if (!parser.lastFillerProgram) parser.lastFillerProgram = program;
         return program;
@@ -5246,11 +5333,9 @@ function buildHandlers(parser) {
         const callback = [...params.entries()].filter(([key]) => typeof key === "number" && key > 0).sort(([a], [b]) => Number(a) - Number(b)).map(([, value]) => value).join(" ").trim().replace(/;$/, "");
         const program = parser.lastUsedProgram;
         if (!program) return;
-        const fn = parser.prepareMathFunction(callback);
-        const texture = program.createIdealTexture(params.get(0), fn);
+        const texture = program.createIdealTexture(params.get(0));
         const unit = String(params.get(0)).match(/\d+/)?.[0] || "";
         texture.lastPreparedFunc = callback;
-        texture.func = fn;
         parser.ctx.vars.set(`texture${unit}`, texture);
         return texture;
       },
@@ -5275,8 +5360,8 @@ function buildHandlers(parser) {
       const match = /^fillMeshTexture\s+(\S+)\s+([\s\S]+)$/.exec(line);
       if (!match) return null;
       const texture = parser.transpileExpr(match[1]);
-      const callback = JSON.stringify(match[2].trim().replace(/;$/, ""));
-      return [`lastUsedProgram?.fillMeshTexture?.(${texture}, __prepareMathFunction(${callback}));`];
+      const callback = match[2].trim().replace(/;$/, "");
+      return [`lastUsedProgram?.fillMeshTexture?.(${texture}, ${transpileMeshCallback(callback, parser)});`];
     }]
   };
 }
@@ -5326,6 +5411,7 @@ var AxisLinesProgram = class extends WebProgram {
   }
   initUniforms() {
     this.uVec("axisLengths", 3).set(this.axisLengths);
+    return this;
   }
   setAxisLengths(x, y, z) {
     this.axisLengths = new Vector3D2(x, y, z);
@@ -5335,6 +5421,7 @@ var AxisLinesProgram = class extends WebProgram {
   draw(camera) {
     if (camera) camera.calculateMatrices().setUniformsProgram(this);
     this.drawArrays("LINES", 0, 6);
+    return this;
   }
 };
 var AxisConesProgram = class extends WebProgram {
@@ -5416,11 +5503,13 @@ var AxisConesProgram = class extends WebProgram {
     this.uVec("axisLengths", 3).set(this.axisLengths);
     this.uVec("arrowHeights", 3).set(this.arrowHeights);
     this.uVec("arrowRadii", 3).set(this.arrowRadii);
+    return this;
   }
   draw(camera) {
     if (camera) camera.calculateMatrices().setUniformsProgram(this);
     this.bindVAO();
     this.drawArrays("TRIANGLES", 0, 3 * 16 * 3);
+    return this;
   }
 };
 var AxisGridProgram = class extends WebProgram {
@@ -5460,6 +5549,7 @@ var AxisGridProgram = class extends WebProgram {
   initUniforms(axisLengths) {
     if (axisLengths) this.axisLengths = axisLengths;
     else if (!this.axisLengths) this.axisLengths = new Vector3D2(1, 1, 1);
+    return this;
   }
   /** Genera el VAO de la cuadrícula en función de cellSize o divisions */
   initVAO() {
@@ -5505,12 +5595,14 @@ var AxisGridProgram = class extends WebProgram {
         vertices.push(0, 0, z, 0, sizeY, z);
       }
     }
+    return this;
   }
   draw(camera) {
     if (camera) camera.calculateMatrices().setUniformsProgram(this);
     this.bindVAO();
     if (this.vertexCount)
       this.drawArrays("LINES", 0, this.vertexCount);
+    return this;
   }
   // ----------------------------
   // 🔧 Nuevas funciones añadidas
@@ -5589,6 +5681,7 @@ var Axis3DGroup = class {
       if (!this.cones.VAO) this.cones.initVAO();
       this.cones.draw(camera);
     }
+    return this;
   }
   /** helpers para actualizar parámetros en caliente */
   setAxisLengths(x, y, z) {
@@ -5623,13 +5716,13 @@ var Axis3DGroup = class {
   setDivisions(divisions) {
     this.gridDivisions = divisions;
     if (this.grid)
-      return this.grid.setDivisions(divisions);
+      this.grid.setDivisions(divisions);
     return this;
   }
   /** Fija el tamaño del lado de las celdas y calcula el nº de divisiones */
   setCellSize(size) {
     if (this.grid)
-      return this.grid.setCellSize(size);
+      this.grid.setCellSize(size);
     return this;
   }
   includeInWebManList() {
@@ -5669,6 +5762,19 @@ var MeshFillerProgram = class extends WebProgram {
       console.error("Este navegador/GPU no permite renderizar en RFloat.");
     }
   }
+  /** Reuses the function attached by createIdealMesh to the texture on this unit. */
+  async loadFromTexture(...varsContexts) {
+    const texture = this.getTextureByUnit(parseTexUnitType(this.valsTexUnit));
+    if (!texture?.lastPreparedFunc) {
+      throw new Error(`MeshFillerProgram ${this.valsTexUnit} needs a function or a preceding createIdealMesh on the same TexUnit`);
+    }
+    if (/\b(?:switch|try|catch|throw|class|function|new)\b/.test(texture.lastPreparedFunc)) {
+      throw new Error("MeshFillerProgram cannot translate this callback to GLSL; use numeric expressions, if, for, or while");
+    }
+    this.generateProgram(texture.lastPreparedFunc, globalThis, ...varsContexts, texture.meshContext ?? {});
+    await this.loadProgram();
+    return this;
+  }
   async loadProgram(vs = this.vertPath, fs = this.fragPath) {
     [this.program, this.vert, this.frag] = await loadShadersFromString(this.gl, vs, fs);
     this.use();
@@ -5682,7 +5788,7 @@ var MeshFillerProgram = class extends WebProgram {
    * Obtiene los valores actuales del contexto y los sube a la GPU.
    */
   tick() {
-    if (!this.program) return;
+    if (!this.program) return this;
     this.use();
     this.uniformsToUpdate.forEach((u) => {
       const currentVal = u.getter();
@@ -5705,7 +5811,8 @@ var MeshFillerProgram = class extends WebProgram {
     if (body.startsWith("{") && body.endsWith("}")) {
       body = body.substring(1, body.length - 1).trim();
     }
-    let glslBody = body.replace(/{([^}]+)}/g, (_, content) => {
+    let glslBody = body.replace(/{([^{}]+)}/g, (whole, content) => {
+      if (/[;{}]/.test(content) || /\b(?:return|let|const|var|if|else|for|while|switch|throw)\b/.test(content)) return whole;
       let path = content;
       let glslType = "float";
       const lastComma = content.lastIndexOf(",");
@@ -5795,10 +5902,11 @@ var MeshFillerProgram = class extends WebProgram {
       return str;
     };
     glslBody = transpileMath(glslBody);
-    if (glslBody.includes("return")) {
-      glslBody = glslBody.replace(/return\s+([^;]+);?/, "float res = $1;");
+    glslBody = glslBody.replace(/\b(?:let|const|var)\s+([A-Za-z_]\w*)\s*=/g, "float $1 =").replace(/===/g, "==").replace(/!==/g, "!=");
+    if (/\b(?:return|if|for|while|float)\b/.test(glslBody)) {
+      glslBody = glslBody.replace(/\breturn\s+([^;]+);?/g, "{ outRed = $1; return; }");
     } else {
-      glslBody = `float res = ${glslBody.replace(/;$/, "")};`;
+      glslBody = `outRed = ${glslBody.replace(/;$/, "")};`;
     }
     this.vertPath = `#version 300 es
             const vec2 quad[6] = vec2[](
@@ -5813,17 +5921,17 @@ var MeshFillerProgram = class extends WebProgram {
             void main() {
                 float x = gl_FragCoord.x;
                 float y = gl_FragCoord.y;
+                outRed = 0.0;
                 ${glslBody}
-                outRed = res;
             }`;
-    console.log("Shader generado con uniforms complejos:", this.fragPath);
+    return this;
   }
   draw() {
-    if (!this.program) return;
+    if (!this.program) return this;
     const gl = this.gl;
     this.use();
     const tex = this.getTextureByUnit(parseTexUnitType(this.valsTexUnit));
-    if (!tex) return;
+    if (!tex) return this;
     const tw = tex.w ?? this.w;
     const th = tex.h ?? this.h;
     let fbo = this.cFrameBuffer().bind([0]);
@@ -6176,8 +6284,10 @@ var DetailedParser = class _DetailedParser {
   }
   static extractContextNamesFromCallback(callbackString) {
     const names = /* @__PURE__ */ new Set();
-    (callbackString || "").replace(/{([^{}]+)}/g, (_, raw) => {
+    const callbackBody = (callbackString || "").replace(/=>\s*\{([\s\S]*)\}\s*$/, "=>$1");
+    callbackBody.replace(/{([^{}]+)}/g, (_, raw) => {
       let expr = (raw || "").trim();
+      if (/[;{}]/.test(expr) || /\b(?:return|let|const|var|if|else|for|while|switch|throw)\b/.test(expr)) return "";
       const lastComma = expr.lastIndexOf(",");
       if (lastComma !== -1) {
         const maybeType = expr.substring(lastComma + 1).trim();
@@ -6220,6 +6330,9 @@ var DetailedParser = class _DetailedParser {
   static {
     // 2. Usamos el nombre completo de la clase para acceder a GlobalContext
     this.ObjectRegistry = {};
+  }
+  static {
+    this.NamedParamsOnlyObjects = /* @__PURE__ */ new Set();
   }
   static {
     // --- Utilidad interna para procesar el cuerpo de las funciones matemáticas ---
@@ -6321,6 +6434,7 @@ var DetailedParser = class _DetailedParser {
     const functions = {};
     const transpilers = [];
     const active = [];
+    const namedParamsOnly = /* @__PURE__ */ new Set();
     for (const definition of [..._DetailedParser.registryDefinitions, ...external]) {
       const detected = definition.detectUse?.(source);
       const selected = configured.includes(definition.id) || detected === "Toggled" && external.includes(definition);
@@ -6329,11 +6443,13 @@ var DetailedParser = class _DetailedParser {
       const names = [...Object.keys(module2.objects || {}), ...Object.keys(module2.functions || {})];
       if (detected === void 0 && !selected && !names.some((name) => new RegExp(`\\b${name}\\b`).test(source))) continue;
       active.push(module2);
+      for (const name of module2.namedParamsOnly || []) namedParamsOnly.add(name);
       Object.assign(objects, module2.objects);
       Object.assign(functions, module2.functions);
       transpilers.push(...module2.transpile || []);
     }
     _DetailedParser.ObjectRegistry = objects;
+    _DetailedParser.NamedParamsOnlyObjects = namedParamsOnly;
     _DetailedParser.FunctionRegistry = functions;
     _DetailedParser.RegistryTranspilers = transpilers;
     _DetailedParser.activeRegistryModules = active;
@@ -6984,7 +7100,8 @@ var DetailedParser = class _DetailedParser {
     const initSplit = _DetailedParser.splitTopLevelAssignLE(line);
     const lineNoInit = initSplit ? initSplit[0] : line;
     const initExpr = initSplit ? _DetailedParser.transpileExpr(initSplit[1]) : "null";
-    const normalizedLineNoInit = lineNoInit.replace(/^\s*(?:new-|in-)?tex2D\b/, "tex2D");
+    const is3D = /^\s*(?:new-|in-)?(?:tex3D|tex3DArray|texture3DArray)\b/.test(lineNoInit);
+    const normalizedLineNoInit = lineNoInit.replace(/^\s*(?:new-|in-)?(?:tex2D|tex3D|tex3DArray|texture3DArray)\b/, "tex2D");
     const byteSized = /\]\s*b(?=\s|$)/.test(normalizedLineNoInit);
     const normalizedSizeLine = normalizedLineNoInit.replace(/\]\s*b(?=\s|$)/, "]");
     let namesPart = "";
@@ -7053,7 +7170,7 @@ var DetailedParser = class _DetailedParser {
     if (sizeParts.length <= 1) {
       sizeParts = sizeBody.split(/\s+x\s+/i).map((x) => x.trim()).filter(Boolean);
     }
-    if (sizeParts.length < 2) return null;
+    if (sizeParts.length < (is3D ? 3 : 2)) return null;
     const texUnitExpr = texUnitToken ? _DetailedParser.normalizeTexUnitToken(texUnitToken) : "undefined";
     let formatExpr = _DetailedParser.transpileTextureFormatToken(resourceToken);
     let filterMinExpr = `"NEAREST"`;
@@ -7078,7 +7195,7 @@ var DetailedParser = class _DetailedParser {
     const out = [];
     const decl = declaredVars.has(firstAlias) ? firstAlias : `var ${firstAlias}`;
     declaredVars.add(firstAlias);
-    out.push(`${decl} = ${programRef}.createTexture2D(${JSON.stringify(uniformName)}, ${sizeExpr}, ${formatExpr}, ${initExpr}, [${filterMinExpr}, ${filterMagExpr}, ${wrapSExpr}, ${wrapTExpr}], ${texUnitExpr});`);
+    out.push(`${decl} = ${programRef}.${is3D ? "createTexture3D" : "createTexture2D"}(${JSON.stringify(uniformName)}, ${sizeExpr}, ${formatExpr}, ${initExpr}, [${filterMinExpr}, ${filterMagExpr}, ${wrapSExpr}, ${wrapTExpr}], ${texUnitExpr});`);
     out.push(`(${firstAlias} as any).__backupVarName = ${JSON.stringify(firstAlias)};`);
     out.push(`(${firstAlias} as any).__backupUniformName = ${JSON.stringify(uniformName)};`);
     out.push(`(${firstAlias} as any).__backupProgram = (${programRef} as any)?.ID ?? (${programRef} as any)?.fragPath ?? ${JSON.stringify(programRef)};`);
@@ -7685,21 +7802,30 @@ var DetailedParser = class _DetailedParser {
   }
   static extractAliasesAndCore(rawLine) {
     let aliases = [];
+    let leftAliases = [];
+    let rightAliases = [];
     let core = rawLine.trim().replace(/;\s*$/, "");
     const leftMatch = core.match(/^\s*([a-zA-Z_]\w*(?:\s*\|=\s*[a-zA-Z_]\w*)*)\s*=/);
     if (leftMatch) {
-      const leftAliases = leftMatch[1].split(/\|=/).map((s) => s.trim()).filter(Boolean);
+      leftAliases = leftMatch[1].split(/\|=/).map((s) => s.trim()).filter(Boolean);
       aliases.push(...leftAliases);
       core = core.slice(leftMatch[0].length).trim();
     }
-    const rightMatch = core.match(/\|=\s*([a-zA-Z_]\w*(?:\s*,\s*[a-zA-Z_]\w*)*)\s*$/);
+    const rightMatch = core.match(/\|=\s*([a-zA-Z_]\w*(?:\s*[,|]\s*[a-zA-Z_]\w*)*)\s*$/);
     if (rightMatch) {
-      const rightAliases = rightMatch[1].split(",").map((s) => s.trim()).filter(Boolean);
+      rightAliases = rightMatch[1].split(/[,|]/).map((s) => s.trim()).filter(Boolean);
       aliases.push(...rightAliases);
       core = core.slice(0, rightMatch.index).trim();
     }
     aliases = [...new Set(aliases)];
-    return { aliases, core };
+    return { aliases, core, leftAliases, rightAliases };
+  }
+  static normalizeObjectName(line) {
+    const match = line.match(/^\s*([A-Z][A-Za-z0-9_]*)\s+([A-Za-z_]\w*(?:\s*\|\s*[A-Za-z_]\w*)*)\s+(.+)$/);
+    if (!match || !_DetailedParser.ObjectRegistry[match[1]]) return line;
+    if (!_DetailedParser.NamedParamsOnlyObjects.has(match[1]) && !match[2].startsWith("_")) return line;
+    if (_DetailedParser.NamedParamsOnlyObjects.has(match[1]) && !/^[A-Za-z_]\w*\s*=/.test(match[3])) return line;
+    return `${match[2].split(/\s*\|\s*/).join(" |= ")} = ${match[1]} ${match[3]}`;
   }
   static transpileUniformLine(programRef, line) {
     const shortMatch = line.match(/^\{([a-zA-Z_]\w*)\}([iuf])\s*$/);
@@ -7805,9 +7931,9 @@ var DetailedParser = class _DetailedParser {
     return out;
   }
   static transpileTexture2DArrayObject(aliases, core) {
-    const m = core.match(/^texture2DArray\s+([\s\S]+)$/);
+    const m = core.match(/^(texture2DArray|texture3DArray|tex3DArray|tex3D)\s+([\s\S]+)$/);
     if (!m || aliases.length === 0) return null;
-    const tokens = _DetailedParser.splitByWhitespaceTopLevel(m[1]);
+    const tokens = _DetailedParser.splitByWhitespaceTopLevel(m[2]);
     if (tokens.length < 5) return null;
     const firstAlias = aliases[0];
     const format = tokens[0];
@@ -7817,7 +7943,7 @@ var DetailedParser = class _DetailedParser {
     const sizeToken = tokens.slice(4).join(" ");
     const sizeExpr = _DetailedParser.transpileSizeToken(sizeToken);
     const out = [
-      `var ${firstAlias} = lastUsedProgram?.texture2DArray?.({`,
+      `var ${firstAlias} = lastUsedProgram?.${m[1] === "texture2DArray" ? "texture2DArray" : "texture3DArray"}?.({`,
       `    format: (TexExamples as any).${format},`,
       `    data: ${dataExpr},`,
       `    name: ${nameArg},`,
@@ -7849,6 +7975,7 @@ var DetailedParser = class _DetailedParser {
   }
   static transpileSimpleStatement(line, declaredVars) {
     const out = [];
+    line = _DetailedParser.normalizeObjectName(line);
     const swap = /^swap\s*\{([^{}]+)\}$/.exec(line.trim());
     if (swap) {
       const names = _DetailedParser.splitTopLevelByChar(swap[1], ",").map((x) => x.trim());
@@ -7998,9 +8125,10 @@ var DetailedParser = class _DetailedParser {
       const args = _DetailedParser.splitByWhitespaceTopLevel(logMatch[1]).map((t) => _DetailedParser.transpileExpr(t));
       return [`console.log(${args.join(", ")});`];
     }
-    const { aliases, core } = _DetailedParser.extractAliasesAndCore(line);
+    const { aliases, core, leftAliases, rightAliases } = _DetailedParser.extractAliasesAndCore(line);
     const inferredClass = core.match(/^([A-Z][A-Za-z0-9_]*)\b/)?.[1];
-    const objectAliases = inferredClass ? _DetailedParser.ensureAliasesForClass(aliases, inferredClass, declaredVars) : aliases;
+    const objectAliases = inferredClass ? [..._DetailedParser.ensureAliasesForClass(leftAliases, inferredClass, declaredVars), ...rightAliases] : aliases;
+    rightAliases.forEach((alias) => declaredVars.add(alias));
     if (objectAliases.length > 0) {
       const asProgram = _DetailedParser.transpileProgramObject(objectAliases, core);
       if (asProgram) return asProgram;
@@ -8453,6 +8581,12 @@ var DetailedParser = class _DetailedParser {
           });
         }
         indent++;
+        const taggedHeader = raw.match(/-\s*([A-Za-z0-9_]+)\s*-(.*)-\s*\{$/);
+        if (taggedHeader && enabledFeatures.some((feature) => feature.imports.some((line2) => line2.includes("BackupRuntime")))) {
+          for (const variable of taggedHeader[2].matchAll(/\{([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\}/g)) {
+            body.push(`${ind()}void backupRuntime.captureTaggedValue(${JSON.stringify(blockName)}, ${JSON.stringify(taggedHeader[1])}, ${JSON.stringify(variable[1])}, ${_DetailedParser.transpileExpr(variable[1])});`);
+          }
+        }
         let loopCount = 0;
         if (!isSpecial && rawParams) {
           const parsed = _DetailedParser.parseBlockParams(rawParams) || [];
@@ -9039,29 +9173,31 @@ var DetailedParser = class _DetailedParser {
    * a=createIdealMesh ...
    */
   static async parseObjectDef(line) {
+    line = _DetailedParser.normalizeObjectName(line);
     const IDENT = /^[a-zA-Z_]\w*$/;
     let isEscapedFunction = false;
     const extractAliasesAndCore = (rawLine) => {
       let aliases2 = [];
+      let leftAliases2 = [];
       let core2 = rawLine.trim().replace(/;\s*$/, "");
       const leftMatch = core2.match(
         /^\s*([a-zA-Z_]\w*(?:\s*\|=\s*[a-zA-Z_]\w*)*)\s*=/
       );
       if (leftMatch) {
-        const leftAliases = leftMatch[1].split(/\|=/).map((s) => s.trim());
-        aliases2.push(...leftAliases);
+        leftAliases2 = leftMatch[1].split(/\|=/).map((s) => s.trim());
+        aliases2.push(...leftAliases2);
         core2 = core2.slice(leftMatch[0].length).trim();
       }
-      const rightMatch = core2.match(/\|=\s*([^=]+)$/);
+      const rightMatch = core2.match(/\|=\s*([a-zA-Z_]\w*(?:\s*[,|]\s*[a-zA-Z_]\w*)*)\s*$/);
       if (rightMatch) {
-        const rightAliases = rightMatch[1].split(",").map((s) => s.trim());
+        const rightAliases = rightMatch[1].split(/[,|]/).map((s) => s.trim());
         aliases2.push(...rightAliases);
         core2 = core2.slice(0, rightMatch.index).trim();
       }
       aliases2 = [...new Set(aliases2)];
-      return { aliases: aliases2, core: core2 };
+      return { aliases: aliases2, core: core2, leftAliases: leftAliases2 };
     };
-    const { aliases, core } = extractAliasesAndCore(line);
+    const { aliases, core, leftAliases } = extractAliasesAndCore(line);
     if (!core) {
       return false;
     }
@@ -9179,7 +9315,7 @@ var DetailedParser = class _DetailedParser {
         paramsString = paramsString.substring(classNameOrFunc.length).trim();
         params.set("altName", varName);
       }
-    } else if (isClassInstanciation) {
+    } else if (isClassInstanciation && leftAliases.length === 0) {
       varName = identifier.charAt(0).toLowerCase() + identifier.slice(1);
       if (this.ctx.vars.has(varName)) {
         let counter = 2;
@@ -9189,7 +9325,7 @@ var DetailedParser = class _DetailedParser {
         varName = varName + counter;
       }
     }
-    aliases.push(varName);
+    if (varName) aliases.push(varName);
     for (const call of funcsToCallInObj) {
       const m = call.match(/^\.(\w+)\((.*)\)$/);
       if (m && typeof result?.[m[1]] === "function") {
@@ -9292,7 +9428,9 @@ var DetailedParser = class _DetailedParser {
 // src/dependencies/Code/WebGL/parser/objects/camera.ts
 var register2 = (parser) => ({
   id: "camera",
+  namedParamsOnly: ["Camera3D"],
   objects: {
+    //@dnti-namedParamsOnly
     Camera3D: (params) => {
       const camera = new parser.gctx.Camera3D(
         params.get("pos"),
@@ -9440,7 +9578,20 @@ var register7 = (parser) => ({
         texUnit: params.get(3),
         size: [sx, sy, sz]
       });
-    }
+    },
+    texture3DArray: (params) => {
+      const size = params.get(4);
+      const data = params.get(1);
+      return parser.lastUsedProgram?.texture3DArray?.({
+        format: parser.gctx.TexExamples[params.get(0)],
+        data: parser.parseValue(data.startsWith("{") ? data : `{${data}}`),
+        name: params.get(2),
+        texUnit: params.get(3),
+        size: Array.isArray(size) ? size : [1, 1, 1]
+      });
+    },
+    tex3D: (params) => parser.FunctionRegistry.texture3DArray(params),
+    tex3DArray: (params) => parser.FunctionRegistry.texture3DArray(params)
   }
 });
 
@@ -9472,7 +9623,13 @@ var register8 = (parser) => ({
 });
 
 // src/dependencies/Code/WebGL/parser/registry-entry.ts
-DetailedParser.registryDefinitions = [{ id: "objects", register: (parser, services) => ({ id: "objects", objects: Object.assign({}, ...[register2, register3].map((register9) => register9(parser, services).objects || {})) }) }, { id: "functions", register: (parser, services) => ({ id: "functions", functions: Object.assign({}, ...[register4, register5, register6, register7, register8].map((register9) => register9(parser, services).functions || {})) }) }, capsules_exports];
+DetailedParser.registryDefinitions = [{ id: "objects", register: (parser, services) => {
+  const parts = [register2, register3].map((register9) => register9(parser, services));
+  return { id: "objects", objects: Object.assign({}, ...parts.map((part) => part.objects || {})), namedParamsOnly: parts.flatMap((part) => part.namedParamsOnly || []) };
+} }, { id: "functions", register: (parser, services) => {
+  const parts = [register4, register5, register6, register7, register8].map((register9) => register9(parser, services));
+  return { id: "functions", functions: Object.assign({}, ...parts.map((part) => part.functions || {})), namedParamsOnly: parts.flatMap((part) => part.namedParamsOnly || []) };
+} }, capsules_exports];
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {
   DetailedParser

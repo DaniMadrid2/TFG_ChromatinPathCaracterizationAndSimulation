@@ -8,11 +8,18 @@ test("backup panels render matrices, isolate selectors, and open the selected fi
     const panels = [];
     const opened = [];
     let hoverProvider;
+    let completionProvider;
+    let definitionProvider;
+    let visibleEditorsChanged;
     const disposable = () => ({ dispose() {} });
     const root = path.resolve("fixture");
     const vscode = {
         EventEmitter: class { constructor() { this.event = () => disposable(); } fire() {} dispose() {} },
         Hover: class { constructor(contents) { this.contents = contents; } },
+        Location: class { constructor(uri, range) { this.uri = uri; this.range = range; } },
+        CompletionItem: class { constructor(label, kind) { this.label = label; this.kind = kind; } },
+        CompletionItemKind: { Method: 1, Property: 2 },
+        SnippetString: class { constructor(value) { this.value = value; } },
         MarkdownString: class { constructor(value = "") { this.value = value; } appendMarkdown(value) { this.value += value; } },
         Position: class { constructor(line, character) { this.line = line; this.character = character; } },
         Range: class { constructor(start, end) { this.start = start; this.end = end; } },
@@ -20,12 +27,12 @@ test("backup panels render matrices, isolate selectors, and open the selected fi
         InlayHintKind: { Other: 0 },
         ViewColumn: { Beside: 2 },
         RelativePattern: class { constructor(base, pattern) { this.base = base; this.pattern = pattern; } },
-        Uri: { file(fsPath) { return { fsPath, toString() { return fsPath; } }; } },
+        Uri: { file(fsPath) { return { fsPath, with({ fragment }) { return { toString: () => `${fsPath}#${fragment}` }; }, toString() { return fsPath; } }; } },
         window: {
             visibleTextEditors: [],
-            createTextEditorDecorationType: disposable,
+            createTextEditorDecorationType: (style) => ({ ...disposable(), style }),
             onDidChangeActiveTextEditor: disposable,
-            onDidChangeVisibleTextEditors: disposable,
+            onDidChangeVisibleTextEditors(callback) { visibleEditorsChanged = callback; return disposable(); },
             createWebviewPanel(_type, title, options) {
                 const panel = { title, options, webview: { html: "", onDidReceiveMessage(callback) { panel.receive = callback; return disposable(); } }, onDidDispose(callback) { panel.dispose = callback; return disposable(); } };
                 panels.push(panel);
@@ -36,6 +43,10 @@ test("backup panels render matrices, isolate selectors, and open the selected fi
         },
         languages: new Proxy({}, { get: (_, name) => name === "registerHoverProvider"
             ? (_, provider) => { hoverProvider = provider; return disposable(); }
+            : name === "registerDefinitionProvider"
+            ? (_, provider) => { definitionProvider = provider; return disposable(); }
+            : name === "registerCompletionItemProvider"
+            ? (_, provider) => { completionProvider = provider; return disposable(); }
             : disposable }),
         commands: { registerCommand(name, callback) { commands.set(name, callback); return disposable(); } },
         workspace: {
@@ -57,8 +68,8 @@ test("backup panels render matrices, isolate selectors, and open the selected fi
         texB: "texB [2 x 1]:\n1 0\n" + JSON.stringify({ value: { w: 2, h: 1, dim: 1, data: [1, 0] } }),
     };
     const fs = {
-        existsSync(directory) { return directory.includes(`parseTextC2${path.sep}tau`) || directory.includes(`parseTextC1${path.sep}lines`) || directory.includes(`parseTextC1${path.sep}sparse`); },
-        statSync() { return { mtimeMs: 1 }; },
+        existsSync(directory) { return directory.includes(`registrySources${path.sep}`) || directory.includes(`parseTextC2${path.sep}tau`) || directory.includes(`parseTextC1${path.sep}lines`) || directory.includes(`parseTextC1${path.sep}sparse`) || directory.endsWith(`${path.sep}backups`) || directory.endsWith(`tick_2_offset.json`); },
+        statSync() { return { mtimeMs: 1, size: 100 }; },
         readdirSync(directory, options) {
             if (options?.withFileTypes) return directory.includes(`${path.sep}sparse`)
                 ? [10, 12].map((number) => ({ name: String(number), isDirectory: () => true }))
@@ -68,7 +79,9 @@ test("backup panels render matrices, isolate selectors, and open the selected fi
             const kind = directory.includes(`${path.sep}lines`) || directory.includes(`${path.sep}sparse`) ? "drawLines" : "drawTriangles";
             return Object.keys(files).map((name) => `${kind}_${name}_202605141429.txt`);
         },
-        readFileSync(file) { return files[path.basename(file).match(/^draw(?:Triangles|Lines)_(.+?)_\d+\.txt$/)?.[1]] || ""; },
+        readFileSync(file) { return file.endsWith('tick_2_offset.json')
+            ? JSON.stringify({ block: 'tick', tag: '2', name: 'offset', value: '{"x":1}' })
+            : files[path.basename(file).match(/^draw(?:Triangles|Lines)_(.+?)_\d+\.txt$/)?.[1]] || ""; },
     };
     const source = "use demo\ndrawTriangles -> [texA, texB] size [2,1] {\n  backUp: /parseTextC23/tau/\n}";
     const lines = source.split("\n");
@@ -138,6 +151,102 @@ test("backup panels render matrices, isolate selectors, and open the selected fi
         await panels[2].receive({ type: "select", field: "generation", value: "12" });
         await panels[2].receive({ type: "open", value: "texB" });
         assert.match(opened.at(-1).fsPath, /[\\/]12[\\/]drawLines_texB_/);
+
+        const registrySource = "meshProgram = MeshProgram input=TexUnit20 4x3\nmeshProgram.smooth\nin-tex2D positionTexture RES [4 x 3] RGFloat TexUnit20\nleft = Program demo |= right\nprogram tauMom|progTauMom \"tau/demo\" {\ntex2D datosX1|xTex[4,1] RFloat TexUnit10\nCamera3D pos=vec3(0,0,0) |= cam2\nmeshProgram.draw(0,0,640,480,{cam2},\"TRI";
+        const registryLines = registrySource.split("\n");
+        const registryDoc = {
+            ...document,
+            fileName: path.join(root, "parseTextC1.shaderdsl.ts"),
+            uri: vscode.Uri.file(path.join(root, "parseTextC1.shaderdsl.ts")),
+            getText(range) { return range ? registryLines[range.start.line].slice(range.start.character, range.end.character) : registrySource; },
+            lineAt(line) { return { text: registryLines[line] }; },
+            offsetAt(position) { return registryLines.slice(0, position.line).reduce((sum, line) => sum + line.length + 1, 0) + position.character; },
+            positionAt(offset) {
+                let line = 0;
+                while (line < registryLines.length - 1 && offset > registryLines[line].length) offset -= registryLines[line++].length + 1;
+                return new vscode.Position(line, offset);
+            },
+            getWordRangeAtPosition(position) {
+                for (const match of registryLines[position.line].matchAll(/[A-Za-z_$][A-Za-z0-9_$]*/g)) {
+                    if (position.character >= match.index && position.character < match.index + match[0].length) {
+                        return { start: { line: position.line, character: match.index }, end: { line: position.line, character: match.index + match[0].length } };
+                    }
+                }
+                return null;
+            },
+        };
+        const methods = await completionProvider.provideCompletionItems(registryDoc, { line: 1, character: registryLines[1].length });
+        assert.ok(methods.some((item) => item.label === "smoothColor"));
+        const modeItems = await completionProvider.provideCompletionItems(registryDoc, { line: 7, character: registryLines[7].length });
+        assert.ok(modeItems.some((item) => item.label === 'TRIANGLE_STRIP' && item.insertText === '"TRIANGLE_STRIP"'));
+        const drawLocation = await definitionProvider.provideDefinition(registryDoc, { line: 7, character: registryLines[7].indexOf('draw') + 2 });
+        assert.match(drawLocation.uri.fsPath, /registrySources[\\/]WebGL[\\/]parser[\\/]registryModules[\\/]capsules\.ts$/);
+        const unitHover = hoverProvider.provideHover(registryDoc, { line: 0, character: registryLines[0].indexOf('TexUnit20') + 2 });
+        assert.match(unitHover.contents.value, /positionTexture/);
+        const aliasHover = hoverProvider.provideHover(registryDoc, { line: 3, character: registryLines[3].length - 2 });
+        assert.match(aliasHover.contents.value, /left/);
+        assert.match(hoverProvider.provideHover(registryDoc, { line: 4, character: registryLines[4].indexOf('progTauMom') + 2 }).contents.value, /tauMom/);
+        assert.match(hoverProvider.provideHover(registryDoc, { line: 5, character: registryLines[5].indexOf('xTex') + 1 }).contents.value, /datosX1/);
+        assert.match(hoverProvider.provideHover(registryDoc, { line: 6, character: 3 }).contents.value, /camera3D/);
+
+        const taggedSource = 'let offset = 1\ntick -2-README {offset}- {\n  backUp store offset /values/\n}';
+        const taggedLines = taggedSource.split('\n');
+        const taggedDoc = {
+            ...registryDoc,
+            getText(range) { return range ? taggedLines[range.start.line].slice(range.start.character, range.end.character) : taggedSource; },
+            lineAt(line) { return { text: taggedLines[line] }; },
+            getWordRangeAtPosition(position) {
+                for (const match of taggedLines[position.line].matchAll(/[A-Za-z_$][A-Za-z0-9_$]*/g)) {
+                    if (position.character >= match.index && position.character < match.index + match[0].length) {
+                        return { start: { line: position.line, character: match.index }, end: { line: position.line, character: match.index + match[0].length } };
+                    }
+                }
+                return null;
+            },
+        };
+        const taggedHover = hoverProvider.provideHover(taggedDoc, { line: 1, character: taggedLines[1].indexOf('offset') + 2 });
+        assert.match(taggedHover.contents.value, /Valor ejecutado/);
+        assert.match(taggedHover.contents.value, /linea 3/);
+        const drawOnlySource = taggedSource.replace('backUp store offset /values/', 'drawPoints -> [] size [2,2] { backUp: /lines/ }');
+        const drawOnlyLines = drawOnlySource.split('\n');
+        const drawOnlyDoc = {
+            ...taggedDoc,
+            getText(range) { return range ? drawOnlyLines[range.start.line].slice(range.start.character, range.end.character) : drawOnlySource; },
+            lineAt(line) { return { text: drawOnlyLines[line] }; },
+        };
+        const drawOnlyHover = hoverProvider.provideHover(drawOnlyDoc, { line: 1, character: drawOnlyLines[1].indexOf('offset') + 2 });
+        assert.doesNotMatch(drawOnlyHover.contents.value, /Backups en|backup: /);
+
+        const visualSource = 'let derived tauFTerms=2\nCamera3D pos=vec3(0,0,0) |= cam2\ntick -2-README {offset}- {\n both "tau/" "x //var" -> {"x" + String(tauFTerms)}\n}';
+        const visualLines = visualSource.split('\n');
+        const visualDoc = {
+            ...document,
+            getText() { return visualSource; },
+            lineAt(line) { return { text: visualLines[line], range: { end: new vscode.Position(line, visualLines[line].length) } }; },
+            offsetAt(position) { return visualLines.slice(0, position.line).reduce((sum, line) => sum + line.length + 1, 0) + position.character; },
+            positionAt(offset) {
+                let line = 0;
+                while (line < visualLines.length - 1 && offset > visualLines[line].length) offset -= visualLines[line++].length + 1;
+                return new vscode.Position(line, offset);
+            },
+        };
+        const applied = [];
+        const visualEditor = { document: visualDoc, setDecorations(type, options) {
+            for (const option of options) {
+                const range = option.range || option;
+                assert.equal(typeof range.start?.line, 'number', 'decoration has a valid start');
+                assert.equal(typeof range.end?.line, 'number', 'decoration has a valid end');
+            }
+            applied.push({ style: type.style, options });
+        } };
+        vscode.window.visibleTextEditors.length = 0;
+        vscode.window.visibleTextEditors.push(visualEditor);
+        visibleEditorsChanged();
+        assert.ok(applied.some(({ style, options }) => style.fontStyle === 'italic' && options.some((option) => option.start?.line === 3)));
+        assert.ok(applied.some(({ style, options }) => style.after?.color === '#aeb4bd' && options.some((option) => option.renderOptions?.after?.contentText.includes('camera3D'))));
+        assert.ok(applied.some(({ style, options }) => style.after?.backgroundColor === '#252a32' && options.some((option) => option.renderOptions?.after?.contentText.startsWith(' = '))));
+        assert.ok(applied.some(({ style, options }) => style.opacity === '0' && options.length === 2));
+        assert.ok(applied.some(({ style, options }) => style.color && options.some((option) => option.start?.line === 2 && option.end?.character === 24)));
     } finally {
         Module._load = originalLoad;
         delete require.cache[require.resolve("./extension")];

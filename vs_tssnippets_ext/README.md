@@ -80,7 +80,10 @@ objects: {
 `createsInternalTexture` tells the extension that `input=TexUnit20` is occupied
 by that object; it affects the TexUnit state color and completion ranking.
 `color` sets the name's editor color. Other `@dnti-*` comments are retained in
-the generated JSON for future rules. New registry files need no extension edit.
+the generated JSON for future rules. The generated metadata also supplies object
+parameter and method completions. Implicit object names appear as gray virtual
+text; hovering a `TexUnit` lists its textures and hovering an alias shows its
+other names. New registry files need no extension edit.
 
 ## Nota sobre el soporte de lenguaje
 
@@ -111,3 +114,20 @@ Run **Shader DSL: Extract Repeated Block** with the cursor inside a repeated
 the current document and replaces identical blocks with calls to that name.
 The rebind color marker shows the texture previously occupying a destination
 unit on hover.
+
+`derived` names remain italic at every use, including expressions after quoted
+`//` text. `program` and `tex2D` aliases separated by `|` share a hover, and
+an object declared without a name shows its generated name in light gray.
+Registry modules can mark named-parameter-only objects with
+`//@dnti-namedParamsOnly` and `namedParamsOnly: ["Camera3D"]`; then
+`Camera3D camera2D pos=...` uses `camera2D` instead of an automatic name.
+Objects that accept positional values require an explicit `_name` to avoid
+confusing the name with a value.
+
+Inline tags such as `tick -2-README {offset}- {` color the complete tag and
+show the last runtime value beside `{offset}`. Start the project with the
+backup API enabled (`serve`, `parse --serve`, or `servebackups`); the runtime
+stores one throttled JSON snapshot per tag in `backups/<scope>/.dnti-tags/`.
+Before the block runs, the editor shows `sin ejecutar`. Hover over the name to
+see the observed value, its scope, the last static assignment, and nearby
+backup lines. A snapshot is the last observed value, not a live debugger state.

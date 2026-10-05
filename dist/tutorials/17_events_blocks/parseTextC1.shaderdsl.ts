@@ -1,5 +1,5 @@
-// OnKeyPress ejecuta codigo al pulsar una tecla; log muestra valores.
-// Un bloque con prioridad, como drawScene (20), se monta con start.
+// Los bloques globales se ejecutan por prioridad numerica al llamar start.
+// Un parametro name=inicio:fin recorre ambos extremos, inclusive.
 <Pre>
 
 let brightness = 0.5
@@ -18,6 +18,13 @@ drawScene (20) {
             brightness = {brightness}f
         }
     }
+}
+
+
+
+// 19 se ejecuta antes de 20, incluso si se define despues.
+drawTiles (tile=0:{3}) (19) {
+    log "tile" {tile}
 }
 
 

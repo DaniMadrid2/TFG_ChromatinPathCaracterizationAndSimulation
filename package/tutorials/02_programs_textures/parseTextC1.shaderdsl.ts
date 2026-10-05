@@ -3,6 +3,7 @@
 <Pre>
 
 let samples = [1, 0, 0, 1, 0, 1, 1, 0]
+let voxels = new Float32Array(16)
 
 
 
@@ -22,7 +23,16 @@ program demo "demo" {
 
     tex2D compact|compactTex[4,2] RFloat TexUnit15 <= samples
     tex2D named ~ namedTex RES [4 x 2] FloatPairs TexUnit16
+
+
+
+    // tex3D reserva volumenes para sampler3D.
+    tex3D volume RES [2 x 2 x 2] FloatPairs TexUnit17 <= voxels
 }
+
+
+
+volumeCopy = texture3DArray RGFloat {voxels} "volumeCopy" TexUnit18 [2 x 2 x 2]
 
 
 

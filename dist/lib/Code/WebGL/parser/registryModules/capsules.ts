@@ -1,5 +1,5 @@
 import {BindableTexture, GLMode, TexExamples, TextureUnitType, WebGLMan, WebProgram, parseTexUnitType} from "../../webglMan.js"
-import {loadShaders, loadShadersFromString} 
+import {loadShaders, loadShadersFromString}
     from "../../../opengl/opengl.js"
 import { HSLtoRGB } from "../../../Utils/utils.js";
 import { Camera3D } from "../../../Game3D/Game3D.js";
@@ -14,6 +14,10 @@ import type { RegistryModule } from "./types.js";
  */
 export class MeshRenderingProgram extends WebProgram{
     public totalSegments:number;
+    protected smoothColorEnabled = true;
+    protected repeatEnabled = false;
+    private repeatTexture: BindableTexture | null = null;
+    private repeatTextureState: boolean | null = null;
     constructor(gl:WebGL2RenderingContext, public valsTexUnit:TextureUnitType="TexUnit20", public w=1024, public h=1024, public dx=0.015, public dy=0.015){
         super(gl, "", "");
     }
@@ -32,16 +36,20 @@ export class MeshRenderingProgram extends WebProgram{
             uniform float xPer;
             uniform float yPer;
             uniform float yScale;
+            uniform bool repeatMesh;
             uniform vec3 offPos;
 
             uniform mat4 u_viewMatrix;
             uniform mat4 u_projectionMatrix;
 
-            flat out vec3 outPos;
+            out vec3 outPos;
+            flat out vec3 outFlatPos;
 
             vec4 getPoint(int x, int yTexel) {
                 // Ahora la textura tiene un único canal (RED)
-                float val = texelFetch(values, ivec2(x, yTexel), 0).r;
+                float val = repeatMesh
+                    ? texture(values, (vec2(float(x), float(yTexel)) + 0.5) / vec2(textureSize(values, 0))).r
+                    : texelFetch(values, ivec2(x, yTexel), 0).r;
 
                 float px = dx * float(x) - dx * float(msdLength) * (1.0 - xPer);
                 float py = val * yScale;
@@ -54,15 +62,18 @@ export class MeshRenderingProgram extends WebProgram{
                 ${this.vertexPositionCode()}
 
                 outPos = pos.xyz;
+                outFlatPos = pos.xyz;
                 gl_Position = u_projectionMatrix * (u_viewMatrix * pos);
             }`,
             //? fragment shader
             `#version 300 es
             precision highp float;
 
-            flat in vec3 outPos;
+            in vec3 outPos;
+            flat in vec3 outFlatPos;
             out vec4 outColor;
             uniform float colorHueScale;
+            uniform bool smoothColor;
 
             float hue2rgb(float p, float q, float t){
                 if(t < 0.0) t += 1.0;
@@ -86,6 +97,7 @@ export class MeshRenderingProgram extends WebProgram{
             void main(){
                 // Normalizamos la altura a hue (suponiendo alturas entre -1.5 y +1.5)
                 float h = (outPos.y * colorHueScale / 1.5); // ahora está entre -1 y 1
+                h = (smoothColor ? outPos.y : outFlatPos.y) * colorHueScale / 1.5;
                 h = (mod(-h,1.5) * 0.5) + 0.5;        // lo llevamos a 0..1
 
                 float s = 0.6;
@@ -153,6 +165,33 @@ export class MeshRenderingProgram extends WebProgram{
         this.uFloat("colorHueScale").set(scale);
         return this;
     }
+    smoothColor(is=true) {
+        this.smoothColorEnabled = is;
+        this.uInt("smoothColor").set(is ? 1 : 0);
+        return this;
+    }
+    setRepeat(repeat: boolean = true): this {
+        this.repeatEnabled = repeat;
+        if (this.program) {
+            this.use();
+            this.uInt("repeatMesh").set(repeat ? 1 : 0);
+        }
+        const texture = this.getTextureByUnit(this.valsTexUnit);
+        if (!texture || this.repeatTexture === texture && this.repeatTextureState === repeat) return this;
+        const gl = this.gl;
+        const previousUnit = gl.getParameter(gl.ACTIVE_TEXTURE);
+        gl.activeTexture(gl.TEXTURE0 + parseTexUnitType(this.valsTexUnit));
+        const previousTexture = gl.getParameter(gl.TEXTURE_BINDING_2D);
+        gl.bindTexture(gl.TEXTURE_2D, texture);
+        const wrap = repeat ? gl.REPEAT : gl.CLAMP_TO_EDGE;
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, wrap);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, wrap);
+        gl.bindTexture(gl.TEXTURE_2D, previousTexture);
+        gl.activeTexture(previousUnit);
+        this.repeatTexture = texture;
+        this.repeatTextureState = repeat;
+        return this;
+    }
     setYScale(scale=0.5){
         this.uFloat("yScale").set(scale);
         return this;
@@ -161,6 +200,8 @@ export class MeshRenderingProgram extends WebProgram{
     initUniforms(){
         this.setSize(this.w,this.h).setOffset(0,0,0).setDXDY(this.dx,this.dy)
         .setPerXPerY().setColorHueScale().setYScale();
+        this.smoothColor(this.smoothColorEnabled);
+        this.setRepeat(this.repeatEnabled);
         return this;
     }
 
@@ -169,6 +210,7 @@ export class MeshRenderingProgram extends WebProgram{
      */
     draw(x=0,y=0,w=1080,h=720,camera?:Camera3D, mode:GLMode="LINES"){
         this.initDepthBefDraw();
+        if (this.repeatTexture !== this.getTextureByUnit(this.valsTexUnit)) this.setRepeat(this.repeatEnabled);
         this.bindTexName2TexUnit("values", this.valsTexUnit);
         if(camera){
             camera.calculateMatrices().setUniformsProgram(this as any);
@@ -177,26 +219,17 @@ export class MeshRenderingProgram extends WebProgram{
         this.setViewport(x,y,w,h);
         this.clearColor();
         this.drawArrays(mode, 0, this.totalSegments*2);
+        return this;
     }
-    /**
-     * Creates and fills a texture for a 3d Mesh f(x,y)=>z
-     */
-    createIdealTexture(texUnit=this.valsTexUnit, data?:any|((x:number,y:number)=>number), w=this.w, h=this.h){
-        let arrdata;
-        if(typeof data =="function" && typeof data(0,0)=="number"){
-            arrdata=new Float32Array(w*h);
-            for (let j = 0; j < h; j++) {
-                for (let i = 0; i < w; i++) {
-                    arrdata[i*w+j]=data(i,j)||0;
-                }
-            }
-        }
-        return this.texture2D({
+    /** Allocates the height texture; MeshFillerProgram evaluates its function on the GPU. */
+    createIdealTexture(texUnit=this.valsTexUnit, w=this.w, h=this.h){
+        const texture = this.texture2D({
             format:TexExamples.RFloat,
             size:[w, h],
-            texUnit: texUnit, 
-            data:arrdata||data
-        })
+            texUnit: texUnit
+        });
+        if (parseTexUnitType(texUnit) === parseTexUnitType(this.valsTexUnit)) this.setRepeat(this.repeatEnabled);
+        return texture;
     }
     fillMeshTexture(texture2D:BindableTexture, data?:any|((x:number,y:number)=>number), w=this.w, h=this.h){
         let arrdata;
@@ -204,17 +237,20 @@ export class MeshRenderingProgram extends WebProgram{
             arrdata=new Float32Array(w*h);
             for (let j = 0; j < h; j++) {
                 for (let i = 0; i < w; i++) {
-                    arrdata[i*w+j]=data(i,j)||0;
+                    arrdata[j*w+i]=data(i,j)||0;
                 }
             }
         }
         texture2D.fill(arrdata,0,0,w,h);
+        return this;
 
     }
 }
 
 /** Draws every height-map cell with a row-wise triangle strip. */
 export class SolidMeshRenderingProgram extends MeshRenderingProgram {
+    protected override smoothColorEnabled = true;
+
     protected override vertexPositionCode(): string {
         return `int rowStride = msdLength * 2 + 2;
                 int row = gl_VertexID / rowStride;
@@ -238,10 +274,20 @@ export class SolidMeshRenderingProgram extends MeshRenderingProgram {
 
     override draw(x=0, y=0, w=1080, h=720, camera?:Camera3D, _mode:GLMode="TRIANGLE_STRIP") {
         super.draw(x, y, w, h, camera, "TRIANGLE_STRIP");
+        return this;
     }
 }
 
 // The same module supplies browser classes and their DSL handlers.
+function transpileMeshCallback(callback: string, parser: any): string {
+    const names = new Set<string>();
+    for (const match of callback.matchAll(/\{\s*([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\s*(?:,\s*(?:float|int|uint|vec[2-4]|mat[2-4]))?\s*\}/g)) {
+        names.add(match[1]);
+    }
+    const context = [...names].map(name => `${JSON.stringify(name)}: ${parser.transpileExpr(name)}`).join(', ');
+    return `__prepareMathFunction(${JSON.stringify(callback)}, {${context}})`;
+}
+
 function transpileCreateIdealMesh(line: string, declaredVars: Set<string>, parser: any): string[] | null {
         const m = line.match(/^(?:([a-zA-Z_]\w*)\s*=\s*)?createIdealMesh\s+([\s\S]+)$/);
         if (!m) return null;
@@ -263,7 +309,6 @@ function transpileCreateIdealMesh(line: string, declaredVars: Set<string>, parse
         }
 
         const texExpr = parser.normalizeTexUnitToken(texToken);
-        const callbackStr = JSON.stringify(callbackRaw);
         const targetName = alias ? alias : "__meshTexTmp";
         const out: string[] = [];
 
@@ -273,10 +318,18 @@ function transpileCreateIdealMesh(line: string, declaredVars: Set<string>, parse
         }
         out.push(`(()=>{`);
         out.push(`    // createIdealMesh${alias ? ` ${alias}` : ""}`);
-        out.push(`    let compiledCreateIdealMeshFn = __prepareMathFunction(${callbackStr});`);
-        const createExpr = `lastUsedProgram?.createIdealTexture?.(${texExpr}, compiledCreateIdealMeshFn)`;
+        const createExpr = `lastUsedProgram?.createIdealTexture?.(${texExpr})`;
         if (alias) out.push(`    ${alias} = ${createExpr};`);
         else out.push(`    let ${targetName} = ${createExpr};`);
+        out.push(`    if (${targetName}) {`);
+        out.push(`        ${targetName}.lastPreparedFunc = ${JSON.stringify(callbackRaw)};`);
+        const contextNames = parser.extractContextNamesFromCallback(callbackRaw).filter((name: string) => name !== "x" && name !== "y");
+        if (contextNames.length) {
+            out.push(`        ${targetName}.meshContext = {`);
+            for (const name of contextNames) out.push(`            get ${name}(){ return (typeof ${name} !== "undefined") ? ${name} : (globalThis as any).${name}; },`);
+            out.push(`        };`);
+        }
+        out.push(`    }`);
 
         if (chainRaw) {
             const chainCalls = chainRaw.match(/\.[A-Za-z_]\w*\([^)]*\)/g) || [];
@@ -294,10 +347,11 @@ function transpileCreateIdealMesh(line: string, declaredVars: Set<string>, parse
     }
 
 function transpileCapsuleObject(line: string, declaredVars: Set<string>, parser: any): string[] | null {
-    const { aliases, core } = parser.extractAliasesAndCore(line);
+    const { leftAliases, rightAliases, core } = parser.extractAliasesAndCore(line);
     const kind = core.match(/^(MeshProgram|SolidMeshProgram|MeshFillerProgram|Axis3DGroup)(?:\s+|$)/)?.[1];
     if (!kind) return null;
-    const names = parser.ensureAliasesForClass(aliases, kind, declaredVars);
+    const names = [...parser.ensureAliasesForClass(leftAliases, kind, declaredVars), ...rightAliases];
+    rightAliases.forEach((name: string) => declaredVars.add(name));
     if (!names.length) return null;
     const first = names[0];
     const paramsStr = core.slice(kind.length).trim();
@@ -346,6 +400,8 @@ function transpileCapsuleObject(line: string, declaredVars: Set<string>, parser:
                 out.push(`${first}.generateProgram(${body}, globalThis as any);`);
             }
             out.push(`await ${first}.loadProgram?.();`);
+        } else {
+            out.push(`await ${first}.loadFromTexture();`);
         }
     }
     for (const chain of split.chains) out.push(`${first}${chain};`);
@@ -378,6 +434,8 @@ function buildHandlers(parser: any) {
                 if (params.get(1)) {
                     program.generateProgram(params.get(1), parser.ctx.vars, parser.GlobalContext);
                     await program.loadProgram();
+                } else {
+                    await program.loadFromTexture(parser.ctx.vars, parser.GlobalContext);
                 }
                 if (!parser.lastFillerProgram) parser.lastFillerProgram = program;
                 return program;
@@ -399,11 +457,9 @@ function buildHandlers(parser: any) {
                     .map(([, value]) => value).join(" ").trim().replace(/;$/, "");
                 const program = parser.lastUsedProgram;
                 if (!program) return;
-                const fn = parser.prepareMathFunction(callback);
-                const texture = program.createIdealTexture(params.get(0), fn);
+                const texture = program.createIdealTexture(params.get(0));
                 const unit = String(params.get(0)).match(/\d+/)?.[0] || "";
                 texture.lastPreparedFunc = callback;
-                texture.func = fn;
                 parser.ctx.vars.set(`texture${unit}`, texture);
                 return texture;
             },
@@ -431,8 +487,8 @@ function buildHandlers(parser: any) {
             const match = /^fillMeshTexture\s+(\S+)\s+([\s\S]+)$/.exec(line);
             if (!match) return null;
             const texture = parser.transpileExpr(match[1]);
-            const callback = JSON.stringify(match[2].trim().replace(/;$/, ""));
-            return [`lastUsedProgram?.fillMeshTexture?.(${texture}, __prepareMathFunction(${callback}));`];
+            const callback = match[2].trim().replace(/;$/, "");
+            return [`lastUsedProgram?.fillMeshTexture?.(${texture}, ${transpileMeshCallback(callback, parser)});`];
         }],
     };
 }
@@ -489,6 +545,7 @@ export class AxisLinesProgram extends WebProgram {
 
     initUniforms() {
         this.uVec("axisLengths", 3).set(this.axisLengths);
+        return this;
     }
     setAxisLengths(x,y,z){
         this.axisLengths=new Vector3D(x,y,z);
@@ -499,6 +556,7 @@ export class AxisLinesProgram extends WebProgram {
     draw(camera?: Camera3D) {
         if (camera) camera.calculateMatrices().setUniformsProgram(this as any);
         this.drawArrays("LINES", 0, 6);
+        return this;
     }
 }
 
@@ -585,6 +643,7 @@ export class AxisConesProgram extends WebProgram {
         this.uVec("axisLengths",3).set(this.axisLengths);
         this.uVec("arrowHeights",3).set(this.arrowHeights);
         this.uVec("arrowRadii",3).set(this.arrowRadii);
+        return this;
     }
 
 
@@ -592,6 +651,7 @@ export class AxisConesProgram extends WebProgram {
         if (camera) camera.calculateMatrices().setUniformsProgram(this as any);
         this.bindVAO();
         this.drawArrays("TRIANGLES", 0, 3 * 16 * 3);
+        return this;
     }
 }
 
@@ -639,6 +699,7 @@ export class AxisGridProgram extends WebProgram {
         else if (!this.axisLengths) this.axisLengths = new Vector3D(1, 1, 1);
 
         // this.uVec("u_axisLengths", 3).set(this.axisLengths);
+        return this;
     }
 
     /** Genera el VAO de la cuadrícula en función de cellSize o divisions */
@@ -693,6 +754,7 @@ export class AxisGridProgram extends WebProgram {
                 vertices.push(0, 0, z, 0, sizeY, z);
             }
         }
+        return this;
     }
         
 
@@ -701,6 +763,7 @@ export class AxisGridProgram extends WebProgram {
         this.bindVAO();
         if (this.vertexCount)
             this.drawArrays("LINES", 0, this.vertexCount);
+        return this;
     }
 
     // ----------------------------
@@ -813,6 +876,7 @@ export class Axis3DGroup {
             if(!this.cones.VAO) this.cones.initVAO();
             this.cones.draw(camera);
         }
+        return this;
     }
 
     /** helpers para actualizar parámetros en caliente */
@@ -854,14 +918,14 @@ export class Axis3DGroup {
     setDivisions(divisions: number) {
         this.gridDivisions=divisions;
         if(this.grid)
-            return this.grid.setDivisions(divisions);
+            this.grid.setDivisions(divisions);
         return this;
     }
 
     /** Fija el tamaño del lado de las celdas y calcula el nº de divisiones */
     setCellSize(size: number) {
         if(this.grid)
-            return this.grid.setCellSize(size);
+            this.grid.setCellSize(size);
         return this;
     }
     includeInWebManList(){
@@ -906,6 +970,20 @@ export class MeshFillerProgram extends WebProgram {
         }
     }
 
+    /** Reuses the function attached by createIdealMesh to the texture on this unit. */
+    async loadFromTexture(...varsContexts: any[]): Promise<this> {
+        const texture = this.getTextureByUnit(parseTexUnitType(this.valsTexUnit as any)) as any;
+        if (!texture?.lastPreparedFunc) {
+            throw new Error(`MeshFillerProgram ${this.valsTexUnit} needs a function or a preceding createIdealMesh on the same TexUnit`);
+        }
+        if (/\b(?:switch|try|catch|throw|class|function|new)\b/.test(texture.lastPreparedFunc)) {
+            throw new Error("MeshFillerProgram cannot translate this callback to GLSL; use numeric expressions, if, for, or while");
+        }
+        this.generateProgram(texture.lastPreparedFunc, globalThis, ...varsContexts, texture.meshContext ?? {});
+        await this.loadProgram();
+        return this;
+    }
+
     override async loadProgram(vs: string = this.vertPath, fs: string = this.fragPath): Promise<this> {
         [this.program, this.vert, this.frag] = await loadShadersFromString(this.gl, vs, fs);
         
@@ -925,7 +1003,7 @@ export class MeshFillerProgram extends WebProgram {
      * Obtiene los valores actuales del contexto y los sube a la GPU.
      */
     tick() {
-        if (!this.program) return;
+        if (!this.program) return this;
         
         this.use();
         this.uniformsToUpdate.forEach(u => {
@@ -955,7 +1033,8 @@ export class MeshFillerProgram extends WebProgram {
 
         // Regex mejorado para capturar { expresión , tipo }
         // Buscamos el último bloque después de la última coma que parezca un tipo GLSL
-        let glslBody = body.replace(/{([^}]+)}/g, (_, content) => {
+        let glslBody = body.replace(/{([^{}]+)}/g, (whole, content) => {
+            if (/[;{}]/.test(content) || /\b(?:return|let|const|var|if|else|for|while|switch|throw)\b/.test(content)) return whole;
             // Separar el tipo (float, vec3, etc) buscando la última coma
             let path = content;
             let glslType = "float";
@@ -1072,10 +1151,12 @@ export class MeshFillerProgram extends WebProgram {
         // Nota: GLSL no tiene || para floats. Si la expresión JS usaba ||, 
         // el valor ya viene resuelto por el getter. El glslBody solo necesita el nombre del uniform.
 
-        if (glslBody.includes('return')) {
-            glslBody = glslBody.replace(/return\s+([^;]+);?/, "float res = $1;");
+        glslBody = glslBody.replace(/\b(?:let|const|var)\s+([A-Za-z_]\w*)\s*=/g, "float $1 =")
+            .replace(/===/g, "==").replace(/!==/g, "!=");
+        if (/\b(?:return|if|for|while|float)\b/.test(glslBody)) {
+            glslBody = glslBody.replace(/\breturn\s+([^;]+);?/g, "{ outRed = $1; return; }");
         } else {
-            glslBody = `float res = ${glslBody.replace(/;$/, "")};`;
+            glslBody = `outRed = ${glslBody.replace(/;$/, "")};`;
         }
 
         this.vertPath = `#version 300 es
@@ -1092,15 +1173,15 @@ export class MeshFillerProgram extends WebProgram {
             void main() {
                 float x = gl_FragCoord.x;
                 float y = gl_FragCoord.y;
+                outRed = 0.0;
                 ${glslBody}
-                outRed = res;
             }`;
-        console.log("Shader generado con uniforms complejos:", this.fragPath);
+        return this;
     }
 
 
     draw() {
-        if (!this.program) return;
+        if (!this.program) return this;
         
         const gl = this.gl;
         this.use();
@@ -1108,7 +1189,7 @@ export class MeshFillerProgram extends WebProgram {
         const tex = this.getTextureByUnit(parseTexUnitType(this.valsTexUnit as any));
         // console.log("La textura es",tex,"vals",parseTexUnitType(this.valsTexUnit as any))
 
-        if(!tex) return;
+        if(!tex) return this;
 
         const tw = (tex as any).w ?? this.w;
         const th = (tex as any).h ?? this.h;

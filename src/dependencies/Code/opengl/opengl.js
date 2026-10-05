@@ -16,11 +16,18 @@ export function loadShaderSource(url) {
         return response.text();
     });
 }
-export function __prepareMathFunction(callbackString) {
+export function __prepareMathFunction(callbackString, context = {}) {
     let prepared = (callbackString || "").trim().replace(/;$/, "");
-    prepared = prepared.replace(/\{(\w+)\}/g, "($1)");
+    const args = [];
+    const values = [];
+    prepared = prepared.replace(/\{\s*([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\s*(?:,\s*(?:float|int|uint|vec[2-4]|mat[2-4]))?\s*\}/g, (_, name) => {
+        const arg = `__dnti_ctx_${args.length}`;
+        args.push(arg);
+        values.push(context[name]);
+        return arg;
+    });
     prepared = prepared.replace(/(?<!\.)\b(sin|cos|tan|exp|floor|ceil|min|max|round|random|abs|pow|sqrt|atan2|log|PI)\b/g, "Math.$1");
-    return new Function(`"use strict"; return (${prepared});`)();
+    return new Function(...args, `"use strict"; return (${prepared});`)(...values);
 }
 export function __mountGlobalBlocks(globalBlocks, addFunc) {
     if (!(globalBlocks === null || globalBlocks === void 0 ? void 0 : globalBlocks.length))

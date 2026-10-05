@@ -550,7 +550,8 @@ export class WebProgram{
         data=null,
         FILTER_WRAP:["NEAREST"|"LINEAR"|number,"NEAREST"|"LINEAR"|number,"CLAMP"|"REPEAT"|"MIRROR"|number,"CLAMP"|"REPEAT"|"MIRROR"|number]=["NEAREST","NEAREST","CLAMP","CLAMP"],
         texUnit?: TextureUnitType,
-        MIPlevel = 0
+        MIPlevel = 0,
+        target: number = this.gl.TEXTURE_2D_ARRAY
     ): BindableTexture3D {
         const gl = this.gl;
         const tex = gl.createTexture();
@@ -562,7 +563,7 @@ export class WebProgram{
             console.error("%cTexture error: Float textures don’t accept LINEAR filtering","color:red;font-weight:bold;");
 
         gl.activeTexture(gl.TEXTURE0 + nTexture);
-        gl.bindTexture(gl.TEXTURE_2D_ARRAY, tex);
+        gl.bindTexture(target, tex);
 
         // Convert filter/wrap enums
         FILTER_WRAP = FILTER_WRAP.map(a => {
@@ -575,14 +576,18 @@ export class WebProgram{
         }) as any;
 
         // Set texture parameters
-        gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MIN_FILTER, FILTER_WRAP[0] as number);
-        gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MAG_FILTER, FILTER_WRAP[1] as number);
-        gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_WRAP_S, FILTER_WRAP[2] as number);
-        gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_WRAP_T, FILTER_WRAP[3] as number);
+        gl.texParameteri(target, gl.TEXTURE_MIN_FILTER, FILTER_WRAP[0] as number);
+        gl.texParameteri(target, gl.TEXTURE_MAG_FILTER, FILTER_WRAP[1] as number);
+        gl.texParameteri(target, gl.TEXTURE_WRAP_S, FILTER_WRAP[2] as number);
+        gl.texParameteri(target, gl.TEXTURE_WRAP_T, FILTER_WRAP[3] as number);
+        if (target === gl.TEXTURE_3D) gl.texParameteri(target, gl.TEXTURE_WRAP_R, FILTER_WRAP[3] as number);
 
         if(!size[2]||size[2]<=0){
             if(!!data&&data.length){
-                size[2]=~~(data.length/size[1]/size[0])
+                const channels = format[0] === gl.RED || format[0] === gl.RED_INTEGER ? 1
+                    : format[0] === gl.RG || format[0] === gl.RG_INTEGER ? 2
+                    : format[0] === gl.RGB || format[0] === gl.RGB_INTEGER ? 3 : 4;
+                size[2]=Math.max(1, Math.ceil(data.length / (size[1] * size[0] * channels)));
             }else{
                 size[2]=1;
             }
@@ -591,7 +596,7 @@ export class WebProgram{
 
         // Allocate storage
         gl.texImage3D(
-            gl.TEXTURE_2D_ARRAY,
+            target,
             MIPlevel,
             format[1], // internalFormat (e.g. gl.RGBA32F)
             size[0],   // width
@@ -614,8 +619,8 @@ export class WebProgram{
         (tex as any).fill = (arr, x = 0, y = 0, z = 0, w = size[0], h = size[1], d=size[2], LOD = MIPlevel) => {
             if ((tex as any).unit !== undefined)
                 gl.activeTexture(gl.TEXTURE0 + (tex as any).unit);
-            gl.bindTexture(gl.TEXTURE_2D_ARRAY, tex);
-            gl.texSubImage3D(gl.TEXTURE_2D_ARRAY, LOD, x, y, z, w, h, d, format[0], format[2], arr);
+            gl.bindTexture(target, tex);
+            gl.texSubImage3D(target, LOD, x, y, z, w, h, d, format[0], format[2], arr);
             // gl.bindTexture(gl.TEXTURE_2D_ARRAY, null);
             return tex;
         };
@@ -625,13 +630,13 @@ export class WebProgram{
             textureUnit = parseTexUnitType(textureUnit);
             if (textureUnit !== -1) gl.activeTexture(gl.TEXTURE0 + textureUnit);
             (tex as any).unit = textureUnit;
-            gl.bindTexture(gl.TEXTURE_2D_ARRAY, tex);
+            gl.bindTexture(target, tex);
             return tex;
         };
         (tex as any).unbind = (textureUnit = (tex as any).unit) => {
             textureUnit = parseTexUnitType(textureUnit);
             if (textureUnit !== -1) gl.activeTexture(gl.TEXTURE0 + textureUnit);
-            gl.bindTexture(gl.TEXTURE_2D_ARRAY, null);
+            gl.bindTexture(target, null);
             return tex;
         };
 
@@ -639,6 +644,9 @@ export class WebProgram{
         (tex as any).h = size[1];
         (tex as any).nLayers = size[2];
         (tex as any).format = format;
+        (tex as any).target = target;
+        WebProgram.Textures[nTexture] = tex as any;
+        this.textures[nTexture] = tex as any;
         
         (tex as any).setLengthUniforms=()=>{
             this.uInt(name+"Length",true).set((tex as any).w*(tex as any).h);
@@ -671,6 +679,34 @@ export class WebProgram{
             params.texUnit,
             params.MIPlevel ?? 0
         );
+    }
+
+    createTexture3D(
+        name?: string,
+        size: [number, number, number] | number[] = [this.standardTEXW, this.standardTEXH, 1],
+        format: [number, number] | number[] | TexExamples = TexExamples.RGBAFloat,
+        data = null,
+        FILTER_WRAP: ["NEAREST" | "LINEAR" | number, "NEAREST" | "LINEAR" | number, "CLAMP" | "REPEAT" | "MIRROR" | number, "CLAMP" | "REPEAT" | "MIRROR" | number] = ["NEAREST", "NEAREST", "CLAMP", "CLAMP"],
+        texUnit?: TextureUnitType,
+        MIPlevel = 0
+    ): BindableTexture3D {
+        return this.createTexture2DArray(name, size, format, data, FILTER_WRAP, texUnit, MIPlevel, this.gl.TEXTURE_3D);
+    }
+
+    texture3DArray(params: Parameters<WebProgram["texture2DArray"]>[0]) {
+        return this.createTexture3D(
+            params.name,
+            params.size ?? [this.standardTEXW, this.standardTEXH, 1],
+            params.format ?? TexExamples.RGBAFloat,
+            params.data ?? null,
+            params.FILTER_WRAP ?? ["NEAREST", "NEAREST", "CLAMP", "CLAMP"],
+            params.texUnit,
+            params.MIPlevel ?? 0
+        );
+    }
+
+    texture3D(params: Parameters<WebProgram["texture2DArray"]>[0]) {
+        return this.texture3DArray(params);
     }
 
 

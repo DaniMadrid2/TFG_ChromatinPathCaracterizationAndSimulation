@@ -4,6 +4,7 @@ export type RegistryTranspiler = (line: string, declaredVars: Set<string>) => st
 export type RegistryModule = {
     id: string;
     objects?: Record<string, RegistryHandler>;
+    namedParamsOnly?: string[];
     functions?: Record<string, RegistryHandler>;
     transpile?: RegistryTranspiler[];
     browserImports?: string[];

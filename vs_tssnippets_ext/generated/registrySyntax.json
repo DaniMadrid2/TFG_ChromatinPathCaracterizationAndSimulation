@@ -2,101 +2,4249 @@
   "objects": [
     {
       "name": "Axis3DGroup",
-      "tags": {}
+      "tags": {},
+      "definition": {
+        "file": "WebGL/parser/registryModules/capsules.ts",
+        "line": 410,
+        "character": 12
+      },
+      "className": "Axis3DGroup",
+      "parameters": [
+        "axisLength",
+        "drawArrows",
+        "heights",
+        "radii",
+        "planes"
+      ],
+      "methods": [
+        {
+          "name": "initUniforms",
+          "parameters": [],
+          "parameterTypes": [],
+          "definition": {
+            "file": "WebGL/parser/registryModules/capsules.ts",
+            "line": 782,
+            "character": 4
+          },
+          "choices": []
+        },
+        {
+          "name": "draw",
+          "parameters": [
+            "camera"
+          ],
+          "parameterTypes": [
+            "Camera3D"
+          ],
+          "definition": {
+            "file": "WebGL/parser/registryModules/capsules.ts",
+            "line": 821,
+            "character": 4
+          },
+          "choices": [
+            null
+          ]
+        },
+        {
+          "name": "setAxisLengths",
+          "parameters": [
+            "x",
+            "y",
+            "z"
+          ],
+          "parameterTypes": [
+            "number",
+            "number",
+            "number"
+          ],
+          "definition": {
+            "file": "WebGL/parser/registryModules/capsules.ts",
+            "line": 850,
+            "character": 4
+          },
+          "choices": [
+            null,
+            null,
+            null
+          ]
+        },
+        {
+          "name": "setArrowParams",
+          "parameters": [
+            "heights",
+            "radii"
+          ],
+          "parameterTypes": [
+            "Vector3D",
+            "Vector3D"
+          ],
+          "definition": {
+            "file": "WebGL/parser/registryModules/capsules.ts",
+            "line": 859,
+            "character": 4
+          },
+          "choices": [
+            null,
+            null
+          ]
+        },
+        {
+          "name": "setPlanes",
+          "parameters": [
+            "planes"
+          ],
+          "parameterTypes": [
+            "ArrayPlano"
+          ],
+          "definition": {
+            "file": "WebGL/parser/registryModules/capsules.ts",
+            "line": 871,
+            "character": 4
+          },
+          "choices": [
+            null
+          ]
+        },
+        {
+          "name": "setDivisions",
+          "parameters": [
+            "divisions"
+          ],
+          "parameterTypes": [
+            "number"
+          ],
+          "definition": {
+            "file": "WebGL/parser/registryModules/capsules.ts",
+            "line": 885,
+            "character": 4
+          },
+          "choices": [
+            null
+          ]
+        },
+        {
+          "name": "setCellSize",
+          "parameters": [
+            "size"
+          ],
+          "parameterTypes": [
+            "number"
+          ],
+          "definition": {
+            "file": "WebGL/parser/registryModules/capsules.ts",
+            "line": 893,
+            "character": 4
+          },
+          "choices": [
+            null
+          ]
+        },
+        {
+          "name": "includeInWebManList",
+          "parameters": [],
+          "parameterTypes": [],
+          "definition": {
+            "file": "WebGL/parser/registryModules/capsules.ts",
+            "line": 898,
+            "character": 4
+          },
+          "choices": []
+        },
+        {
+          "name": "loadProgram",
+          "parameters": [],
+          "parameterTypes": [],
+          "definition": {
+            "file": "WebGL/parser/registryModules/capsules.ts",
+            "line": 907,
+            "character": 10
+          },
+          "choices": []
+        },
+        {
+          "name": "use",
+          "parameters": [],
+          "parameterTypes": [],
+          "definition": {
+            "file": "WebGL/parser/registryModules/capsules.ts",
+            "line": 916,
+            "character": 4
+          },
+          "choices": []
+        }
+      ],
+      "properties": [
+        "lines",
+        "cones",
+        "grid",
+        "gridDivisions"
+      ]
     },
     {
       "name": "Camera3D",
-      "tags": {}
+      "tags": {
+        "namedParamsOnly": true
+      },
+      "definition": {
+        "file": "WebGL/parser/objects/camera.ts",
+        "line": 7,
+        "character": 8
+      },
+      "className": "Camera3D",
+      "parameters": [
+        "pos",
+        "fov",
+        "aspectRatio",
+        "ratio",
+        "near",
+        "far",
+        "walkspeed",
+        "speed"
+      ],
+      "methods": [
+        {
+          "name": "setPos",
+          "parameters": [
+            "pos"
+          ],
+          "parameterTypes": [
+            "Vector3D"
+          ],
+          "definition": {
+            "file": "Game3D/Game3D.ts",
+            "line": 35,
+            "character": 4
+          },
+          "choices": [
+            null
+          ]
+        },
+        {
+          "name": "setFollowPos",
+          "parameters": [
+            "pos"
+          ],
+          "parameterTypes": [
+            "Vector3D"
+          ],
+          "definition": {
+            "file": "Game3D/Game3D.ts",
+            "line": 39,
+            "character": 4
+          },
+          "choices": [
+            null
+          ]
+        },
+        {
+          "name": "calculateMatrices",
+          "parameters": [],
+          "parameterTypes": [],
+          "definition": {
+            "file": "Game3D/Game3D.ts",
+            "line": 45,
+            "character": 11
+          },
+          "choices": []
+        },
+        {
+          "name": "tick",
+          "parameters": [
+            "dt",
+            "keypress",
+            "mousepos",
+            "mouseclick"
+          ],
+          "parameterTypes": [
+            "number",
+            "any",
+            "any",
+            "any"
+          ],
+          "definition": {
+            "file": "Game3D/Game3D.ts",
+            "line": 52,
+            "character": 11
+          },
+          "choices": [
+            null,
+            null,
+            null,
+            null
+          ]
+        },
+        {
+          "name": "Hor",
+          "parameters": [
+            "keypress"
+          ],
+          "parameterTypes": [
+            null
+          ],
+          "definition": {
+            "file": "Game3D/Game3D.ts",
+            "line": 136,
+            "character": 11
+          },
+          "choices": [
+            null
+          ]
+        },
+        {
+          "name": "Ver",
+          "parameters": [
+            "keypress"
+          ],
+          "parameterTypes": [
+            null
+          ],
+          "definition": {
+            "file": "Game3D/Game3D.ts",
+            "line": 139,
+            "character": 11
+          },
+          "choices": [
+            null
+          ]
+        },
+        {
+          "name": "Depth",
+          "parameters": [
+            "keypress"
+          ],
+          "parameterTypes": [
+            null
+          ],
+          "definition": {
+            "file": "Game3D/Game3D.ts",
+            "line": 142,
+            "character": 11
+          },
+          "choices": [
+            null
+          ]
+        },
+        {
+          "name": "right",
+          "parameters": [
+            "keypress"
+          ],
+          "parameterTypes": [
+            null
+          ],
+          "definition": {
+            "file": "Game3D/Game3D.ts",
+            "line": 145,
+            "character": 11
+          },
+          "choices": [
+            null
+          ]
+        },
+        {
+          "name": "left",
+          "parameters": [
+            "keypress"
+          ],
+          "parameterTypes": [
+            null
+          ],
+          "definition": {
+            "file": "Game3D/Game3D.ts",
+            "line": 148,
+            "character": 11
+          },
+          "choices": [
+            null
+          ]
+        },
+        {
+          "name": "down",
+          "parameters": [
+            "keypress"
+          ],
+          "parameterTypes": [
+            null
+          ],
+          "definition": {
+            "file": "Game3D/Game3D.ts",
+            "line": 151,
+            "character": 11
+          },
+          "choices": [
+            null
+          ]
+        },
+        {
+          "name": "up",
+          "parameters": [
+            "keypress"
+          ],
+          "parameterTypes": [
+            null
+          ],
+          "definition": {
+            "file": "Game3D/Game3D.ts",
+            "line": 154,
+            "character": 11
+          },
+          "choices": [
+            null
+          ]
+        },
+        {
+          "name": "shift",
+          "parameters": [
+            "keypress"
+          ],
+          "parameterTypes": [
+            null
+          ],
+          "definition": {
+            "file": "Game3D/Game3D.ts",
+            "line": 157,
+            "character": 11
+          },
+          "choices": [
+            null
+          ]
+        },
+        {
+          "name": "r",
+          "parameters": [
+            "keypress"
+          ],
+          "parameterTypes": [
+            null
+          ],
+          "definition": {
+            "file": "Game3D/Game3D.ts",
+            "line": 160,
+            "character": 11
+          },
+          "choices": [
+            null
+          ]
+        },
+        {
+          "name": "setMoveControlsAt",
+          "parameters": [
+            "key"
+          ],
+          "parameterTypes": [
+            "\"s\"|\"g\"|\"k\"|\"unbind\""
+          ],
+          "definition": {
+            "file": "Game3D/Game3D.ts",
+            "line": 164,
+            "character": 11
+          },
+          "choices": [
+            null
+          ]
+        },
+        {
+          "name": "bindRKey",
+          "parameters": [
+            "key"
+          ],
+          "parameterTypes": [
+            null
+          ],
+          "definition": {
+            "file": "Game3D/Game3D.ts",
+            "line": 203,
+            "character": 11
+          },
+          "choices": [
+            null
+          ]
+        },
+        {
+          "name": "setCamControlsAt",
+          "parameters": [
+            "key"
+          ],
+          "parameterTypes": [
+            "\"down\"|\"g\"|\"k\"|\"unbind\""
+          ],
+          "definition": {
+            "file": "Game3D/Game3D.ts",
+            "line": 208,
+            "character": 11
+          },
+          "choices": [
+            null
+          ]
+        },
+        {
+          "name": "setMouseControls",
+          "parameters": [
+            "key"
+          ],
+          "parameterTypes": [
+            "\"mouse\"|\"unbind\""
+          ],
+          "definition": {
+            "file": "Game3D/Game3D.ts",
+            "line": 235,
+            "character": 11
+          },
+          "choices": [
+            null
+          ]
+        },
+        {
+          "name": "setUniforms",
+          "parameters": [
+            "u_viewMatrix",
+            "u_projectionMatrix",
+            "u_cameraPosition"
+          ],
+          "parameterTypes": [
+            "UMAT4",
+            "UMAT4",
+            "UVEC"
+          ],
+          "definition": {
+            "file": "Game3D/Game3D.ts",
+            "line": 244,
+            "character": 11
+          },
+          "choices": [
+            null,
+            null,
+            null
+          ]
+        },
+        {
+          "name": "setUniformsProgram",
+          "parameters": [
+            "program"
+          ],
+          "parameterTypes": [
+            "WebProgram | any"
+          ],
+          "definition": {
+            "file": "Game3D/Game3D.ts",
+            "line": 250,
+            "character": 11
+          },
+          "choices": [
+            null
+          ]
+        }
+      ],
+      "properties": [
+        "viewMatrix",
+        "projectionMatrix",
+        "direction",
+        "UP",
+        "followPosition",
+        "following",
+        "getFollowPos",
+        "invertX",
+        "invertY",
+        "invertXwhenFollowing",
+        "invertYwhenFollowing",
+        "keys",
+        "uniforms"
+      ]
     },
     {
       "name": "MeshFillerProgram",
-      "tags": {}
+      "tags": {},
+      "definition": {
+        "file": "WebGL/parser/registryModules/capsules.ts",
+        "line": 399,
+        "character": 12
+      },
+      "className": "MeshFillerProgram",
+      "parameters": [],
+      "methods": [
+        {
+          "name": "loadProgram",
+          "parameters": [
+            "vs",
+            "fs"
+          ],
+          "parameterTypes": [
+            "string",
+            "string"
+          ],
+          "definition": {
+            "file": "WebGL/parser/registryModules/capsules.ts",
+            "line": 954,
+            "character": 19
+          },
+          "choices": [
+            null,
+            null
+          ]
+        },
+        {
+          "name": "use",
+          "parameters": [],
+          "parameterTypes": [],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 105,
+            "character": 11
+          },
+          "choices": []
+        },
+        {
+          "name": "isWebProgram",
+          "parameters": [],
+          "parameterTypes": [],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 109,
+            "character": 11
+          },
+          "choices": []
+        },
+        {
+          "name": "includeInWebManList",
+          "parameters": [],
+          "parameterTypes": [],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 116,
+            "character": 11
+          },
+          "choices": []
+        },
+        {
+          "name": "createVAO",
+          "parameters": [],
+          "parameterTypes": [],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 143,
+            "character": 4
+          },
+          "choices": []
+        },
+        {
+          "name": "bindVAO",
+          "parameters": [
+            "number"
+          ],
+          "parameterTypes": [
+            null
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 149,
+            "character": 4
+          },
+          "choices": [
+            null
+          ]
+        },
+        {
+          "name": "unbindVAO",
+          "parameters": [],
+          "parameterTypes": [],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 154,
+            "character": 4
+          },
+          "choices": []
+        },
+        {
+          "name": "createTexture2D",
+          "parameters": [
+            "name",
+            "size",
+            "format",
+            "data",
+            "FILTER_WRAP",
+            "texUnit",
+            "LODlevel"
+          ],
+          "parameterTypes": [
+            "string",
+            "[number,number]|number[]",
+            "[number,number]|number[]|TexExamples",
+            null,
+            "[\"NEAREST\"|\"LINEAR\"|number,\"NEAREST\"|\"LINEAR\"|number,\"CLAMP\"|\"REPEAT\"|\"MIRROR\"|number,\"CLAMP\"|\"REPEAT\"|\"MIRROR\"|number]",
+            "TextureUnitType",
+            null
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 212,
+            "character": 4
+          },
+          "choices": [
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null
+          ]
+        },
+        {
+          "name": "texture2D",
+          "parameters": [
+            "params"
+          ],
+          "parameterTypes": [
+            "{\r\n        name?:string, size?:[number,number]|number[],\r\n        format?:[number,number]|number[]|TexExamples,\r\n        data?,\r\n        FILTER_WRAP?:[\"NEAREST\"|\"LINEAR\"|number,\"NEAREST\"|\"LINEAR\"|number,\"CLAMP\"|\"REPEAT\"|\"MIRROR\"|number,\"CLAMP\"|\"REPEAT\"|\"MIRROR\"|number],\r\n        texUnit?:TextureUnitType, LODlevel?\r\n    }"
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 415,
+            "character": 4
+          },
+          "choices": [
+            null
+          ]
+        },
+        {
+          "name": "loadLongArray2GPUTextures",
+          "parameters": [
+            "array",
+            "basename",
+            "startTextureUnit",
+            "format",
+            "FILTER_WRAP"
+          ],
+          "parameterTypes": [
+            "Float32Array",
+            "string",
+            "TextureUnitType",
+            "[number,number]|number[]|TexExamples",
+            "[\"NEAREST\"|\"LINEAR\"|number,\"NEAREST\"|\"LINEAR\"|number,\"CLAMP\"|\"REPEAT\"|\"MIRROR\"|number,\"CLAMP\"|\"REPEAT\"|\"MIRROR\"|number]"
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 432,
+            "character": 4
+          },
+          "choices": [
+            null,
+            null,
+            null,
+            null,
+            null
+          ]
+        },
+        {
+          "name": "texture2DFromImage",
+          "parameters": [
+            "img",
+            "name",
+            "format",
+            "FILTER_WRAP",
+            "texUnit",
+            "LODlevel"
+          ],
+          "parameterTypes": [
+            "HTMLImageElement",
+            "string",
+            "[number,number]|number[]|TexExamples",
+            "[\"NEAREST\"|\"LINEAR\"|number,\"NEAREST\"|\"LINEAR\"|number,\"CLAMP\"|\"REPEAT\"|\"MIRROR\"|number,\"CLAMP\"|\"REPEAT\"|\"MIRROR\"|number]",
+            "TextureUnitType",
+            null
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 470,
+            "character": 4
+          },
+          "choices": [
+            null,
+            null,
+            null,
+            null,
+            null,
+            null
+          ]
+        },
+        {
+          "name": "bindTextureUnit2Uniform",
+          "parameters": [
+            "texUnit",
+            "name"
+          ],
+          "parameterTypes": [
+            "number",
+            "string"
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 477,
+            "character": 4
+          },
+          "choices": [
+            null,
+            null
+          ]
+        },
+        {
+          "name": "getTextureFromUnit",
+          "parameters": [
+            "texUnit"
+          ],
+          "parameterTypes": [
+            "TextureUnitType|number"
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 486,
+            "character": 4
+          },
+          "choices": [
+            null
+          ]
+        },
+        {
+          "name": "uTexUnit",
+          "parameters": [
+            "texUnit",
+            "name"
+          ],
+          "parameterTypes": [
+            "number",
+            "string"
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 499,
+            "character": 4
+          },
+          "choices": [
+            null,
+            null
+          ]
+        },
+        {
+          "name": "bindNewTexture",
+          "parameters": [
+            "tex",
+            "name"
+          ],
+          "parameterTypes": [
+            "WebGLTexture",
+            "string"
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 509,
+            "character": 4
+          },
+          "choices": [
+            null,
+            null
+          ]
+        },
+        {
+          "name": "bindTexture",
+          "parameters": [
+            "tex",
+            "name",
+            "nTexture"
+          ],
+          "parameterTypes": [
+            "WebGLTexture",
+            "string",
+            "TextureUnitType"
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 522,
+            "character": 4
+          },
+          "choices": [
+            null,
+            null,
+            null
+          ]
+        },
+        {
+          "name": "getTextureByUnit",
+          "parameters": [
+            "texUnit"
+          ],
+          "parameterTypes": [
+            "TextureUnitType|number"
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 534,
+            "character": 4
+          },
+          "choices": [
+            null
+          ]
+        },
+        {
+          "name": "bindTexName2TexUnit",
+          "parameters": [
+            "name",
+            "nTexture"
+          ],
+          "parameterTypes": [
+            "string",
+            "TextureUnitType"
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 538,
+            "character": 4
+          },
+          "choices": [
+            null,
+            null
+          ]
+        },
+        {
+          "name": "createTexture2DArray",
+          "parameters": [
+            "name",
+            "size",
+            "format",
+            "data",
+            "FILTER_WRAP",
+            "texUnit",
+            "MIPlevel",
+            "target"
+          ],
+          "parameterTypes": [
+            "string",
+            "[number, number, number]|number[]",
+            "[number,number]|number[]|TexExamples",
+            null,
+            "[\"NEAREST\"|\"LINEAR\"|number,\"NEAREST\"|\"LINEAR\"|number,\"CLAMP\"|\"REPEAT\"|\"MIRROR\"|number,\"CLAMP\"|\"REPEAT\"|\"MIRROR\"|number]",
+            "TextureUnitType",
+            null,
+            "number"
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 545,
+            "character": 4
+          },
+          "choices": [
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null
+          ]
+        },
+        {
+          "name": "texture2DArray",
+          "parameters": [
+            "params"
+          ],
+          "parameterTypes": [
+            "{\r\n        name?: string,\r\n        size?: [number, number, number] | number[], // width, height, layers\r\n        format:[number,number]|number[]|TexExamples,\r\n        data?,\r\n        FILTER_WRAP?:[\"NEAREST\"|\"LINEAR\"|number,\"NEAREST\"|\"LINEAR\"|number,\"CLAMP\"|\"REPEAT\"|\"MIRROR\"|number,\"CLAMP\"|\"REPEAT\"|\"MIRROR\"|number],\r\n        texUnit?: TextureUnitType,\r\n        MIPlevel?: number\r\n    }"
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 657,
+            "character": 4
+          },
+          "choices": [
+            null
+          ]
+        },
+        {
+          "name": "createTexture3D",
+          "parameters": [
+            "name",
+            "size",
+            "format",
+            "data",
+            "FILTER_WRAP",
+            "texUnit",
+            "MIPlevel"
+          ],
+          "parameterTypes": [
+            "string",
+            "[number, number, number] | number[]",
+            "[number, number] | number[] | TexExamples",
+            null,
+            "[\"NEAREST\" | \"LINEAR\" | number, \"NEAREST\" | \"LINEAR\" | number, \"CLAMP\" | \"REPEAT\" | \"MIRROR\" | number, \"CLAMP\" | \"REPEAT\" | \"MIRROR\" | number]",
+            "TextureUnitType",
+            null
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 683,
+            "character": 4
+          },
+          "choices": [
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null
+          ]
+        },
+        {
+          "name": "texture3DArray",
+          "parameters": [
+            "params"
+          ],
+          "parameterTypes": [
+            "Parameters<WebProgram[\"texture2DArray\"]>[0]"
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 695,
+            "character": 4
+          },
+          "choices": [
+            null
+          ]
+        },
+        {
+          "name": "texture3D",
+          "parameters": [
+            "params"
+          ],
+          "parameterTypes": [
+            "Parameters<WebProgram[\"texture2DArray\"]>[0]"
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 707,
+            "character": 4
+          },
+          "choices": [
+            null
+          ]
+        },
+        {
+          "name": "uMat4",
+          "parameters": [
+            "name",
+            "hide"
+          ],
+          "parameterTypes": [
+            "string",
+            "boolean"
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 712,
+            "character": 4
+          },
+          "choices": [
+            null,
+            null
+          ]
+        },
+        {
+          "name": "uMat3",
+          "parameters": [
+            "name",
+            "hide"
+          ],
+          "parameterTypes": [
+            "string",
+            "boolean"
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 733,
+            "character": 4
+          },
+          "choices": [
+            null,
+            null
+          ]
+        },
+        {
+          "name": "uMat2",
+          "parameters": [
+            "name",
+            "hide"
+          ],
+          "parameterTypes": [
+            "string",
+            "boolean"
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 754,
+            "character": 4
+          },
+          "choices": [
+            null,
+            null
+          ]
+        },
+        {
+          "name": "uVec",
+          "parameters": [
+            "name",
+            "dimension",
+            "isFloat",
+            "isUnsignedInt",
+            "hide"
+          ],
+          "parameterTypes": [
+            "string",
+            null,
+            null,
+            null,
+            "boolean"
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 775,
+            "character": 4
+          },
+          "choices": [
+            null,
+            null,
+            null,
+            null,
+            null
+          ]
+        },
+        {
+          "name": "uNum",
+          "parameters": [
+            "name",
+            "isFloat",
+            "isUnsignedInt",
+            "hide"
+          ],
+          "parameterTypes": [
+            "string",
+            null,
+            null,
+            "boolean"
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 810,
+            "character": 4
+          },
+          "choices": [
+            null,
+            null,
+            null,
+            null
+          ]
+        },
+        {
+          "name": "uFloat",
+          "parameters": [
+            "name",
+            "hide"
+          ],
+          "parameterTypes": [
+            "string",
+            "boolean"
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 826,
+            "character": 4
+          },
+          "choices": [
+            null,
+            null
+          ]
+        },
+        {
+          "name": "uInt",
+          "parameters": [
+            "name",
+            "hide"
+          ],
+          "parameterTypes": [
+            "string",
+            "boolean"
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 829,
+            "character": 4
+          },
+          "choices": [
+            null,
+            null
+          ]
+        },
+        {
+          "name": "cFrameBuffer",
+          "parameters": [],
+          "parameterTypes": [],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 832,
+            "character": 4
+          },
+          "choices": []
+        },
+        {
+          "name": "unbindFrameBuffer",
+          "parameters": [],
+          "parameterTypes": [],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 835,
+            "character": 4
+          },
+          "choices": []
+        },
+        {
+          "name": "unbindFBO",
+          "parameters": [],
+          "parameterTypes": [],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 839,
+            "character": 4
+          },
+          "choices": []
+        },
+        {
+          "name": "setViewport",
+          "parameters": [
+            "xoff",
+            "yoff",
+            "w",
+            "h"
+          ],
+          "parameterTypes": [
+            null,
+            null,
+            null,
+            null
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 844,
+            "character": 11
+          },
+          "choices": [
+            null,
+            null,
+            null,
+            null
+          ]
+        },
+        {
+          "name": "clearBuffer",
+          "parameters": [
+            "type"
+          ],
+          "parameterTypes": [
+            "\"COLOR\"|\"DEPTH\"|\"STENCIL\""
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 853,
+            "character": 11
+          },
+          "choices": [
+            null
+          ]
+        },
+        {
+          "name": "clear",
+          "parameters": [
+            "type"
+          ],
+          "parameterTypes": [
+            "\"COLOR\"|\"DEPTH\"|\"STENCIL\""
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 857,
+            "character": 11
+          },
+          "choices": [
+            null
+          ]
+        },
+        {
+          "name": "clearMask",
+          "parameters": [
+            "type"
+          ],
+          "parameterTypes": [
+            "\"COLOR\"|\"DEPTH\"|\"STENCIL\""
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 865,
+            "character": 11
+          },
+          "choices": [
+            null
+          ]
+        },
+        {
+          "name": "clearColor",
+          "parameters": [
+            "color"
+          ],
+          "parameterTypes": [
+            "string|number[]"
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 869,
+            "character": 11
+          },
+          "choices": [
+            null
+          ]
+        },
+        {
+          "name": "clearDepth",
+          "parameters": [
+            "depthValue"
+          ],
+          "parameterTypes": [
+            null
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 896,
+            "character": 11
+          },
+          "choices": [
+            null
+          ]
+        },
+        {
+          "name": "clearStencil",
+          "parameters": [
+            "stencilValue"
+          ],
+          "parameterTypes": [
+            null
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 900,
+            "character": 11
+          },
+          "choices": [
+            null
+          ]
+        },
+        {
+          "name": "drawArrays",
+          "parameters": [
+            "mode",
+            "vaoOff",
+            "vertexCount",
+            "instanceCount"
+          ],
+          "parameterTypes": [
+            "GLMode",
+            null,
+            null,
+            null
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 917,
+            "character": 4
+          },
+          "choices": [
+            [
+              "TRIANGLES",
+              "TRIANGLE_STRIP",
+              "TRIANGLE_FAN",
+              "POINTS",
+              "LINES",
+              "LINE_STRIP",
+              "LINE_LOOP"
+            ],
+            null,
+            null,
+            null
+          ]
+        },
+        {
+          "name": "drawElements",
+          "parameters": [
+            "mode",
+            "elementCount",
+            "type",
+            "eboOff",
+            "instanceCount"
+          ],
+          "parameterTypes": [
+            "GLMode",
+            null,
+            "\"UNSIGNED_BYTE\"|\"UNSIGNED_SHORT\"|\"UNSIGNED_INT\"",
+            null,
+            null
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 939,
+            "character": 4
+          },
+          "choices": [
+            [
+              "TRIANGLES",
+              "TRIANGLE_STRIP",
+              "TRIANGLE_FAN",
+              "POINTS",
+              "LINES",
+              "LINE_STRIP",
+              "LINE_LOOP"
+            ],
+            null,
+            null,
+            null,
+            null
+          ]
+        },
+        {
+          "name": "blendEquation",
+          "parameters": [
+            "mode"
+          ],
+          "parameterTypes": [
+            "\"ADD\"|\"SUBSTRACT\"|\"REVERSE_SUBSTRACT\"|\"MIN\"|\"MAX\""
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 953,
+            "character": 4
+          },
+          "choices": [
+            null
+          ]
+        },
+        {
+          "name": "blendFunc",
+          "parameters": [
+            "sfactor",
+            "dfactor"
+          ],
+          "parameterTypes": [
+            "BlendConstantType",
+            "BlendConstantType"
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 1001,
+            "character": 4
+          },
+          "choices": [
+            [
+              "ZERO",
+              "ONE",
+              "SRC_COLOR",
+              "ONE_MINUS_SRC_COLOR",
+              "DST_COLOR",
+              "ONE_MINUS_DST_COLOR",
+              "SRC_ALPHA",
+              "ONE_MINUS_SRC_ALPHA",
+              "DST_ALPHA",
+              "ONE_MINUS_DST_ALPHA",
+              "CONSTANT_COLOR",
+              "ONE_MINUS_CONSTANT_COLOR",
+              "CONSTANT_ALPHA",
+              "ONE_MINUS_CONSTANT_ALPHA",
+              "ONE_MINUS_CONSTANT_ALPHA"
+            ],
+            [
+              "ZERO",
+              "ONE",
+              "SRC_COLOR",
+              "ONE_MINUS_SRC_COLOR",
+              "DST_COLOR",
+              "ONE_MINUS_DST_COLOR",
+              "SRC_ALPHA",
+              "ONE_MINUS_SRC_ALPHA",
+              "DST_ALPHA",
+              "ONE_MINUS_DST_ALPHA",
+              "CONSTANT_COLOR",
+              "ONE_MINUS_CONSTANT_COLOR",
+              "CONSTANT_ALPHA",
+              "ONE_MINUS_CONSTANT_ALPHA",
+              "ONE_MINUS_CONSTANT_ALPHA"
+            ]
+          ]
+        },
+        {
+          "name": "blendColor",
+          "parameters": [
+            "r",
+            "g",
+            "b",
+            "a"
+          ],
+          "parameterTypes": [
+            "number",
+            "number",
+            "number",
+            "number"
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 1012,
+            "character": 4
+          },
+          "choices": [
+            null,
+            null,
+            null,
+            null
+          ]
+        },
+        {
+          "name": "finish",
+          "parameters": [],
+          "parameterTypes": [],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 1016,
+            "character": 4
+          },
+          "choices": []
+        },
+        {
+          "name": "loadFromTexture",
+          "parameters": [
+            "varsContexts"
+          ],
+          "parameterTypes": [
+            "any[]"
+          ],
+          "definition": {
+            "file": "WebGL/parser/registryModules/capsules.ts",
+            "line": 941,
+            "character": 10
+          },
+          "choices": [
+            null
+          ]
+        },
+        {
+          "name": "tick",
+          "parameters": [],
+          "parameterTypes": [],
+          "definition": {
+            "file": "WebGL/parser/registryModules/capsules.ts",
+            "line": 972,
+            "character": 4
+          },
+          "choices": []
+        },
+        {
+          "name": "generateProgram",
+          "parameters": [
+            "callbackString",
+            "varsContexts"
+          ],
+          "parameterTypes": [
+            "string",
+            null
+          ],
+          "definition": {
+            "file": "WebGL/parser/registryModules/capsules.ts",
+            "line": 991,
+            "character": 4
+          },
+          "choices": [
+            null,
+            null
+          ]
+        },
+        {
+          "name": "draw",
+          "parameters": [],
+          "parameterTypes": [],
+          "definition": {
+            "file": "WebGL/parser/registryModules/capsules.ts",
+            "line": 1150,
+            "character": 4
+          },
+          "choices": []
+        }
+      ],
+      "properties": [
+        "program",
+        "ID",
+        "vert",
+        "frag",
+        "nUsedTextures",
+        "standardTEXW",
+        "standardTEXH",
+        "viewportW",
+        "viewportH",
+        "uniforms",
+        "textures",
+        "VAOs",
+        "currentVAO",
+        "VAO",
+        "Textures",
+        "isDepthTest",
+        "depthFunction"
+      ]
     },
     {
       "name": "MeshProgram",
       "tags": {
         "createsInternalTexture": true
-      }
+      },
+      "definition": {
+        "file": "WebGL/parser/registryModules/capsules.ts",
+        "line": 384,
+        "character": 12
+      },
+      "className": "MeshRenderingProgram",
+      "parameters": [
+        "input"
+      ],
+      "methods": [
+        {
+          "name": "loadProgram",
+          "parameters": [
+            "vs",
+            "fs"
+          ],
+          "parameterTypes": [
+            "string",
+            "string"
+          ],
+          "definition": {
+            "file": "WebGL/parser/registryModules/capsules.ts",
+            "line": 20,
+            "character": 19
+          },
+          "choices": [
+            null,
+            null
+          ]
+        },
+        {
+          "name": "use",
+          "parameters": [],
+          "parameterTypes": [],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 105,
+            "character": 11
+          },
+          "choices": []
+        },
+        {
+          "name": "isWebProgram",
+          "parameters": [],
+          "parameterTypes": [],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 109,
+            "character": 11
+          },
+          "choices": []
+        },
+        {
+          "name": "includeInWebManList",
+          "parameters": [],
+          "parameterTypes": [],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 116,
+            "character": 11
+          },
+          "choices": []
+        },
+        {
+          "name": "createVAO",
+          "parameters": [],
+          "parameterTypes": [],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 143,
+            "character": 4
+          },
+          "choices": []
+        },
+        {
+          "name": "bindVAO",
+          "parameters": [
+            "number"
+          ],
+          "parameterTypes": [
+            null
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 149,
+            "character": 4
+          },
+          "choices": [
+            null
+          ]
+        },
+        {
+          "name": "unbindVAO",
+          "parameters": [],
+          "parameterTypes": [],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 154,
+            "character": 4
+          },
+          "choices": []
+        },
+        {
+          "name": "createTexture2D",
+          "parameters": [
+            "name",
+            "size",
+            "format",
+            "data",
+            "FILTER_WRAP",
+            "texUnit",
+            "LODlevel"
+          ],
+          "parameterTypes": [
+            "string",
+            "[number,number]|number[]",
+            "[number,number]|number[]|TexExamples",
+            null,
+            "[\"NEAREST\"|\"LINEAR\"|number,\"NEAREST\"|\"LINEAR\"|number,\"CLAMP\"|\"REPEAT\"|\"MIRROR\"|number,\"CLAMP\"|\"REPEAT\"|\"MIRROR\"|number]",
+            "TextureUnitType",
+            null
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 212,
+            "character": 4
+          },
+          "choices": [
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null
+          ]
+        },
+        {
+          "name": "texture2D",
+          "parameters": [
+            "params"
+          ],
+          "parameterTypes": [
+            "{\r\n        name?:string, size?:[number,number]|number[],\r\n        format?:[number,number]|number[]|TexExamples,\r\n        data?,\r\n        FILTER_WRAP?:[\"NEAREST\"|\"LINEAR\"|number,\"NEAREST\"|\"LINEAR\"|number,\"CLAMP\"|\"REPEAT\"|\"MIRROR\"|number,\"CLAMP\"|\"REPEAT\"|\"MIRROR\"|number],\r\n        texUnit?:TextureUnitType, LODlevel?\r\n    }"
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 415,
+            "character": 4
+          },
+          "choices": [
+            null
+          ]
+        },
+        {
+          "name": "loadLongArray2GPUTextures",
+          "parameters": [
+            "array",
+            "basename",
+            "startTextureUnit",
+            "format",
+            "FILTER_WRAP"
+          ],
+          "parameterTypes": [
+            "Float32Array",
+            "string",
+            "TextureUnitType",
+            "[number,number]|number[]|TexExamples",
+            "[\"NEAREST\"|\"LINEAR\"|number,\"NEAREST\"|\"LINEAR\"|number,\"CLAMP\"|\"REPEAT\"|\"MIRROR\"|number,\"CLAMP\"|\"REPEAT\"|\"MIRROR\"|number]"
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 432,
+            "character": 4
+          },
+          "choices": [
+            null,
+            null,
+            null,
+            null,
+            null
+          ]
+        },
+        {
+          "name": "texture2DFromImage",
+          "parameters": [
+            "img",
+            "name",
+            "format",
+            "FILTER_WRAP",
+            "texUnit",
+            "LODlevel"
+          ],
+          "parameterTypes": [
+            "HTMLImageElement",
+            "string",
+            "[number,number]|number[]|TexExamples",
+            "[\"NEAREST\"|\"LINEAR\"|number,\"NEAREST\"|\"LINEAR\"|number,\"CLAMP\"|\"REPEAT\"|\"MIRROR\"|number,\"CLAMP\"|\"REPEAT\"|\"MIRROR\"|number]",
+            "TextureUnitType",
+            null
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 470,
+            "character": 4
+          },
+          "choices": [
+            null,
+            null,
+            null,
+            null,
+            null,
+            null
+          ]
+        },
+        {
+          "name": "bindTextureUnit2Uniform",
+          "parameters": [
+            "texUnit",
+            "name"
+          ],
+          "parameterTypes": [
+            "number",
+            "string"
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 477,
+            "character": 4
+          },
+          "choices": [
+            null,
+            null
+          ]
+        },
+        {
+          "name": "getTextureFromUnit",
+          "parameters": [
+            "texUnit"
+          ],
+          "parameterTypes": [
+            "TextureUnitType|number"
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 486,
+            "character": 4
+          },
+          "choices": [
+            null
+          ]
+        },
+        {
+          "name": "uTexUnit",
+          "parameters": [
+            "texUnit",
+            "name"
+          ],
+          "parameterTypes": [
+            "number",
+            "string"
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 499,
+            "character": 4
+          },
+          "choices": [
+            null,
+            null
+          ]
+        },
+        {
+          "name": "bindNewTexture",
+          "parameters": [
+            "tex",
+            "name"
+          ],
+          "parameterTypes": [
+            "WebGLTexture",
+            "string"
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 509,
+            "character": 4
+          },
+          "choices": [
+            null,
+            null
+          ]
+        },
+        {
+          "name": "bindTexture",
+          "parameters": [
+            "tex",
+            "name",
+            "nTexture"
+          ],
+          "parameterTypes": [
+            "WebGLTexture",
+            "string",
+            "TextureUnitType"
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 522,
+            "character": 4
+          },
+          "choices": [
+            null,
+            null,
+            null
+          ]
+        },
+        {
+          "name": "getTextureByUnit",
+          "parameters": [
+            "texUnit"
+          ],
+          "parameterTypes": [
+            "TextureUnitType|number"
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 534,
+            "character": 4
+          },
+          "choices": [
+            null
+          ]
+        },
+        {
+          "name": "bindTexName2TexUnit",
+          "parameters": [
+            "name",
+            "nTexture"
+          ],
+          "parameterTypes": [
+            "string",
+            "TextureUnitType"
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 538,
+            "character": 4
+          },
+          "choices": [
+            null,
+            null
+          ]
+        },
+        {
+          "name": "createTexture2DArray",
+          "parameters": [
+            "name",
+            "size",
+            "format",
+            "data",
+            "FILTER_WRAP",
+            "texUnit",
+            "MIPlevel",
+            "target"
+          ],
+          "parameterTypes": [
+            "string",
+            "[number, number, number]|number[]",
+            "[number,number]|number[]|TexExamples",
+            null,
+            "[\"NEAREST\"|\"LINEAR\"|number,\"NEAREST\"|\"LINEAR\"|number,\"CLAMP\"|\"REPEAT\"|\"MIRROR\"|number,\"CLAMP\"|\"REPEAT\"|\"MIRROR\"|number]",
+            "TextureUnitType",
+            null,
+            "number"
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 545,
+            "character": 4
+          },
+          "choices": [
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null
+          ]
+        },
+        {
+          "name": "texture2DArray",
+          "parameters": [
+            "params"
+          ],
+          "parameterTypes": [
+            "{\r\n        name?: string,\r\n        size?: [number, number, number] | number[], // width, height, layers\r\n        format:[number,number]|number[]|TexExamples,\r\n        data?,\r\n        FILTER_WRAP?:[\"NEAREST\"|\"LINEAR\"|number,\"NEAREST\"|\"LINEAR\"|number,\"CLAMP\"|\"REPEAT\"|\"MIRROR\"|number,\"CLAMP\"|\"REPEAT\"|\"MIRROR\"|number],\r\n        texUnit?: TextureUnitType,\r\n        MIPlevel?: number\r\n    }"
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 657,
+            "character": 4
+          },
+          "choices": [
+            null
+          ]
+        },
+        {
+          "name": "createTexture3D",
+          "parameters": [
+            "name",
+            "size",
+            "format",
+            "data",
+            "FILTER_WRAP",
+            "texUnit",
+            "MIPlevel"
+          ],
+          "parameterTypes": [
+            "string",
+            "[number, number, number] | number[]",
+            "[number, number] | number[] | TexExamples",
+            null,
+            "[\"NEAREST\" | \"LINEAR\" | number, \"NEAREST\" | \"LINEAR\" | number, \"CLAMP\" | \"REPEAT\" | \"MIRROR\" | number, \"CLAMP\" | \"REPEAT\" | \"MIRROR\" | number]",
+            "TextureUnitType",
+            null
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 683,
+            "character": 4
+          },
+          "choices": [
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null
+          ]
+        },
+        {
+          "name": "texture3DArray",
+          "parameters": [
+            "params"
+          ],
+          "parameterTypes": [
+            "Parameters<WebProgram[\"texture2DArray\"]>[0]"
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 695,
+            "character": 4
+          },
+          "choices": [
+            null
+          ]
+        },
+        {
+          "name": "texture3D",
+          "parameters": [
+            "params"
+          ],
+          "parameterTypes": [
+            "Parameters<WebProgram[\"texture2DArray\"]>[0]"
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 707,
+            "character": 4
+          },
+          "choices": [
+            null
+          ]
+        },
+        {
+          "name": "uMat4",
+          "parameters": [
+            "name",
+            "hide"
+          ],
+          "parameterTypes": [
+            "string",
+            "boolean"
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 712,
+            "character": 4
+          },
+          "choices": [
+            null,
+            null
+          ]
+        },
+        {
+          "name": "uMat3",
+          "parameters": [
+            "name",
+            "hide"
+          ],
+          "parameterTypes": [
+            "string",
+            "boolean"
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 733,
+            "character": 4
+          },
+          "choices": [
+            null,
+            null
+          ]
+        },
+        {
+          "name": "uMat2",
+          "parameters": [
+            "name",
+            "hide"
+          ],
+          "parameterTypes": [
+            "string",
+            "boolean"
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 754,
+            "character": 4
+          },
+          "choices": [
+            null,
+            null
+          ]
+        },
+        {
+          "name": "uVec",
+          "parameters": [
+            "name",
+            "dimension",
+            "isFloat",
+            "isUnsignedInt",
+            "hide"
+          ],
+          "parameterTypes": [
+            "string",
+            null,
+            null,
+            null,
+            "boolean"
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 775,
+            "character": 4
+          },
+          "choices": [
+            null,
+            null,
+            null,
+            null,
+            null
+          ]
+        },
+        {
+          "name": "uNum",
+          "parameters": [
+            "name",
+            "isFloat",
+            "isUnsignedInt",
+            "hide"
+          ],
+          "parameterTypes": [
+            "string",
+            null,
+            null,
+            "boolean"
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 810,
+            "character": 4
+          },
+          "choices": [
+            null,
+            null,
+            null,
+            null
+          ]
+        },
+        {
+          "name": "uFloat",
+          "parameters": [
+            "name",
+            "hide"
+          ],
+          "parameterTypes": [
+            "string",
+            "boolean"
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 826,
+            "character": 4
+          },
+          "choices": [
+            null,
+            null
+          ]
+        },
+        {
+          "name": "uInt",
+          "parameters": [
+            "name",
+            "hide"
+          ],
+          "parameterTypes": [
+            "string",
+            "boolean"
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 829,
+            "character": 4
+          },
+          "choices": [
+            null,
+            null
+          ]
+        },
+        {
+          "name": "cFrameBuffer",
+          "parameters": [],
+          "parameterTypes": [],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 832,
+            "character": 4
+          },
+          "choices": []
+        },
+        {
+          "name": "unbindFrameBuffer",
+          "parameters": [],
+          "parameterTypes": [],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 835,
+            "character": 4
+          },
+          "choices": []
+        },
+        {
+          "name": "unbindFBO",
+          "parameters": [],
+          "parameterTypes": [],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 839,
+            "character": 4
+          },
+          "choices": []
+        },
+        {
+          "name": "setViewport",
+          "parameters": [
+            "xoff",
+            "yoff",
+            "w",
+            "h"
+          ],
+          "parameterTypes": [
+            null,
+            null,
+            null,
+            null
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 844,
+            "character": 11
+          },
+          "choices": [
+            null,
+            null,
+            null,
+            null
+          ]
+        },
+        {
+          "name": "clearBuffer",
+          "parameters": [
+            "type"
+          ],
+          "parameterTypes": [
+            "\"COLOR\"|\"DEPTH\"|\"STENCIL\""
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 853,
+            "character": 11
+          },
+          "choices": [
+            null
+          ]
+        },
+        {
+          "name": "clear",
+          "parameters": [
+            "type"
+          ],
+          "parameterTypes": [
+            "\"COLOR\"|\"DEPTH\"|\"STENCIL\""
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 857,
+            "character": 11
+          },
+          "choices": [
+            null
+          ]
+        },
+        {
+          "name": "clearMask",
+          "parameters": [
+            "type"
+          ],
+          "parameterTypes": [
+            "\"COLOR\"|\"DEPTH\"|\"STENCIL\""
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 865,
+            "character": 11
+          },
+          "choices": [
+            null
+          ]
+        },
+        {
+          "name": "clearColor",
+          "parameters": [
+            "color"
+          ],
+          "parameterTypes": [
+            "string|number[]"
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 869,
+            "character": 11
+          },
+          "choices": [
+            null
+          ]
+        },
+        {
+          "name": "clearDepth",
+          "parameters": [
+            "depthValue"
+          ],
+          "parameterTypes": [
+            null
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 896,
+            "character": 11
+          },
+          "choices": [
+            null
+          ]
+        },
+        {
+          "name": "clearStencil",
+          "parameters": [
+            "stencilValue"
+          ],
+          "parameterTypes": [
+            null
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 900,
+            "character": 11
+          },
+          "choices": [
+            null
+          ]
+        },
+        {
+          "name": "drawArrays",
+          "parameters": [
+            "mode",
+            "vaoOff",
+            "vertexCount",
+            "instanceCount"
+          ],
+          "parameterTypes": [
+            "GLMode",
+            null,
+            null,
+            null
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 917,
+            "character": 4
+          },
+          "choices": [
+            [
+              "TRIANGLES",
+              "TRIANGLE_STRIP",
+              "TRIANGLE_FAN",
+              "POINTS",
+              "LINES",
+              "LINE_STRIP",
+              "LINE_LOOP"
+            ],
+            null,
+            null,
+            null
+          ]
+        },
+        {
+          "name": "drawElements",
+          "parameters": [
+            "mode",
+            "elementCount",
+            "type",
+            "eboOff",
+            "instanceCount"
+          ],
+          "parameterTypes": [
+            "GLMode",
+            null,
+            "\"UNSIGNED_BYTE\"|\"UNSIGNED_SHORT\"|\"UNSIGNED_INT\"",
+            null,
+            null
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 939,
+            "character": 4
+          },
+          "choices": [
+            [
+              "TRIANGLES",
+              "TRIANGLE_STRIP",
+              "TRIANGLE_FAN",
+              "POINTS",
+              "LINES",
+              "LINE_STRIP",
+              "LINE_LOOP"
+            ],
+            null,
+            null,
+            null,
+            null
+          ]
+        },
+        {
+          "name": "blendEquation",
+          "parameters": [
+            "mode"
+          ],
+          "parameterTypes": [
+            "\"ADD\"|\"SUBSTRACT\"|\"REVERSE_SUBSTRACT\"|\"MIN\"|\"MAX\""
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 953,
+            "character": 4
+          },
+          "choices": [
+            null
+          ]
+        },
+        {
+          "name": "blendFunc",
+          "parameters": [
+            "sfactor",
+            "dfactor"
+          ],
+          "parameterTypes": [
+            "BlendConstantType",
+            "BlendConstantType"
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 1001,
+            "character": 4
+          },
+          "choices": [
+            [
+              "ZERO",
+              "ONE",
+              "SRC_COLOR",
+              "ONE_MINUS_SRC_COLOR",
+              "DST_COLOR",
+              "ONE_MINUS_DST_COLOR",
+              "SRC_ALPHA",
+              "ONE_MINUS_SRC_ALPHA",
+              "DST_ALPHA",
+              "ONE_MINUS_DST_ALPHA",
+              "CONSTANT_COLOR",
+              "ONE_MINUS_CONSTANT_COLOR",
+              "CONSTANT_ALPHA",
+              "ONE_MINUS_CONSTANT_ALPHA",
+              "ONE_MINUS_CONSTANT_ALPHA"
+            ],
+            [
+              "ZERO",
+              "ONE",
+              "SRC_COLOR",
+              "ONE_MINUS_SRC_COLOR",
+              "DST_COLOR",
+              "ONE_MINUS_DST_COLOR",
+              "SRC_ALPHA",
+              "ONE_MINUS_SRC_ALPHA",
+              "DST_ALPHA",
+              "ONE_MINUS_DST_ALPHA",
+              "CONSTANT_COLOR",
+              "ONE_MINUS_CONSTANT_COLOR",
+              "CONSTANT_ALPHA",
+              "ONE_MINUS_CONSTANT_ALPHA",
+              "ONE_MINUS_CONSTANT_ALPHA"
+            ]
+          ]
+        },
+        {
+          "name": "blendColor",
+          "parameters": [
+            "r",
+            "g",
+            "b",
+            "a"
+          ],
+          "parameterTypes": [
+            "number",
+            "number",
+            "number",
+            "number"
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 1012,
+            "character": 4
+          },
+          "choices": [
+            null,
+            null,
+            null,
+            null
+          ]
+        },
+        {
+          "name": "finish",
+          "parameters": [],
+          "parameterTypes": [],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 1016,
+            "character": 4
+          },
+          "choices": []
+        },
+        {
+          "name": "setSize",
+          "parameters": [
+            "w",
+            "h"
+          ],
+          "parameterTypes": [
+            null,
+            null
+          ],
+          "definition": {
+            "file": "WebGL/parser/registryModules/capsules.ts",
+            "line": 127,
+            "character": 4
+          },
+          "choices": [
+            null,
+            null
+          ]
+        },
+        {
+          "name": "setOffset",
+          "parameters": [
+            "x",
+            "y",
+            "z"
+          ],
+          "parameterTypes": [
+            null,
+            null,
+            null
+          ],
+          "definition": {
+            "file": "WebGL/parser/registryModules/capsules.ts",
+            "line": 137,
+            "character": 4
+          },
+          "choices": [
+            null,
+            null,
+            null
+          ]
+        },
+        {
+          "name": "setDXDY",
+          "parameters": [
+            "dx",
+            "dy"
+          ],
+          "parameterTypes": [
+            null,
+            null
+          ],
+          "definition": {
+            "file": "WebGL/parser/registryModules/capsules.ts",
+            "line": 142,
+            "character": 4
+          },
+          "choices": [
+            null,
+            null
+          ]
+        },
+        {
+          "name": "setPerXPerY",
+          "parameters": [
+            "px",
+            "py"
+          ],
+          "parameterTypes": [
+            null,
+            null
+          ],
+          "definition": {
+            "file": "WebGL/parser/registryModules/capsules.ts",
+            "line": 152,
+            "character": 4
+          },
+          "choices": [
+            null,
+            null
+          ]
+        },
+        {
+          "name": "setColorHueScale",
+          "parameters": [
+            "scale"
+          ],
+          "parameterTypes": [
+            null
+          ],
+          "definition": {
+            "file": "WebGL/parser/registryModules/capsules.ts",
+            "line": 157,
+            "character": 4
+          },
+          "choices": [
+            null
+          ]
+        },
+        {
+          "name": "smoothColor",
+          "parameters": [
+            "is"
+          ],
+          "parameterTypes": [
+            null
+          ],
+          "definition": {
+            "file": "WebGL/parser/registryModules/capsules.ts",
+            "line": 161,
+            "character": 4
+          },
+          "choices": [
+            null
+          ]
+        },
+        {
+          "name": "setYScale",
+          "parameters": [
+            "scale"
+          ],
+          "parameterTypes": [
+            null
+          ],
+          "definition": {
+            "file": "WebGL/parser/registryModules/capsules.ts",
+            "line": 166,
+            "character": 4
+          },
+          "choices": [
+            null
+          ]
+        },
+        {
+          "name": "initUniforms",
+          "parameters": [],
+          "parameterTypes": [],
+          "definition": {
+            "file": "WebGL/parser/registryModules/capsules.ts",
+            "line": 171,
+            "character": 4
+          },
+          "choices": []
+        },
+        {
+          "name": "draw",
+          "parameters": [
+            "x",
+            "y",
+            "w",
+            "h",
+            "camera",
+            "mode"
+          ],
+          "parameterTypes": [
+            null,
+            null,
+            null,
+            null,
+            "Camera3D",
+            "GLMode"
+          ],
+          "definition": {
+            "file": "WebGL/parser/registryModules/capsules.ts",
+            "line": 181,
+            "character": 4
+          },
+          "choices": [
+            null,
+            null,
+            null,
+            null,
+            null,
+            [
+              "TRIANGLES",
+              "TRIANGLE_STRIP",
+              "TRIANGLE_FAN",
+              "POINTS",
+              "LINES",
+              "LINE_STRIP",
+              "LINE_LOOP"
+            ]
+          ]
+        },
+        {
+          "name": "createIdealTexture",
+          "parameters": [
+            "texUnit",
+            "w",
+            "h"
+          ],
+          "parameterTypes": [
+            null,
+            null,
+            null
+          ],
+          "definition": {
+            "file": "WebGL/parser/registryModules/capsules.ts",
+            "line": 194,
+            "character": 4
+          },
+          "choices": [
+            null,
+            null,
+            null
+          ]
+        },
+        {
+          "name": "fillMeshTexture",
+          "parameters": [
+            "texture2D",
+            "data",
+            "w",
+            "h"
+          ],
+          "parameterTypes": [
+            "BindableTexture",
+            "any|((x:number,y:number)=>number)",
+            null,
+            null
+          ],
+          "definition": {
+            "file": "WebGL/parser/registryModules/capsules.ts",
+            "line": 201,
+            "character": 4
+          },
+          "choices": [
+            null,
+            null,
+            null,
+            null
+          ]
+        }
+      ],
+      "properties": [
+        "program",
+        "ID",
+        "vert",
+        "frag",
+        "nUsedTextures",
+        "standardTEXW",
+        "standardTEXH",
+        "viewportW",
+        "viewportH",
+        "uniforms",
+        "textures",
+        "VAOs",
+        "currentVAO",
+        "VAO",
+        "Textures",
+        "isDepthTest",
+        "depthFunction",
+        "totalSegments"
+      ]
     },
     {
       "name": "Program",
-      "tags": {}
+      "tags": {},
+      "definition": {
+        "file": "WebGL/parser/objects/program.ts",
+        "line": 5,
+        "character": 8
+      },
+      "className": null,
+      "parameters": []
     },
     {
       "name": "SolidMeshProgram",
       "tags": {
         "createsInternalTexture": true
-      }
+      },
+      "definition": {
+        "file": "WebGL/parser/registryModules/capsules.ts",
+        "line": 392,
+        "character": 12
+      },
+      "className": "SolidMeshRenderingProgram",
+      "parameters": [
+        "input"
+      ],
+      "methods": [
+        {
+          "name": "loadProgram",
+          "parameters": [
+            "vs",
+            "fs"
+          ],
+          "parameterTypes": [
+            "string",
+            "string"
+          ],
+          "definition": {
+            "file": "WebGL/parser/registryModules/capsules.ts",
+            "line": 20,
+            "character": 19
+          },
+          "choices": [
+            null,
+            null
+          ]
+        },
+        {
+          "name": "use",
+          "parameters": [],
+          "parameterTypes": [],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 105,
+            "character": 11
+          },
+          "choices": []
+        },
+        {
+          "name": "isWebProgram",
+          "parameters": [],
+          "parameterTypes": [],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 109,
+            "character": 11
+          },
+          "choices": []
+        },
+        {
+          "name": "includeInWebManList",
+          "parameters": [],
+          "parameterTypes": [],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 116,
+            "character": 11
+          },
+          "choices": []
+        },
+        {
+          "name": "createVAO",
+          "parameters": [],
+          "parameterTypes": [],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 143,
+            "character": 4
+          },
+          "choices": []
+        },
+        {
+          "name": "bindVAO",
+          "parameters": [
+            "number"
+          ],
+          "parameterTypes": [
+            null
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 149,
+            "character": 4
+          },
+          "choices": [
+            null
+          ]
+        },
+        {
+          "name": "unbindVAO",
+          "parameters": [],
+          "parameterTypes": [],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 154,
+            "character": 4
+          },
+          "choices": []
+        },
+        {
+          "name": "createTexture2D",
+          "parameters": [
+            "name",
+            "size",
+            "format",
+            "data",
+            "FILTER_WRAP",
+            "texUnit",
+            "LODlevel"
+          ],
+          "parameterTypes": [
+            "string",
+            "[number,number]|number[]",
+            "[number,number]|number[]|TexExamples",
+            null,
+            "[\"NEAREST\"|\"LINEAR\"|number,\"NEAREST\"|\"LINEAR\"|number,\"CLAMP\"|\"REPEAT\"|\"MIRROR\"|number,\"CLAMP\"|\"REPEAT\"|\"MIRROR\"|number]",
+            "TextureUnitType",
+            null
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 212,
+            "character": 4
+          },
+          "choices": [
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null
+          ]
+        },
+        {
+          "name": "texture2D",
+          "parameters": [
+            "params"
+          ],
+          "parameterTypes": [
+            "{\r\n        name?:string, size?:[number,number]|number[],\r\n        format?:[number,number]|number[]|TexExamples,\r\n        data?,\r\n        FILTER_WRAP?:[\"NEAREST\"|\"LINEAR\"|number,\"NEAREST\"|\"LINEAR\"|number,\"CLAMP\"|\"REPEAT\"|\"MIRROR\"|number,\"CLAMP\"|\"REPEAT\"|\"MIRROR\"|number],\r\n        texUnit?:TextureUnitType, LODlevel?\r\n    }"
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 415,
+            "character": 4
+          },
+          "choices": [
+            null
+          ]
+        },
+        {
+          "name": "loadLongArray2GPUTextures",
+          "parameters": [
+            "array",
+            "basename",
+            "startTextureUnit",
+            "format",
+            "FILTER_WRAP"
+          ],
+          "parameterTypes": [
+            "Float32Array",
+            "string",
+            "TextureUnitType",
+            "[number,number]|number[]|TexExamples",
+            "[\"NEAREST\"|\"LINEAR\"|number,\"NEAREST\"|\"LINEAR\"|number,\"CLAMP\"|\"REPEAT\"|\"MIRROR\"|number,\"CLAMP\"|\"REPEAT\"|\"MIRROR\"|number]"
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 432,
+            "character": 4
+          },
+          "choices": [
+            null,
+            null,
+            null,
+            null,
+            null
+          ]
+        },
+        {
+          "name": "texture2DFromImage",
+          "parameters": [
+            "img",
+            "name",
+            "format",
+            "FILTER_WRAP",
+            "texUnit",
+            "LODlevel"
+          ],
+          "parameterTypes": [
+            "HTMLImageElement",
+            "string",
+            "[number,number]|number[]|TexExamples",
+            "[\"NEAREST\"|\"LINEAR\"|number,\"NEAREST\"|\"LINEAR\"|number,\"CLAMP\"|\"REPEAT\"|\"MIRROR\"|number,\"CLAMP\"|\"REPEAT\"|\"MIRROR\"|number]",
+            "TextureUnitType",
+            null
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 470,
+            "character": 4
+          },
+          "choices": [
+            null,
+            null,
+            null,
+            null,
+            null,
+            null
+          ]
+        },
+        {
+          "name": "bindTextureUnit2Uniform",
+          "parameters": [
+            "texUnit",
+            "name"
+          ],
+          "parameterTypes": [
+            "number",
+            "string"
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 477,
+            "character": 4
+          },
+          "choices": [
+            null,
+            null
+          ]
+        },
+        {
+          "name": "getTextureFromUnit",
+          "parameters": [
+            "texUnit"
+          ],
+          "parameterTypes": [
+            "TextureUnitType|number"
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 486,
+            "character": 4
+          },
+          "choices": [
+            null
+          ]
+        },
+        {
+          "name": "uTexUnit",
+          "parameters": [
+            "texUnit",
+            "name"
+          ],
+          "parameterTypes": [
+            "number",
+            "string"
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 499,
+            "character": 4
+          },
+          "choices": [
+            null,
+            null
+          ]
+        },
+        {
+          "name": "bindNewTexture",
+          "parameters": [
+            "tex",
+            "name"
+          ],
+          "parameterTypes": [
+            "WebGLTexture",
+            "string"
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 509,
+            "character": 4
+          },
+          "choices": [
+            null,
+            null
+          ]
+        },
+        {
+          "name": "bindTexture",
+          "parameters": [
+            "tex",
+            "name",
+            "nTexture"
+          ],
+          "parameterTypes": [
+            "WebGLTexture",
+            "string",
+            "TextureUnitType"
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 522,
+            "character": 4
+          },
+          "choices": [
+            null,
+            null,
+            null
+          ]
+        },
+        {
+          "name": "getTextureByUnit",
+          "parameters": [
+            "texUnit"
+          ],
+          "parameterTypes": [
+            "TextureUnitType|number"
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 534,
+            "character": 4
+          },
+          "choices": [
+            null
+          ]
+        },
+        {
+          "name": "bindTexName2TexUnit",
+          "parameters": [
+            "name",
+            "nTexture"
+          ],
+          "parameterTypes": [
+            "string",
+            "TextureUnitType"
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 538,
+            "character": 4
+          },
+          "choices": [
+            null,
+            null
+          ]
+        },
+        {
+          "name": "createTexture2DArray",
+          "parameters": [
+            "name",
+            "size",
+            "format",
+            "data",
+            "FILTER_WRAP",
+            "texUnit",
+            "MIPlevel",
+            "target"
+          ],
+          "parameterTypes": [
+            "string",
+            "[number, number, number]|number[]",
+            "[number,number]|number[]|TexExamples",
+            null,
+            "[\"NEAREST\"|\"LINEAR\"|number,\"NEAREST\"|\"LINEAR\"|number,\"CLAMP\"|\"REPEAT\"|\"MIRROR\"|number,\"CLAMP\"|\"REPEAT\"|\"MIRROR\"|number]",
+            "TextureUnitType",
+            null,
+            "number"
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 545,
+            "character": 4
+          },
+          "choices": [
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null
+          ]
+        },
+        {
+          "name": "texture2DArray",
+          "parameters": [
+            "params"
+          ],
+          "parameterTypes": [
+            "{\r\n        name?: string,\r\n        size?: [number, number, number] | number[], // width, height, layers\r\n        format:[number,number]|number[]|TexExamples,\r\n        data?,\r\n        FILTER_WRAP?:[\"NEAREST\"|\"LINEAR\"|number,\"NEAREST\"|\"LINEAR\"|number,\"CLAMP\"|\"REPEAT\"|\"MIRROR\"|number,\"CLAMP\"|\"REPEAT\"|\"MIRROR\"|number],\r\n        texUnit?: TextureUnitType,\r\n        MIPlevel?: number\r\n    }"
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 657,
+            "character": 4
+          },
+          "choices": [
+            null
+          ]
+        },
+        {
+          "name": "createTexture3D",
+          "parameters": [
+            "name",
+            "size",
+            "format",
+            "data",
+            "FILTER_WRAP",
+            "texUnit",
+            "MIPlevel"
+          ],
+          "parameterTypes": [
+            "string",
+            "[number, number, number] | number[]",
+            "[number, number] | number[] | TexExamples",
+            null,
+            "[\"NEAREST\" | \"LINEAR\" | number, \"NEAREST\" | \"LINEAR\" | number, \"CLAMP\" | \"REPEAT\" | \"MIRROR\" | number, \"CLAMP\" | \"REPEAT\" | \"MIRROR\" | number]",
+            "TextureUnitType",
+            null
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 683,
+            "character": 4
+          },
+          "choices": [
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null
+          ]
+        },
+        {
+          "name": "texture3DArray",
+          "parameters": [
+            "params"
+          ],
+          "parameterTypes": [
+            "Parameters<WebProgram[\"texture2DArray\"]>[0]"
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 695,
+            "character": 4
+          },
+          "choices": [
+            null
+          ]
+        },
+        {
+          "name": "texture3D",
+          "parameters": [
+            "params"
+          ],
+          "parameterTypes": [
+            "Parameters<WebProgram[\"texture2DArray\"]>[0]"
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 707,
+            "character": 4
+          },
+          "choices": [
+            null
+          ]
+        },
+        {
+          "name": "uMat4",
+          "parameters": [
+            "name",
+            "hide"
+          ],
+          "parameterTypes": [
+            "string",
+            "boolean"
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 712,
+            "character": 4
+          },
+          "choices": [
+            null,
+            null
+          ]
+        },
+        {
+          "name": "uMat3",
+          "parameters": [
+            "name",
+            "hide"
+          ],
+          "parameterTypes": [
+            "string",
+            "boolean"
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 733,
+            "character": 4
+          },
+          "choices": [
+            null,
+            null
+          ]
+        },
+        {
+          "name": "uMat2",
+          "parameters": [
+            "name",
+            "hide"
+          ],
+          "parameterTypes": [
+            "string",
+            "boolean"
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 754,
+            "character": 4
+          },
+          "choices": [
+            null,
+            null
+          ]
+        },
+        {
+          "name": "uVec",
+          "parameters": [
+            "name",
+            "dimension",
+            "isFloat",
+            "isUnsignedInt",
+            "hide"
+          ],
+          "parameterTypes": [
+            "string",
+            null,
+            null,
+            null,
+            "boolean"
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 775,
+            "character": 4
+          },
+          "choices": [
+            null,
+            null,
+            null,
+            null,
+            null
+          ]
+        },
+        {
+          "name": "uNum",
+          "parameters": [
+            "name",
+            "isFloat",
+            "isUnsignedInt",
+            "hide"
+          ],
+          "parameterTypes": [
+            "string",
+            null,
+            null,
+            "boolean"
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 810,
+            "character": 4
+          },
+          "choices": [
+            null,
+            null,
+            null,
+            null
+          ]
+        },
+        {
+          "name": "uFloat",
+          "parameters": [
+            "name",
+            "hide"
+          ],
+          "parameterTypes": [
+            "string",
+            "boolean"
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 826,
+            "character": 4
+          },
+          "choices": [
+            null,
+            null
+          ]
+        },
+        {
+          "name": "uInt",
+          "parameters": [
+            "name",
+            "hide"
+          ],
+          "parameterTypes": [
+            "string",
+            "boolean"
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 829,
+            "character": 4
+          },
+          "choices": [
+            null,
+            null
+          ]
+        },
+        {
+          "name": "cFrameBuffer",
+          "parameters": [],
+          "parameterTypes": [],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 832,
+            "character": 4
+          },
+          "choices": []
+        },
+        {
+          "name": "unbindFrameBuffer",
+          "parameters": [],
+          "parameterTypes": [],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 835,
+            "character": 4
+          },
+          "choices": []
+        },
+        {
+          "name": "unbindFBO",
+          "parameters": [],
+          "parameterTypes": [],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 839,
+            "character": 4
+          },
+          "choices": []
+        },
+        {
+          "name": "setViewport",
+          "parameters": [
+            "xoff",
+            "yoff",
+            "w",
+            "h"
+          ],
+          "parameterTypes": [
+            null,
+            null,
+            null,
+            null
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 844,
+            "character": 11
+          },
+          "choices": [
+            null,
+            null,
+            null,
+            null
+          ]
+        },
+        {
+          "name": "clearBuffer",
+          "parameters": [
+            "type"
+          ],
+          "parameterTypes": [
+            "\"COLOR\"|\"DEPTH\"|\"STENCIL\""
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 853,
+            "character": 11
+          },
+          "choices": [
+            null
+          ]
+        },
+        {
+          "name": "clear",
+          "parameters": [
+            "type"
+          ],
+          "parameterTypes": [
+            "\"COLOR\"|\"DEPTH\"|\"STENCIL\""
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 857,
+            "character": 11
+          },
+          "choices": [
+            null
+          ]
+        },
+        {
+          "name": "clearMask",
+          "parameters": [
+            "type"
+          ],
+          "parameterTypes": [
+            "\"COLOR\"|\"DEPTH\"|\"STENCIL\""
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 865,
+            "character": 11
+          },
+          "choices": [
+            null
+          ]
+        },
+        {
+          "name": "clearColor",
+          "parameters": [
+            "color"
+          ],
+          "parameterTypes": [
+            "string|number[]"
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 869,
+            "character": 11
+          },
+          "choices": [
+            null
+          ]
+        },
+        {
+          "name": "clearDepth",
+          "parameters": [
+            "depthValue"
+          ],
+          "parameterTypes": [
+            null
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 896,
+            "character": 11
+          },
+          "choices": [
+            null
+          ]
+        },
+        {
+          "name": "clearStencil",
+          "parameters": [
+            "stencilValue"
+          ],
+          "parameterTypes": [
+            null
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 900,
+            "character": 11
+          },
+          "choices": [
+            null
+          ]
+        },
+        {
+          "name": "drawArrays",
+          "parameters": [
+            "mode",
+            "vaoOff",
+            "vertexCount",
+            "instanceCount"
+          ],
+          "parameterTypes": [
+            "GLMode",
+            null,
+            null,
+            null
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 917,
+            "character": 4
+          },
+          "choices": [
+            [
+              "TRIANGLES",
+              "TRIANGLE_STRIP",
+              "TRIANGLE_FAN",
+              "POINTS",
+              "LINES",
+              "LINE_STRIP",
+              "LINE_LOOP"
+            ],
+            null,
+            null,
+            null
+          ]
+        },
+        {
+          "name": "drawElements",
+          "parameters": [
+            "mode",
+            "elementCount",
+            "type",
+            "eboOff",
+            "instanceCount"
+          ],
+          "parameterTypes": [
+            "GLMode",
+            null,
+            "\"UNSIGNED_BYTE\"|\"UNSIGNED_SHORT\"|\"UNSIGNED_INT\"",
+            null,
+            null
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 939,
+            "character": 4
+          },
+          "choices": [
+            [
+              "TRIANGLES",
+              "TRIANGLE_STRIP",
+              "TRIANGLE_FAN",
+              "POINTS",
+              "LINES",
+              "LINE_STRIP",
+              "LINE_LOOP"
+            ],
+            null,
+            null,
+            null,
+            null
+          ]
+        },
+        {
+          "name": "blendEquation",
+          "parameters": [
+            "mode"
+          ],
+          "parameterTypes": [
+            "\"ADD\"|\"SUBSTRACT\"|\"REVERSE_SUBSTRACT\"|\"MIN\"|\"MAX\""
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 953,
+            "character": 4
+          },
+          "choices": [
+            null
+          ]
+        },
+        {
+          "name": "blendFunc",
+          "parameters": [
+            "sfactor",
+            "dfactor"
+          ],
+          "parameterTypes": [
+            "BlendConstantType",
+            "BlendConstantType"
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 1001,
+            "character": 4
+          },
+          "choices": [
+            [
+              "ZERO",
+              "ONE",
+              "SRC_COLOR",
+              "ONE_MINUS_SRC_COLOR",
+              "DST_COLOR",
+              "ONE_MINUS_DST_COLOR",
+              "SRC_ALPHA",
+              "ONE_MINUS_SRC_ALPHA",
+              "DST_ALPHA",
+              "ONE_MINUS_DST_ALPHA",
+              "CONSTANT_COLOR",
+              "ONE_MINUS_CONSTANT_COLOR",
+              "CONSTANT_ALPHA",
+              "ONE_MINUS_CONSTANT_ALPHA",
+              "ONE_MINUS_CONSTANT_ALPHA"
+            ],
+            [
+              "ZERO",
+              "ONE",
+              "SRC_COLOR",
+              "ONE_MINUS_SRC_COLOR",
+              "DST_COLOR",
+              "ONE_MINUS_DST_COLOR",
+              "SRC_ALPHA",
+              "ONE_MINUS_SRC_ALPHA",
+              "DST_ALPHA",
+              "ONE_MINUS_DST_ALPHA",
+              "CONSTANT_COLOR",
+              "ONE_MINUS_CONSTANT_COLOR",
+              "CONSTANT_ALPHA",
+              "ONE_MINUS_CONSTANT_ALPHA",
+              "ONE_MINUS_CONSTANT_ALPHA"
+            ]
+          ]
+        },
+        {
+          "name": "blendColor",
+          "parameters": [
+            "r",
+            "g",
+            "b",
+            "a"
+          ],
+          "parameterTypes": [
+            "number",
+            "number",
+            "number",
+            "number"
+          ],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 1012,
+            "character": 4
+          },
+          "choices": [
+            null,
+            null,
+            null,
+            null
+          ]
+        },
+        {
+          "name": "finish",
+          "parameters": [],
+          "parameterTypes": [],
+          "definition": {
+            "file": "WebGL/webglMan.ts",
+            "line": 1016,
+            "character": 4
+          },
+          "choices": []
+        },
+        {
+          "name": "setSize",
+          "parameters": [
+            "w",
+            "h"
+          ],
+          "parameterTypes": [
+            null,
+            null
+          ],
+          "definition": {
+            "file": "WebGL/parser/registryModules/capsules.ts",
+            "line": 236,
+            "character": 13
+          },
+          "choices": [
+            null,
+            null
+          ]
+        },
+        {
+          "name": "setOffset",
+          "parameters": [
+            "x",
+            "y",
+            "z"
+          ],
+          "parameterTypes": [
+            null,
+            null,
+            null
+          ],
+          "definition": {
+            "file": "WebGL/parser/registryModules/capsules.ts",
+            "line": 137,
+            "character": 4
+          },
+          "choices": [
+            null,
+            null,
+            null
+          ]
+        },
+        {
+          "name": "setDXDY",
+          "parameters": [
+            "dx",
+            "dy"
+          ],
+          "parameterTypes": [
+            null,
+            null
+          ],
+          "definition": {
+            "file": "WebGL/parser/registryModules/capsules.ts",
+            "line": 142,
+            "character": 4
+          },
+          "choices": [
+            null,
+            null
+          ]
+        },
+        {
+          "name": "setPerXPerY",
+          "parameters": [
+            "px",
+            "py"
+          ],
+          "parameterTypes": [
+            null,
+            null
+          ],
+          "definition": {
+            "file": "WebGL/parser/registryModules/capsules.ts",
+            "line": 152,
+            "character": 4
+          },
+          "choices": [
+            null,
+            null
+          ]
+        },
+        {
+          "name": "setColorHueScale",
+          "parameters": [
+            "scale"
+          ],
+          "parameterTypes": [
+            null
+          ],
+          "definition": {
+            "file": "WebGL/parser/registryModules/capsules.ts",
+            "line": 157,
+            "character": 4
+          },
+          "choices": [
+            null
+          ]
+        },
+        {
+          "name": "smoothColor",
+          "parameters": [
+            "is"
+          ],
+          "parameterTypes": [
+            null
+          ],
+          "definition": {
+            "file": "WebGL/parser/registryModules/capsules.ts",
+            "line": 161,
+            "character": 4
+          },
+          "choices": [
+            null
+          ]
+        },
+        {
+          "name": "setYScale",
+          "parameters": [
+            "scale"
+          ],
+          "parameterTypes": [
+            null
+          ],
+          "definition": {
+            "file": "WebGL/parser/registryModules/capsules.ts",
+            "line": 166,
+            "character": 4
+          },
+          "choices": [
+            null
+          ]
+        },
+        {
+          "name": "initUniforms",
+          "parameters": [],
+          "parameterTypes": [],
+          "definition": {
+            "file": "WebGL/parser/registryModules/capsules.ts",
+            "line": 171,
+            "character": 4
+          },
+          "choices": []
+        },
+        {
+          "name": "draw",
+          "parameters": [
+            "x",
+            "y",
+            "w",
+            "h",
+            "camera",
+            "_mode"
+          ],
+          "parameterTypes": [
+            null,
+            null,
+            null,
+            null,
+            "Camera3D",
+            "GLMode"
+          ],
+          "definition": {
+            "file": "WebGL/parser/registryModules/capsules.ts",
+            "line": 242,
+            "character": 13
+          },
+          "choices": [
+            null,
+            null,
+            null,
+            null,
+            null,
+            null
+          ]
+        },
+        {
+          "name": "createIdealTexture",
+          "parameters": [
+            "texUnit",
+            "w",
+            "h"
+          ],
+          "parameterTypes": [
+            null,
+            null,
+            null
+          ],
+          "definition": {
+            "file": "WebGL/parser/registryModules/capsules.ts",
+            "line": 194,
+            "character": 4
+          },
+          "choices": [
+            null,
+            null,
+            null
+          ]
+        },
+        {
+          "name": "fillMeshTexture",
+          "parameters": [
+            "texture2D",
+            "data",
+            "w",
+            "h"
+          ],
+          "parameterTypes": [
+            "BindableTexture",
+            "any|((x:number,y:number)=>number)",
+            null,
+            null
+          ],
+          "definition": {
+            "file": "WebGL/parser/registryModules/capsules.ts",
+            "line": 201,
+            "character": 4
+          },
+          "choices": [
+            null,
+            null,
+            null,
+            null
+          ]
+        }
+      ],
+      "properties": [
+        "program",
+        "ID",
+        "vert",
+        "frag",
+        "nUsedTextures",
+        "standardTEXW",
+        "standardTEXH",
+        "viewportW",
+        "viewportH",
+        "uniforms",
+        "textures",
+        "VAOs",
+        "currentVAO",
+        "VAO",
+        "Textures",
+        "isDepthTest",
+        "depthFunction",
+        "totalSegments"
+      ]
     }
   ],
   "functions": [
     {
       "name": "cFrameBuffer",
-      "tags": {}
+      "tags": {},
+      "definition": {
+        "file": "WebGL/parser/functions/framebuffer.ts",
+        "line": 5,
+        "character": 8
+      }
     },
     {
       "name": "createIdealMesh",
-      "tags": {}
+      "tags": {},
+      "definition": {
+        "file": "WebGL/parser/registryModules/capsules.ts",
+        "line": 420,
+        "character": 12
+      }
     },
     {
       "name": "depthTest",
-      "tags": {}
+      "tags": {},
+      "definition": {
+        "file": "WebGL/parser/functions/rendering.ts",
+        "line": 30,
+        "character": 8
+      }
     },
     {
       "name": "draw",
-      "tags": {}
+      "tags": {},
+      "definition": {
+        "file": "WebGL/parser/functions/rendering.ts",
+        "line": 5,
+        "character": 8
+      }
     },
     {
       "name": "drawArrays",
-      "tags": {}
+      "tags": {},
+      "definition": {
+        "file": "WebGL/parser/functions/rendering.ts",
+        "line": 33,
+        "character": 8
+      }
     },
     {
       "name": "drawElements",
-      "tags": {}
+      "tags": {},
+      "definition": {
+        "file": "WebGL/parser/functions/rendering.ts",
+        "line": 42,
+        "character": 8
+      }
     },
     {
       "name": "fillMeshTexture",
-      "tags": {}
+      "tags": {},
+      "definition": {
+        "file": "WebGL/parser/registryModules/capsules.ts",
+        "line": 433,
+        "character": 12
+      }
     },
     {
       "name": "lduse",
-      "tags": {}
+      "tags": {},
+      "definition": {
+        "file": "WebGL/parser/functions/lifecycle.ts",
+        "line": 13,
+        "character": 8
+      }
     },
     {
       "name": "let",
-      "tags": {}
+      "tags": {},
+      "definition": {
+        "file": "WebGL/parser/functions/lifecycle.ts",
+        "line": 8,
+        "character": 8
+      }
     },
     {
       "name": "log",
-      "tags": {}
+      "tags": {},
+      "definition": {
+        "file": "WebGL/parser/functions/lifecycle.ts",
+        "line": 7,
+        "character": 8
+      }
     },
     {
       "name": "start",
-      "tags": {}
+      "tags": {},
+      "definition": {
+        "file": "WebGL/parser/functions/lifecycle.ts",
+        "line": 5,
+        "character": 8
+      }
     },
     {
       "name": "startAsync",
-      "tags": {}
+      "tags": {},
+      "definition": {
+        "file": "WebGL/parser/functions/lifecycle.ts",
+        "line": 6,
+        "character": 8
+      }
+    },
+    {
+      "name": "tex3D",
+      "tags": {},
+      "definition": {
+        "file": "WebGL/parser/functions/textures.ts",
+        "line": 34,
+        "character": 8
+      }
+    },
+    {
+      "name": "tex3DArray",
+      "tags": {},
+      "definition": {
+        "file": "WebGL/parser/functions/textures.ts",
+        "line": 35,
+        "character": 8
+      }
     },
     {
       "name": "texture2DArray",
-      "tags": {}
+      "tags": {},
+      "definition": {
+        "file": "WebGL/parser/functions/textures.ts",
+        "line": 5,
+        "character": 8
+      }
+    },
+    {
+      "name": "texture3DArray",
+      "tags": {},
+      "definition": {
+        "file": "WebGL/parser/functions/textures.ts",
+        "line": 23,
+        "character": 8
+      }
     },
     {
       "name": "unbindFBO",
-      "tags": {}
+      "tags": {},
+      "definition": {
+        "file": "WebGL/parser/functions/framebuffer.ts",
+        "line": 7,
+        "character": 8
+      }
     },
     {
       "name": "unbindFrameBuffer",
-      "tags": {}
+      "tags": {},
+      "definition": {
+        "file": "WebGL/parser/functions/framebuffer.ts",
+        "line": 6,
+        "character": 8
+      }
     },
     {
       "name": "use",
-      "tags": {}
+      "tags": {},
+      "definition": {
+        "file": "WebGL/parser/functions/lifecycle.ts",
+        "line": 22,
+        "character": 8
+      }
     },
     {
       "name": "viewport",
-      "tags": {}
+      "tags": {},
+      "definition": {
+        "file": "WebGL/parser/functions/rendering.ts",
+        "line": 13,
+        "character": 8
+      }
     }
   ]
 }

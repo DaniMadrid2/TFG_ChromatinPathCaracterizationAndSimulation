@@ -1,12 +1,15 @@
 /**
  * Browser runtime for DSL `backUp:` draw blocks, `backUp store`, `backUp restore`,
- * `backUp log`, and `readBackup(path)`. The parser imports this file only when
+ * `backUp log`, `readBackup(path)`, and inline tagged values such as
+ * `tick -2-README {offset}- { ... }`. The parser imports this file only when
  * `detectUse` finds one of those forms. Example:
  *
  *   drawTriangles -> [resultTex] size [64,64] {
  *       backUp: /experiment/pass/
  *   }
  *
+ * Tagged values replace one small JSON snapshot per tag under `.dnti-tags/`;
+ * no snapshot is available until the tagged block actually executes.
  * The browser cannot write files itself. Start the package backup API with
  * `dnti_shaderdsl servebackups [port] [path]`, or use `serve` / `parse --serve`.
  * The server implementation is `dist/lib/backups.js`; it can also be started
@@ -397,6 +400,7 @@ export class BackupRuntime {
     private draws: BackupDrawWriter;
     private reader: BackupReader;
     private logger: BackupConsoleLogger;
+    private taggedValues = new Map<string, { time: number; pending: boolean; value: string }>();
     /** Connects the browser WebGL context and recomputation state to the backup API. */
     constructor(gl: WebGL2RenderingContext, TexExamples: any, defaultScope: string,
         generationContext: () => { recomputeTau?: boolean; tauModelStamp?: unknown } = () => ({})) {
@@ -431,6 +435,30 @@ export class BackupRuntime {
     async readBackup(pathHint: any) {
         return this.reader.readBackup(pathHint);
     }
+    /** Saves the latest value observed at a tagged DSL block, at most once per second. */
+    captureTaggedValue(block: string, tag: string, name: string, value: any) {
+        const key = [block, tag, name].map(this.paths.safeName).join("_");
+        const previous = this.taggedValues.get(key);
+        const now = Date.now();
+        if (previous?.pending || (previous && now - previous.time < 1000)) return;
+        let formatted: string;
+        try {
+            formatted = JSON.stringify(value) ?? String(value);
+        } catch {
+            formatted = String(value);
+        }
+        if (formatted.length > 4096) formatted = formatted.slice(0, 4096) + "...";
+        if (previous && previous.value === formatted) {
+            previous.time = now;
+            return;
+        }
+        const state = { time: now, pending: true, value: formatted };
+        this.taggedValues.set(key, state);
+        const scope = this.paths.normalizeScopePath("./.dnti-tags/").path.replace(/\/+$/, "");
+        void this.server.put("/file", `${scope}/${key}.json`, JSON.stringify({ block, tag, name, value: formatted, at: new Date(now).toISOString() }))
+            .catch(() => { state.time = Date.now() + 30000; state.value = ""; })
+            .finally(() => { state.pending = false; });
+    }
 }
 
 /** Parser hook that imports the browser runtime and exposes `readBackup`. */
@@ -447,4 +475,4 @@ export const runtimeFeature: import("../parser/runtimeFeature.js").RuntimeFeatur
 
 /** Enables backups only when the DSL contains backup operations. */
 export const detectUse = ({ source }: import("../parser/runtimeFeature.js").RuntimeFeatureContext): boolean =>
-    /\bbackUp\s*(?::|store\b|restore\b|log\b)|\breadBackup\s*\(/i.test(source);
+    /\bbackUp\s*(?::|store\b|restore\b|log\b)|\breadBackup\s*\(|\b\w+\s+-\s*[A-Za-z0-9_]+\s*-[^\n]*\{[A-Za-z_$][\w$]*\}[^\n]*-\s*\{/i.test(source);

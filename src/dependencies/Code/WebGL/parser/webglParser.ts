@@ -132,8 +132,10 @@ export class DetailedParser {
 
     static extractContextNamesFromCallback(callbackString: string): string[] {
         const names = new Set<string>();
-        (callbackString || "").replace(/{([^{}]+)}/g, (_, raw) => {
+        const callbackBody = (callbackString || "").replace(/=>\s*\{([\s\S]*)\}\s*$/, "=>$1");
+        callbackBody.replace(/{([^{}]+)}/g, (_, raw) => {
             let expr = (raw || "").trim();
+            if (/[;{}]/.test(expr) || /\b(?:return|let|const|var|if|else|for|while|switch|throw)\b/.test(expr)) return "";
             const lastComma = expr.lastIndexOf(",");
             if (lastComma !== -1) {
                 const maybeType = expr.substring(lastComma + 1).trim();
@@ -168,6 +170,7 @@ export class DetailedParser {
     
     // 2. Usamos el nombre completo de la clase para acceder a GlobalContext
     static ObjectRegistry: Record<string, RegistryHandler> = {};
+    static NamedParamsOnlyObjects = new Set<string>();
 
     // --- Utilidad interna para procesar el cuerpo de las funciones matemáticas ---
     static prepareMathFunction = (callbackString) => {
@@ -275,6 +278,7 @@ export class DetailedParser {
         const functions: Record<string, RegistryHandler> = {};
         const transpilers: RegistryTranspiler[] = [];
         const active: RegistryModule[] = [];
+        const namedParamsOnly = new Set<string>();
         for (const definition of [...DetailedParser.registryDefinitions, ...external]) {
             const detected = definition.detectUse?.(source);
             const selected = configured.includes(definition.id) || (detected === "Toggled" && external.includes(definition));
@@ -283,11 +287,13 @@ export class DetailedParser {
             const names = [...Object.keys(module.objects || {}), ...Object.keys(module.functions || {})];
             if (detected === undefined && !selected && !names.some(name => new RegExp(`\\b${name}\\b`).test(source))) continue;
             active.push(module);
+            for (const name of module.namedParamsOnly || []) namedParamsOnly.add(name);
             Object.assign(objects, module.objects);
             Object.assign(functions, module.functions);
             transpilers.push(...(module.transpile || []));
         }
         DetailedParser.ObjectRegistry = objects;
+        DetailedParser.NamedParamsOnlyObjects = namedParamsOnly;
         DetailedParser.FunctionRegistry = functions;
         DetailedParser.RegistryTranspilers = transpilers;
         DetailedParser.activeRegistryModules = active;
@@ -1053,7 +1059,8 @@ export class DetailedParser {
         const initSplit = DetailedParser.splitTopLevelAssignLE(line);
         const lineNoInit = initSplit ? initSplit[0] : line;
         const initExpr = initSplit ? DetailedParser.transpileExpr(initSplit[1]) : "null";
-        const normalizedLineNoInit = lineNoInit.replace(/^\s*(?:new-|in-)?tex2D\b/, "tex2D");
+        const is3D = /^\s*(?:new-|in-)?(?:tex3D|tex3DArray|texture3DArray)\b/.test(lineNoInit);
+        const normalizedLineNoInit = lineNoInit.replace(/^\s*(?:new-|in-)?(?:tex2D|tex3D|tex3DArray|texture3DArray)\b/, "tex2D");
         const byteSized = /\]\s*b(?=\s|$)/.test(normalizedLineNoInit);
         const normalizedSizeLine = normalizedLineNoInit.replace(/\]\s*b(?=\s|$)/, "]");
 
@@ -1127,7 +1134,7 @@ export class DetailedParser {
         if (sizeParts.length <= 1) {
             sizeParts = sizeBody.split(/\s+x\s+/i).map(x => x.trim()).filter(Boolean);
         }
-        if (sizeParts.length < 2) return null;
+        if (sizeParts.length < (is3D ? 3 : 2)) return null;
         const texUnitExpr = texUnitToken ? DetailedParser.normalizeTexUnitToken(texUnitToken) : "undefined";
         let formatExpr = DetailedParser.transpileTextureFormatToken(resourceToken);
         let filterMinExpr = `"NEAREST"`;
@@ -1156,7 +1163,7 @@ export class DetailedParser {
         const out: string[] = [];
         const decl = declaredVars.has(firstAlias) ? firstAlias : `var ${firstAlias}`;
         declaredVars.add(firstAlias);
-        out.push(`${decl} = ${programRef}.createTexture2D(${JSON.stringify(uniformName)}, ${sizeExpr}, ${formatExpr}, ${initExpr}, [${filterMinExpr}, ${filterMagExpr}, ${wrapSExpr}, ${wrapTExpr}], ${texUnitExpr});`);
+        out.push(`${decl} = ${programRef}.${is3D ? "createTexture3D" : "createTexture2D"}(${JSON.stringify(uniformName)}, ${sizeExpr}, ${formatExpr}, ${initExpr}, [${filterMinExpr}, ${filterMagExpr}, ${wrapSExpr}, ${wrapTExpr}], ${texUnitExpr});`);
         out.push(`(${firstAlias} as any).__backupVarName = ${JSON.stringify(firstAlias)};`);
         out.push(`(${firstAlias} as any).__backupUniformName = ${JSON.stringify(uniformName)};`);
         out.push(`(${firstAlias} as any).__backupProgram = (${programRef} as any)?.ID ?? (${programRef} as any)?.fragPath ?? ${JSON.stringify(programRef)};`);
@@ -1821,11 +1828,13 @@ export class DetailedParser {
 
     static extractAliasesAndCore(rawLine: string) {
         let aliases: string[] = [];
+        let leftAliases: string[] = [];
+        let rightAliases: string[] = [];
         let core = rawLine.trim().replace(/;\s*$/, "");
 
         const leftMatch = core.match(/^\s*([a-zA-Z_]\w*(?:\s*\|=\s*[a-zA-Z_]\w*)*)\s*=/);
         if (leftMatch) {
-            const leftAliases = leftMatch[1]
+            leftAliases = leftMatch[1]
                 .split(/\|=/)
                 .map(s => s.trim())
                 .filter(Boolean);
@@ -1833,10 +1842,10 @@ export class DetailedParser {
             core = core.slice(leftMatch[0].length).trim();
         }
 
-        const rightMatch = core.match(/\|=\s*([a-zA-Z_]\w*(?:\s*,\s*[a-zA-Z_]\w*)*)\s*$/);
+        const rightMatch = core.match(/\|=\s*([a-zA-Z_]\w*(?:\s*[,|]\s*[a-zA-Z_]\w*)*)\s*$/);
         if (rightMatch) {
-            const rightAliases = rightMatch[1]
-                .split(",")
+            rightAliases = rightMatch[1]
+                .split(/[,|]/)
                 .map(s => s.trim())
                 .filter(Boolean);
             aliases.push(...rightAliases);
@@ -1844,7 +1853,15 @@ export class DetailedParser {
         }
 
         aliases = [...new Set(aliases)];
-        return { aliases, core };
+        return { aliases, core, leftAliases, rightAliases };
+    }
+
+    static normalizeObjectName(line: string): string {
+        const match = line.match(/^\s*([A-Z][A-Za-z0-9_]*)\s+([A-Za-z_]\w*(?:\s*\|\s*[A-Za-z_]\w*)*)\s+(.+)$/);
+        if (!match || !DetailedParser.ObjectRegistry[match[1]]) return line;
+        if (!DetailedParser.NamedParamsOnlyObjects.has(match[1]) && !match[2].startsWith("_")) return line;
+        if (DetailedParser.NamedParamsOnlyObjects.has(match[1]) && !/^[A-Za-z_]\w*\s*=/.test(match[3])) return line;
+        return `${match[2].split(/\s*\|\s*/).join(" |= ")} = ${match[1]} ${match[3]}`;
     }
 
     static transpileUniformLine(programRef: string, line: string): string[] {
@@ -1977,10 +1994,10 @@ export class DetailedParser {
     }
 
     static transpileTexture2DArrayObject(aliases: string[], core: string): string[] | null {
-        const m = core.match(/^texture2DArray\s+([\s\S]+)$/);
+        const m = core.match(/^(texture2DArray|texture3DArray|tex3DArray|tex3D)\s+([\s\S]+)$/);
         if (!m || aliases.length === 0) return null;
 
-        const tokens = DetailedParser.splitByWhitespaceTopLevel(m[1]);
+        const tokens = DetailedParser.splitByWhitespaceTopLevel(m[2]);
         if (tokens.length < 5) return null;
 
         const firstAlias = aliases[0];
@@ -1994,7 +2011,7 @@ export class DetailedParser {
         const sizeExpr = DetailedParser.transpileSizeToken(sizeToken);
 
         const out = [
-            `var ${firstAlias} = lastUsedProgram?.texture2DArray?.({`,
+            `var ${firstAlias} = lastUsedProgram?.${m[1] === "texture2DArray" ? "texture2DArray" : "texture3DArray"}?.({`,
             `    format: (TexExamples as any).${format},`,
             `    data: ${dataExpr},`,
             `    name: ${nameArg},`,
@@ -2041,6 +2058,7 @@ export class DetailedParser {
 
     static transpileSimpleStatement(line: string, declaredVars: Set<string>): string[] {
         const out: string[] = [];
+        line = DetailedParser.normalizeObjectName(line);
 
         const swap = /^swap\s*\{([^{}]+)\}$/.exec(line.trim());
         if (swap) {
@@ -2212,11 +2230,12 @@ export class DetailedParser {
         }
 
         // ObjectRegistry / Function-like object defs must be handled before generic assignment.
-        const { aliases, core } = DetailedParser.extractAliasesAndCore(line);
+        const { aliases, core, leftAliases, rightAliases } = DetailedParser.extractAliasesAndCore(line);
         const inferredClass = core.match(/^([A-Z][A-Za-z0-9_]*)\b/)?.[1];
         const objectAliases = inferredClass
-            ? DetailedParser.ensureAliasesForClass(aliases, inferredClass, declaredVars)
+            ? [...DetailedParser.ensureAliasesForClass(leftAliases, inferredClass, declaredVars), ...rightAliases]
             : aliases;
+        rightAliases.forEach(alias => declaredVars.add(alias));
 
         if (objectAliases.length > 0) {
             const asProgram = DetailedParser.transpileProgramObject(objectAliases, core);
@@ -2749,6 +2768,13 @@ export class DetailedParser {
                     } as any);
                 }
                 indent++;
+
+                const taggedHeader = raw.match(/-\s*([A-Za-z0-9_]+)\s*-(.*)-\s*\{$/);
+                if (taggedHeader && enabledFeatures.some(feature => feature.imports.some(line => line.includes("BackupRuntime")))) {
+                    for (const variable of taggedHeader[2].matchAll(/\{([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\}/g)) {
+                        body.push(`${ind()}void backupRuntime.captureTaggedValue(${JSON.stringify(blockName)}, ${JSON.stringify(taggedHeader[1])}, ${JSON.stringify(variable[1])}, ${DetailedParser.transpileExpr(variable[1])});`);
+                    }
+                }
 
                 let loopCount = 0;
                 if (!isSpecial && rawParams) {
@@ -3568,6 +3594,8 @@ export class DetailedParser {
      */
     static async parseObjectDef(line: string) {
 
+        line = DetailedParser.normalizeObjectName(line);
+
         // console.log("--------------------------------------------------");
         // console.log("[parseObjectDef] Línea recibida:", line);
 
@@ -3585,6 +3613,7 @@ export class DetailedParser {
 
         const extractAliasesAndCore = (rawLine: string) => {
             let aliases: string[] = [];
+            let leftAliases: string[] = [];
             let core = rawLine.trim().replace(/;\s*$/, "");
 
             // alias izquierda
@@ -3593,7 +3622,7 @@ export class DetailedParser {
             );
 
             if (leftMatch) {
-                const leftAliases = leftMatch[1]
+                leftAliases = leftMatch[1]
                     .split(/\|=/)
                     .map(s => s.trim());
 
@@ -3604,10 +3633,10 @@ export class DetailedParser {
             }
 
             // alias derecha
-            const rightMatch = core.match(/\|=\s*([^=]+)$/);
+            const rightMatch = core.match(/\|=\s*([a-zA-Z_]\w*(?:\s*[,|]\s*[a-zA-Z_]\w*)*)\s*$/);
             if (rightMatch) {
                 const rightAliases = rightMatch[1]
-                    .split(',')
+                    .split(/[,|]/)
                     .map(s => s.trim());
 
                 // console.log("[Alias] Detectados a la derecha:", rightAliases);
@@ -3620,10 +3649,10 @@ export class DetailedParser {
 
             // console.log("[Core] Línea core:", core);
 
-            return { aliases, core };
+            return { aliases, core, leftAliases };
         };
 
-        const { aliases, core } = extractAliasesAndCore(line);
+        const { aliases, core, leftAliases } = extractAliasesAndCore(line);
         if (!core) {
             // console.log("[Abort] Core vacío");
             return false;
@@ -3850,7 +3879,7 @@ export class DetailedParser {
                 paramsString = paramsString.substring(classNameOrFunc.length).trim(); 
                 params.set("altName", varName); 
             } 
-        } else if (isClassInstanciation) { 
+        } else if (isClassInstanciation && leftAliases.length === 0) {
             varName = identifier.charAt(0).toLowerCase() + identifier.slice(1); 
             if (this.ctx.vars.has(varName)) { 
                 let counter = 2; 
@@ -3861,7 +3890,7 @@ export class DetailedParser {
             } 
         }
         // console.log("added VarName",varName)
-        aliases.push(varName);
+        if (varName) aliases.push(varName);
         // console.log("[Alias] Alias finales:", aliases);
         // if(!isEscapedFunction){
         //     this.ctx.vars.set(identifier[0].toLowerCase()+identifier.slice(1), result);

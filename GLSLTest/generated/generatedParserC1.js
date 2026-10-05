@@ -35,12 +35,6 @@ function loadShaderSource(url) {
     return response.text();
   });
 }
-function __prepareMathFunction(callbackString) {
-  let prepared = (callbackString || "").trim().replace(/;$/, "");
-  prepared = prepared.replace(/\{(\w+)\}/g, "($1)");
-  prepared = prepared.replace(/(?<!\.)\b(sin|cos|tan|exp|floor|ceil|min|max|round|random|abs|pow|sqrt|atan2|log|PI)\b/g, "Math.$1");
-  return new Function(`"use strict"; return (${prepared});`)();
-}
 function __mountGlobalBlocks(globalBlocks, addFunc2) {
   if (!(globalBlocks === null || globalBlocks === void 0 ? void 0 : globalBlocks.length))
     return;
@@ -4344,6 +4338,10 @@ var MeshRenderingProgram = class extends WebProgram {
     __publicField(this, "dx", dx);
     __publicField(this, "dy", dy);
     __publicField(this, "totalSegments");
+    __publicField(this, "smoothColorEnabled", true);
+    __publicField(this, "repeatEnabled", false);
+    __publicField(this, "repeatTexture", null);
+    __publicField(this, "repeatTextureState", null);
   }
   async loadProgram(vs, fs) {
     [this.program, this.vert, this.frag] = await loadShadersFromString(
@@ -4360,16 +4358,20 @@ var MeshRenderingProgram = class extends WebProgram {
             uniform float xPer;
             uniform float yPer;
             uniform float yScale;
+            uniform bool repeatMesh;
             uniform vec3 offPos;
 
             uniform mat4 u_viewMatrix;
             uniform mat4 u_projectionMatrix;
 
-            flat out vec3 outPos;
+            out vec3 outPos;
+            flat out vec3 outFlatPos;
 
             vec4 getPoint(int x, int yTexel) {
                 // Ahora la textura tiene un \xFAnico canal (RED)
-                float val = texelFetch(values, ivec2(x, yTexel), 0).r;
+                float val = repeatMesh
+                    ? texture(values, (vec2(float(x), float(yTexel)) + 0.5) / vec2(textureSize(values, 0))).r
+                    : texelFetch(values, ivec2(x, yTexel), 0).r;
 
                 float px = dx * float(x) - dx * float(msdLength) * (1.0 - xPer);
                 float py = val * yScale;
@@ -4382,15 +4384,18 @@ var MeshRenderingProgram = class extends WebProgram {
                 ${this.vertexPositionCode()}
 
                 outPos = pos.xyz;
+                outFlatPos = pos.xyz;
                 gl_Position = u_projectionMatrix * (u_viewMatrix * pos);
             }`,
       //? fragment shader
       `#version 300 es
             precision highp float;
 
-            flat in vec3 outPos;
+            in vec3 outPos;
+            flat in vec3 outFlatPos;
             out vec4 outColor;
             uniform float colorHueScale;
+            uniform bool smoothColor;
 
             float hue2rgb(float p, float q, float t){
                 if(t < 0.0) t += 1.0;
@@ -4414,6 +4419,7 @@ var MeshRenderingProgram = class extends WebProgram {
             void main(){
                 // Normalizamos la altura a hue (suponiendo alturas entre -1.5 y +1.5)
                 float h = (outPos.y * colorHueScale / 1.5); // ahora est\xE1 entre -1 y 1
+                h = (smoothColor ? outPos.y : outFlatPos.y) * colorHueScale / 1.5;
                 h = (mod(-h,1.5) * 0.5) + 0.5;        // lo llevamos a 0..1
 
                 float s = 0.6;
@@ -4478,12 +4484,41 @@ var MeshRenderingProgram = class extends WebProgram {
     this.uFloat("colorHueScale").set(scale);
     return this;
   }
+  smoothColor(is = true) {
+    this.smoothColorEnabled = is;
+    this.uInt("smoothColor").set(is ? 1 : 0);
+    return this;
+  }
+  setRepeat(repeat = true) {
+    this.repeatEnabled = repeat;
+    if (this.program) {
+      this.use();
+      this.uInt("repeatMesh").set(repeat ? 1 : 0);
+    }
+    const texture = this.getTextureByUnit(this.valsTexUnit);
+    if (!texture || this.repeatTexture === texture && this.repeatTextureState === repeat) return this;
+    const gl = this.gl;
+    const previousUnit = gl.getParameter(gl.ACTIVE_TEXTURE);
+    gl.activeTexture(gl.TEXTURE0 + parseTexUnitType(this.valsTexUnit));
+    const previousTexture = gl.getParameter(gl.TEXTURE_BINDING_2D);
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    const wrap = repeat ? gl.REPEAT : gl.CLAMP_TO_EDGE;
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, wrap);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, wrap);
+    gl.bindTexture(gl.TEXTURE_2D, previousTexture);
+    gl.activeTexture(previousUnit);
+    this.repeatTexture = texture;
+    this.repeatTextureState = repeat;
+    return this;
+  }
   setYScale(scale = 0.5) {
     this.uFloat("yScale").set(scale);
     return this;
   }
   initUniforms() {
     this.setSize(this.w, this.h).setOffset(0, 0, 0).setDXDY(this.dx, this.dy).setPerXPerY().setColorHueScale().setYScale();
+    this.smoothColor(this.smoothColorEnabled);
+    this.setRepeat(this.repeatEnabled);
     return this;
   }
   /**
@@ -4491,6 +4526,7 @@ var MeshRenderingProgram = class extends WebProgram {
    */
   draw(x = 0, y = 0, w = 1080, h = 720, camera, mode = "LINES") {
     this.initDepthBefDraw();
+    if (this.repeatTexture !== this.getTextureByUnit(this.valsTexUnit)) this.setRepeat(this.repeatEnabled);
     this.bindTexName2TexUnit("values", this.valsTexUnit);
     if (camera) {
       camera.calculateMatrices().setUniformsProgram(this);
@@ -4498,26 +4534,17 @@ var MeshRenderingProgram = class extends WebProgram {
     this.setViewport(x, y, w, h);
     this.clearColor();
     this.drawArrays(mode, 0, this.totalSegments * 2);
+    return this;
   }
-  /**
-   * Creates and fills a texture for a 3d Mesh f(x,y)=>z
-   */
-  createIdealTexture(texUnit = this.valsTexUnit, data, w = this.w, h = this.h) {
-    let arrdata;
-    if (typeof data == "function" && typeof data(0, 0) == "number") {
-      arrdata = new Float32Array(w * h);
-      for (let j = 0; j < h; j++) {
-        for (let i = 0; i < w; i++) {
-          arrdata[i * w + j] = data(i, j) || 0;
-        }
-      }
-    }
-    return this.texture2D({
+  /** Allocates the height texture; MeshFillerProgram evaluates its function on the GPU. */
+  createIdealTexture(texUnit = this.valsTexUnit, w = this.w, h = this.h) {
+    const texture = this.texture2D({
       format: TexExamples.RFloat,
       size: [w, h],
-      texUnit,
-      data: arrdata || data
+      texUnit
     });
+    if (parseTexUnitType(texUnit) === parseTexUnitType(this.valsTexUnit)) this.setRepeat(this.repeatEnabled);
+    return texture;
   }
   fillMeshTexture(texture2D, data, w = this.w, h = this.h) {
     let arrdata;
@@ -4525,14 +4552,19 @@ var MeshRenderingProgram = class extends WebProgram {
       arrdata = new Float32Array(w * h);
       for (let j = 0; j < h; j++) {
         for (let i = 0; i < w; i++) {
-          arrdata[i * w + j] = data(i, j) || 0;
+          arrdata[j * w + i] = data(i, j) || 0;
         }
       }
     }
     texture2D.fill(arrdata, 0, 0, w, h);
+    return this;
   }
 };
 var SolidMeshRenderingProgram = class extends MeshRenderingProgram {
+  constructor() {
+    super(...arguments);
+    __publicField(this, "smoothColorEnabled", true);
+  }
   vertexPositionCode() {
     return `int rowStride = msdLength * 2 + 2;
                 int row = gl_VertexID / rowStride;
@@ -4554,6 +4586,7 @@ var SolidMeshRenderingProgram = class extends MeshRenderingProgram {
   }
   draw(x = 0, y = 0, w = 1080, h = 720, camera, _mode = "TRIANGLE_STRIP") {
     super.draw(x, y, w, h, camera, "TRIANGLE_STRIP");
+    return this;
   }
 };
 var AxisLinesProgram = class extends WebProgram {
@@ -4602,6 +4635,7 @@ var AxisLinesProgram = class extends WebProgram {
   }
   initUniforms() {
     this.uVec("axisLengths", 3).set(this.axisLengths);
+    return this;
   }
   setAxisLengths(x, y, z) {
     this.axisLengths = new Vector3D2(x, y, z);
@@ -4611,6 +4645,7 @@ var AxisLinesProgram = class extends WebProgram {
   draw(camera) {
     if (camera) camera.calculateMatrices().setUniformsProgram(this);
     this.drawArrays("LINES", 0, 6);
+    return this;
   }
 };
 var AxisConesProgram = class extends WebProgram {
@@ -4692,11 +4727,13 @@ var AxisConesProgram = class extends WebProgram {
     this.uVec("axisLengths", 3).set(this.axisLengths);
     this.uVec("arrowHeights", 3).set(this.arrowHeights);
     this.uVec("arrowRadii", 3).set(this.arrowRadii);
+    return this;
   }
   draw(camera) {
     if (camera) camera.calculateMatrices().setUniformsProgram(this);
     this.bindVAO();
     this.drawArrays("TRIANGLES", 0, 3 * 16 * 3);
+    return this;
   }
 };
 var AxisGridProgram = class extends WebProgram {
@@ -4735,6 +4772,7 @@ var AxisGridProgram = class extends WebProgram {
   initUniforms(axisLengths) {
     if (axisLengths) this.axisLengths = axisLengths;
     else if (!this.axisLengths) this.axisLengths = new Vector3D2(1, 1, 1);
+    return this;
   }
   /** Genera el VAO de la cuadrícula en función de cellSize o divisions */
   initVAO() {
@@ -4780,12 +4818,14 @@ var AxisGridProgram = class extends WebProgram {
         vertices.push(0, 0, z, 0, sizeY, z);
       }
     }
+    return this;
   }
   draw(camera) {
     if (camera) camera.calculateMatrices().setUniformsProgram(this);
     this.bindVAO();
     if (this.vertexCount)
       this.drawArrays("LINES", 0, this.vertexCount);
+    return this;
   }
   // ----------------------------
   // 🔧 Nuevas funciones añadidas
@@ -4867,6 +4907,7 @@ var Axis3DGroup = class {
       if (!this.cones.VAO) this.cones.initVAO();
       this.cones.draw(camera);
     }
+    return this;
   }
   /** helpers para actualizar parámetros en caliente */
   setAxisLengths(x, y, z) {
@@ -4901,13 +4942,13 @@ var Axis3DGroup = class {
   setDivisions(divisions) {
     this.gridDivisions = divisions;
     if (this.grid)
-      return this.grid.setDivisions(divisions);
+      this.grid.setDivisions(divisions);
     return this;
   }
   /** Fija el tamaño del lado de las celdas y calcula el nº de divisiones */
   setCellSize(size) {
     if (this.grid)
-      return this.grid.setCellSize(size);
+      this.grid.setCellSize(size);
     return this;
   }
   includeInWebManList() {
@@ -4946,6 +4987,19 @@ var MeshFillerProgram = class extends WebProgram {
       console.error("Este navegador/GPU no permite renderizar en RFloat.");
     }
   }
+  /** Reuses the function attached by createIdealMesh to the texture on this unit. */
+  async loadFromTexture(...varsContexts) {
+    const texture = this.getTextureByUnit(parseTexUnitType(this.valsTexUnit));
+    if (!texture?.lastPreparedFunc) {
+      throw new Error(`MeshFillerProgram ${this.valsTexUnit} needs a function or a preceding createIdealMesh on the same TexUnit`);
+    }
+    if (/\b(?:switch|try|catch|throw|class|function|new)\b/.test(texture.lastPreparedFunc)) {
+      throw new Error("MeshFillerProgram cannot translate this callback to GLSL; use numeric expressions, if, for, or while");
+    }
+    this.generateProgram(texture.lastPreparedFunc, globalThis, ...varsContexts, texture.meshContext ?? {});
+    await this.loadProgram();
+    return this;
+  }
   async loadProgram(vs = this.vertPath, fs = this.fragPath) {
     [this.program, this.vert, this.frag] = await loadShadersFromString(this.gl, vs, fs);
     this.use();
@@ -4959,7 +5013,7 @@ var MeshFillerProgram = class extends WebProgram {
    * Obtiene los valores actuales del contexto y los sube a la GPU.
    */
   tick() {
-    if (!this.program) return;
+    if (!this.program) return this;
     this.use();
     this.uniformsToUpdate.forEach((u) => {
       const currentVal = u.getter();
@@ -4982,7 +5036,8 @@ var MeshFillerProgram = class extends WebProgram {
     if (body.startsWith("{") && body.endsWith("}")) {
       body = body.substring(1, body.length - 1).trim();
     }
-    let glslBody = body.replace(/{([^}]+)}/g, (_, content) => {
+    let glslBody = body.replace(/{([^{}]+)}/g, (whole, content) => {
+      if (/[;{}]/.test(content) || /\b(?:return|let|const|var|if|else|for|while|switch|throw)\b/.test(content)) return whole;
       let path = content;
       let glslType = "float";
       const lastComma = content.lastIndexOf(",");
@@ -5072,10 +5127,11 @@ var MeshFillerProgram = class extends WebProgram {
       return str;
     };
     glslBody = transpileMath(glslBody);
-    if (glslBody.includes("return")) {
-      glslBody = glslBody.replace(/return\s+([^;]+);?/, "float res = $1;");
+    glslBody = glslBody.replace(/\b(?:let|const|var)\s+([A-Za-z_]\w*)\s*=/g, "float $1 =").replace(/===/g, "==").replace(/!==/g, "!=");
+    if (/\b(?:return|if|for|while|float)\b/.test(glslBody)) {
+      glslBody = glslBody.replace(/\breturn\s+([^;]+);?/g, "{ outRed = $1; return; }");
     } else {
-      glslBody = `float res = ${glslBody.replace(/;$/, "")};`;
+      glslBody = `outRed = ${glslBody.replace(/;$/, "")};`;
     }
     this.vertPath = `#version 300 es
             const vec2 quad[6] = vec2[](
@@ -5090,17 +5146,17 @@ var MeshFillerProgram = class extends WebProgram {
             void main() {
                 float x = gl_FragCoord.x;
                 float y = gl_FragCoord.y;
+                outRed = 0.0;
                 ${glslBody}
-                outRed = res;
             }`;
-    console.log("Shader generado con uniforms complejos:", this.fragPath);
+    return this;
   }
   draw() {
-    if (!this.program) return;
+    if (!this.program) return this;
     const gl = this.gl;
     this.use();
     const tex = this.getTextureByUnit(parseTexUnitType(this.valsTexUnit));
-    if (!tex) return;
+    if (!tex) return this;
     const tw = tex.w ?? this.w;
     const th = tex.h ?? this.h;
     let fbo = this.cFrameBuffer().bind([0]);
@@ -5849,7 +5905,7 @@ var WebProgram2 = class _WebProgram {
     }
     return this;
   }
-  createTexture2DArray(name, size = [this.standardTEXW, this.standardTEXH, 1], format = TexExamples2.RGBAFloat, data = null, FILTER_WRAP = ["NEAREST", "NEAREST", "CLAMP", "CLAMP"], texUnit, MIPlevel = 0) {
+  createTexture2DArray(name, size = [this.standardTEXW, this.standardTEXH, 1], format = TexExamples2.RGBAFloat, data = null, FILTER_WRAP = ["NEAREST", "NEAREST", "CLAMP", "CLAMP"], texUnit, MIPlevel = 0, target = this.gl.TEXTURE_2D_ARRAY) {
     const gl = this.gl;
     const tex = gl.createTexture();
     texUnit = parseTexUnitType2(texUnit);
@@ -5857,7 +5913,7 @@ var WebProgram2 = class _WebProgram {
     if ((FILTER_WRAP[0] === "LINEAR" || FILTER_WRAP[1] === "LINEAR") && format[2] === gl.FLOAT)
       console.error("%cTexture error: Float textures don\u2019t accept LINEAR filtering", "color:red;font-weight:bold;");
     gl.activeTexture(gl.TEXTURE0 + nTexture);
-    gl.bindTexture(gl.TEXTURE_2D_ARRAY, tex);
+    gl.bindTexture(target, tex);
     FILTER_WRAP = FILTER_WRAP.map((a) => {
       if (a === "NEAREST") return gl.NEAREST;
       if (a === "LINEAR") return gl.LINEAR;
@@ -5866,19 +5922,21 @@ var WebProgram2 = class _WebProgram {
       if (a === "MIRROR") return gl.MIRRORED_REPEAT;
       return a;
     });
-    gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MIN_FILTER, FILTER_WRAP[0]);
-    gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MAG_FILTER, FILTER_WRAP[1]);
-    gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_WRAP_S, FILTER_WRAP[2]);
-    gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_WRAP_T, FILTER_WRAP[3]);
+    gl.texParameteri(target, gl.TEXTURE_MIN_FILTER, FILTER_WRAP[0]);
+    gl.texParameteri(target, gl.TEXTURE_MAG_FILTER, FILTER_WRAP[1]);
+    gl.texParameteri(target, gl.TEXTURE_WRAP_S, FILTER_WRAP[2]);
+    gl.texParameteri(target, gl.TEXTURE_WRAP_T, FILTER_WRAP[3]);
+    if (target === gl.TEXTURE_3D) gl.texParameteri(target, gl.TEXTURE_WRAP_R, FILTER_WRAP[3]);
     if (!size[2] || size[2] <= 0) {
       if (!!data && data.length) {
-        size[2] = ~~(data.length / size[1] / size[0]);
+        const channels = format[0] === gl.RED || format[0] === gl.RED_INTEGER ? 1 : format[0] === gl.RG || format[0] === gl.RG_INTEGER ? 2 : format[0] === gl.RGB || format[0] === gl.RGB_INTEGER ? 3 : 4;
+        size[2] = Math.max(1, Math.ceil(data.length / (size[1] * size[0] * channels)));
       } else {
         size[2] = 1;
       }
     }
     gl.texImage3D(
-      gl.TEXTURE_2D_ARRAY,
+      target,
       MIPlevel,
       format[1],
       // internalFormat (e.g. gl.RGBA32F)
@@ -5903,8 +5961,8 @@ var WebProgram2 = class _WebProgram {
     tex.fill = (arr, x = 0, y = 0, z = 0, w = size[0], h = size[1], d = size[2], LOD = MIPlevel) => {
       if (tex.unit !== void 0)
         gl.activeTexture(gl.TEXTURE0 + tex.unit);
-      gl.bindTexture(gl.TEXTURE_2D_ARRAY, tex);
-      gl.texSubImage3D(gl.TEXTURE_2D_ARRAY, LOD, x, y, z, w, h, d, format[0], format[2], arr);
+      gl.bindTexture(target, tex);
+      gl.texSubImage3D(target, LOD, x, y, z, w, h, d, format[0], format[2], arr);
       return tex;
     };
     tex.unit = nTexture;
@@ -5912,19 +5970,22 @@ var WebProgram2 = class _WebProgram {
       textureUnit = parseTexUnitType2(textureUnit);
       if (textureUnit !== -1) gl.activeTexture(gl.TEXTURE0 + textureUnit);
       tex.unit = textureUnit;
-      gl.bindTexture(gl.TEXTURE_2D_ARRAY, tex);
+      gl.bindTexture(target, tex);
       return tex;
     };
     tex.unbind = (textureUnit = tex.unit) => {
       textureUnit = parseTexUnitType2(textureUnit);
       if (textureUnit !== -1) gl.activeTexture(gl.TEXTURE0 + textureUnit);
-      gl.bindTexture(gl.TEXTURE_2D_ARRAY, null);
+      gl.bindTexture(target, null);
       return tex;
     };
     tex.w = size[0];
     tex.h = size[1];
     tex.nLayers = size[2];
     tex.format = format;
+    tex.target = target;
+    _WebProgram.Textures[nTexture] = tex;
+    this.textures[nTexture] = tex;
     tex.setLengthUniforms = () => {
       this.uInt(name + "Length", true).set(tex.w * tex.h);
       return tex;
@@ -5947,6 +6008,23 @@ var WebProgram2 = class _WebProgram {
       params.texUnit,
       params.MIPlevel ?? 0
     );
+  }
+  createTexture3D(name, size = [this.standardTEXW, this.standardTEXH, 1], format = TexExamples2.RGBAFloat, data = null, FILTER_WRAP = ["NEAREST", "NEAREST", "CLAMP", "CLAMP"], texUnit, MIPlevel = 0) {
+    return this.createTexture2DArray(name, size, format, data, FILTER_WRAP, texUnit, MIPlevel, this.gl.TEXTURE_3D);
+  }
+  texture3DArray(params) {
+    return this.createTexture3D(
+      params.name,
+      params.size ?? [this.standardTEXW, this.standardTEXH, 1],
+      params.format ?? TexExamples2.RGBAFloat,
+      params.data ?? null,
+      params.FILTER_WRAP ?? ["NEAREST", "NEAREST", "CLAMP", "CLAMP"],
+      params.texUnit,
+      params.MIPlevel ?? 0
+    );
+  }
+  texture3D(params) {
+    return this.texture3DArray(params);
   }
   uMat4(name, hide = false) {
     const uniform = this.gl.getUniformLocation(this.program, name);
@@ -6620,6 +6698,502 @@ var VAO2 = class {
   }
 };
 
+// ../dist/lib/Code/WebGL/runtime/BackupRuntime.ts
+var BackupPaths = class {
+  /** Captures the project-relative backup root. */
+  constructor(defaultScope) {
+    this.defaultScope = defaultScope;
+  }
+  defaultScope;
+  /** Formats one date component for a stable timestamp. */
+  pad2 = (n) => String(n).padStart(2, "0");
+  /** Produces the timestamp used by saved filenames. */
+  stamp = () => {
+    const d = /* @__PURE__ */ new Date();
+    return String(d.getFullYear()) + this.pad2(d.getMonth() + 1) + this.pad2(d.getDate()) + this.pad2(d.getHours()) + this.pad2(d.getMinutes());
+  };
+  /** Prevents path separators and control characters in generated names. */
+  safeName = (name) => String(name ?? "backup").replace(/[^A-Za-z0-9_.-]+/g, "_").replace(/^_+|_+$/g, "") || "backup";
+  /** Names a standalone backup from its variable and texture metadata. */
+  defaultPath = (value, varName) => {
+    const isTex = value && typeof value === "object" && ("w" in value || "h" in value || "unit" in value || value instanceof WebGLTexture);
+    const parts = [this.safeName(varName)];
+    if (isTex) {
+      parts.push(String(value.w ?? value.width ?? "x"));
+      parts.push(String(value.h ?? value.height ?? "y"));
+      parts.push("TexUnit" + String(value.unit ?? "NA").replace(/^TexUnit/i, ""));
+      parts.push(this.safeName(value.__backupProgram ?? value.programName ?? value.program ?? "programNA"));
+    }
+    parts.push(this.stamp());
+    return parts.join("_") + ".txt";
+  };
+  /** Anchors a DSL path hint under the active backup scope. */
+  normalizeScopePath = (pathHint) => {
+    const raw = String(pathHint ?? "").trim().replace(/\\/g, "/");
+    const scope = String(this.defaultScope || "").replace(/^\/+|\/+$/g, "");
+    const withScope = (value) => {
+      const clean = String(value || "").replace(/^\/+/, "");
+      if (!scope) return clean;
+      if (!clean) return scope;
+      if (clean === scope || clean.startsWith(scope + "/")) return clean;
+      return scope + "/" + clean;
+    };
+    if (!raw || raw === "/" || raw === ".") return { path: withScope(""), directoryMode: true };
+    if (raw.startsWith("./")) {
+      const rest = raw.slice(2);
+      return { path: withScope(rest), directoryMode: !rest || /\/$/.test(rest) };
+    }
+    if (raw.startsWith("/")) return { path: withScope(raw.slice(1)), directoryMode: true };
+    return { path: withScope(raw), directoryMode: true };
+  };
+  /** Chooses the base folder or a numbered draw-iteration folder. */
+  resolveMultiTarget = (pathHint, defaultStem, suffix, generation = 1) => {
+    const target = this.normalizeScopePath(pathHint);
+    const stem = this.safeName(defaultStem);
+    const cleanSuffix = String(suffix ?? "").replace(/^_+/, "");
+    const fileName = stem + "_" + cleanSuffix + "_" + this.stamp() + ".txt";
+    const gen = Math.max(1, Number(generation) || 1);
+    if (target.directoryMode) {
+      const dirPath2 = gen > 1 ? target.path ? String(target.path).replace(/\/+$/g, "") + "/" + String(gen) : String(gen) : target.path;
+      return { path: dirPath2, directoryMode: true, suggestedName: fileName, generation: gen };
+    }
+    const p = target.path;
+    if (/\.txt$/i.test(p)) {
+      const slash = Math.max(p.lastIndexOf("/"), p.lastIndexOf("\\"));
+      const dir = slash >= 0 ? p.slice(0, slash + 1) : "";
+      const base = slash >= 0 ? p.slice(slash + 1) : p;
+      const dot = base.toLowerCase().endsWith(".txt") ? base.slice(0, -4) : base;
+      const genDir = gen > 1 ? dir ? dir.replace(/\/+$/g, "") + "/" + String(gen) + "/" : String(gen) + "/" : dir;
+      return { path: genDir + dot + "_" + cleanSuffix + ".txt", directoryMode: false, generation: gen };
+    }
+    const dirPath = gen > 1 ? p ? String(p).replace(/\/+$/g, "") + "/" + String(gen) : String(gen) : p;
+    return { path: dirPath, directoryMode: true, suggestedName: fileName, generation: gen };
+  };
+};
+var BackupServer = class {
+  /** Binds path resolution to the API endpoint. */
+  constructor(paths, baseUrl = "/api/backups") {
+    this.paths = paths;
+    this.baseUrl = baseUrl;
+  }
+  paths;
+  baseUrl;
+  /** Writes a file, appends a log, or requests generation cleanup. */
+  put = async (route, path, content, extra = {}) => {
+    const response = await fetch(this.baseUrl + route, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path, content, ...extra })
+    });
+    const raw = await response.text();
+    if (!response.ok) throw new Error("Backup request failed: " + response.status + " " + raw);
+    try {
+      return raw ? JSON.parse(raw) : { ok: true, path: String(path ?? "") };
+    } catch {
+      return { ok: true, path: String(path ?? ""), raw };
+    }
+  };
+  /** Reads a saved backup file as text from the server. */
+  fetchText = async (pathHint) => {
+    const target = this.paths.normalizeScopePath(pathHint);
+    const response = await fetch(this.baseUrl + "/file?path=" + encodeURIComponent(target.path));
+    if (!response.ok) throw new Error("Backup restore failed: " + response.status + " " + await response.text());
+    return await response.text();
+  };
+};
+var BackupValues = class {
+  /** Uses the active WebGL context for GPU readback. */
+  constructor(gl, TexExamples3) {
+    this.gl = gl;
+    this.TexExamples = TexExamples3;
+  }
+  gl;
+  TexExamples;
+  /** Formats the texture grid as aligned, readable rows. */
+  texturePreview = (tex, varName) => {
+    if (!tex || tex.__backupType !== "texture2D") return "";
+    const w = Number(tex.w ?? 0) || 0;
+    const h = Number(tex.h ?? 0) || 0;
+    const dim = Number(tex.dim ?? 1) || 1;
+    const name = String(varName ?? "texture");
+    const program = String(tex.program ?? "programNA");
+    const values = Array.isArray(tex.data) ? tex.data : [];
+    const formatScalar = (value) => {
+      const num = Number(value);
+      if (!Number.isFinite(num)) return String(value ?? "").padStart(10, " ");
+      return num.toFixed(4).padStart(10, " ");
+    };
+    const lines = [name + " [" + w + " x " + h + "] " + program];
+    for (let y = 0; y < h; y++) {
+      const row = [];
+      for (let x = 0; x < w; x++) {
+        const base = (y * w + x) * dim;
+        for (let c = 0; c < dim; c++) {
+          row.push(formatScalar(values[base + c]));
+        }
+      }
+      lines.push(row.join(" "));
+    }
+    return lines.join("\n");
+  };
+  /** Reads GPU pixels into a serializable texture snapshot. */
+  readTexture2D = (tex) => {
+    if (!tex || typeof tex !== "object" || !(tex instanceof WebGLTexture)) return null;
+    const w = Number(tex.w ?? tex.width ?? 1) || 1;
+    const h = Number(tex.h ?? tex.height ?? 1) || 1;
+    const format = tex.format || this.TexExamples.RGBAFloat;
+    const dim = format?.[0] === this.gl.RED ? 1 : format?.[0] === this.gl.RG ? 2 : format?.[0] === this.gl.RGB ? 3 : 4;
+    const fbo = this.gl.createFramebuffer();
+    this.gl.bindFramebuffer(this.gl.READ_FRAMEBUFFER, fbo);
+    this.gl.framebufferTexture2D(this.gl.READ_FRAMEBUFFER, this.gl.COLOR_ATTACHMENT0, this.gl.TEXTURE_2D, tex, 0);
+    this.gl.readBuffer(this.gl.COLOR_ATTACHMENT0);
+    const data = new Float32Array(w * h * dim);
+    this.gl.readPixels(0, 0, w, h, format[0], format[2], data);
+    this.gl.bindFramebuffer(this.gl.READ_FRAMEBUFFER, null);
+    this.gl.deleteFramebuffer(fbo);
+    return { __backupType: "texture2D", w, h, dim, format: Array.from(format || []), unit: tex.unit, program: tex.__backupProgram, data: Array.from(data) };
+  };
+  /** Serializes a value, including a readable texture preview. */
+  serializeValue = (value, varName) => {
+    const tex = this.readTexture2D(value);
+    if (tex) {
+      const jsonLine = JSON.stringify({ varName, savedAt: (/* @__PURE__ */ new Date()).toISOString(), value: tex });
+      return this.texturePreview(tex, varName) + "\n" + jsonLine;
+    }
+    if (value instanceof Float32Array || value instanceof Int32Array || value instanceof Uint32Array || value instanceof Uint8Array) {
+      return JSON.stringify({ varName, savedAt: (/* @__PURE__ */ new Date()).toISOString(), value: { __backupType: value.constructor.name, data: Array.from(value) } });
+    }
+    try {
+      return JSON.stringify({ varName, savedAt: (/* @__PURE__ */ new Date()).toISOString(), value });
+    } catch {
+      return String(value);
+    }
+  };
+  /** Converts textures and typed arrays to JSON-safe values. */
+  normalizeValue = (value, varName) => {
+    const tex = this.readTexture2D(value);
+    if (tex) return { varName, value: tex };
+    if (value instanceof Float32Array || value instanceof Int32Array || value instanceof Uint32Array || value instanceof Uint8Array) {
+      return { varName, value: { __backupType: value.constructor.name, data: Array.from(value) } };
+    }
+    return { varName, value };
+  };
+  /** Decodes the final JSON line or a plain numeric backup. */
+  decodeValue = (text) => {
+    try {
+      const lines = String(text ?? "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+      const jsonLine = lines.length ? lines[lines.length - 1] : "";
+      const parsed = JSON.parse(jsonLine);
+      return parsed && Object.prototype.hasOwnProperty.call(parsed, "value") ? parsed.value : parsed;
+    } catch {
+      const nums = text.trim().split(/[\s,;]+/).map(Number).filter(Number.isFinite);
+      return nums.length ? new Float32Array(nums) : text;
+    }
+  };
+};
+var BackupGenerations = class {
+  /** Starts with no counters or cleared scopes. */
+  constructor(paths, server, generationContext) {
+    this.paths = paths;
+    this.server = server;
+    this.generationContext = generationContext;
+  }
+  paths;
+  server;
+  generationContext;
+  /** Holds counters and cleanup state for the current model stamp. */
+  drawGenerationState = { stamp: /* @__PURE__ */ Symbol("init"), counts: /* @__PURE__ */ new Map(), clearedScopes: /* @__PURE__ */ new Set() };
+  /** Resets counters when the model stamp changes. */
+  refreshGenerationState = () => {
+    try {
+      if (!this.generationContext().recomputeTau) return;
+      const stamp = this.generationContext().tauModelStamp ?? "__recompute__";
+      if (this.drawGenerationState.stamp !== stamp) {
+        this.drawGenerationState.stamp = stamp;
+        this.drawGenerationState.counts = /* @__PURE__ */ new Map();
+        this.drawGenerationState.clearedScopes = /* @__PURE__ */ new Set();
+      }
+    } catch {
+    }
+  };
+  /** Requests one cleanup per draw scope on recomputation. */
+  clearDrawScopeGenerationsIfNeeded = async (pathHint) => {
+    this.refreshGenerationState();
+    try {
+      if (!this.generationContext().recomputeTau) return;
+      const target = this.paths.normalizeScopePath(pathHint);
+      const key = String(target.path || "");
+      if (this.drawGenerationState.clearedScopes.has(key)) return;
+      this.drawGenerationState.clearedScopes.add(key);
+      await this.server.put("/clear-generations", target.path, "");
+    } catch (err) {
+      console.warn("[backUp clear-generations] failed", pathHint, err);
+    }
+  };
+  /** Returns the next numbered pass for one draw and shader. */
+  nextDrawGeneration = (drawKind, pathHint, program, trackWithoutRecompute = false) => {
+    this.refreshGenerationState();
+    try {
+      if (!trackWithoutRecompute && !this.generationContext().recomputeTau) return 1;
+      const target = this.paths.normalizeScopePath(pathHint);
+      const drawName = this.paths.safeName(drawKind || "draw");
+      const programName = this.paths.safeName(program?.ID ?? program?.fragPath ?? program?.name ?? "program");
+      const key = target.path + "::" + programName + "::" + drawName;
+      const next = (this.drawGenerationState.counts.get(key) || 0) + 1;
+      this.drawGenerationState.counts.set(key, next);
+      return next;
+    } catch {
+      return 1;
+    }
+  };
+};
+var BackupDrawWriter = class {
+  /** Shares path, server, codec, and iteration state with the public runtime. */
+  constructor(paths, server, values, generations) {
+    this.paths = paths;
+    this.server = server;
+    this.values = values;
+    this.generations = generations;
+  }
+  paths;
+  server;
+  values;
+  generations;
+  writes = /* @__PURE__ */ new Map();
+  /** Captures uniforms and outputs, then uploads their snapshots. */
+  storeDrawBlock = async (drawKind, pathHint, outputTextures, uniformEntries, program, options = {}) => {
+    try {
+      const drawName = this.paths.safeName(drawKind || "draw");
+      const generation = this.generations.nextDrawGeneration(
+        drawKind,
+        pathHint,
+        program,
+        options?.maxBackUpIterations !== void 0 || options?.priority !== void 0
+      );
+      const maximum = Number(options?.maxBackUpIterations);
+      const limit = Number.isInteger(maximum) && maximum > 0 ? maximum : Infinity;
+      const priority = String(options?.priority || "first").toLowerCase();
+      const every = /^each-(\d+)$/.exec(priority);
+      if (priority !== "first" && priority !== "last" && (!every || Number(every[1]) < 1)) {
+        throw new Error(`Prioridad de backup invalida: ${priority}`);
+      }
+      if (priority === "first" && generation > limit) return { ok: true, skipped: true };
+      if (every && ((generation - 1) % Number(every[1]) !== 0 || Math.ceil(generation / Number(every[1])) > limit)) {
+        return { ok: true, skipped: true };
+      }
+      const outputs = Array.isArray(outputTextures) ? outputTextures.filter(Boolean) : [];
+      const outputSet = new Set(outputs.map((item) => item?.tex).filter(Boolean));
+      const programTextures = Array.isArray(program?.textures) ? program.textures.filter((tex) => tex && !outputSet.has(tex)) : [];
+      const prependedInputs = programTextures.map((tex, idx) => this.values.normalizeValue(tex, tex.__backupVarName || tex.__backupUniformName || "inputTex" + idx));
+      const normalizedUniforms = (Array.isArray(uniformEntries) ? uniformEntries : []).map((entry) => ({
+        kind: entry?.kind || "uniform",
+        name: entry?.name || "uniform",
+        ...this.values.normalizeValue(entry?.value, entry?.name || "uniform")
+      }));
+      const serializedOutputs = outputs.map((output) => {
+        const outputName = output?.name || "output";
+        try {
+          return { outputName, ok: true, payload: this.values.serializeValue(output?.tex, outputName) };
+        } catch (err) {
+          return {
+            outputName,
+            ok: false,
+            payload: JSON.stringify({
+              varName: outputName,
+              savedAt: (/* @__PURE__ */ new Date()).toISOString(),
+              error: String(err)
+            })
+          };
+        }
+      });
+      const uniformPayload = JSON.stringify({
+        source: drawKind,
+        savedAt: (/* @__PURE__ */ new Date()).toISOString(),
+        entries: [
+          ...prependedInputs.map((entry) => ({ kind: "programTexture", name: entry.varName, value: entry.value })),
+          ...normalizedUniforms
+        ]
+      });
+      const scope = this.paths.normalizeScopePath(pathHint).path;
+      const prior = this.writes.get(scope) || Promise.resolve();
+      const work = prior.catch(() => void 0).then(async () => {
+        await this.generations.clearDrawScopeGenerationsIfNeeded(pathHint);
+        const uniformTarget = this.paths.resolveMultiTarget(pathHint, drawName, "uniforms", generation);
+        await this.server.put("/file", uniformTarget.path, uniformPayload, uniformTarget.directoryMode ? { directoryMode: true, suggestedName: uniformTarget.suggestedName } : {});
+        for (const snapshot of serializedOutputs) {
+          try {
+            const outputTarget = this.paths.resolveMultiTarget(pathHint, drawName, this.paths.safeName(snapshot.outputName), generation);
+            await this.server.put("/file", outputTarget.path, snapshot.payload, outputTarget.directoryMode ? { directoryMode: true, suggestedName: outputTarget.suggestedName } : {});
+            if (!snapshot.ok) {
+              console.warn("[backUp draw] stored output fallback payload", snapshot.outputName, pathHint);
+            }
+          } catch (err) {
+            console.error("[backUp draw] output store failed", snapshot.outputName, pathHint, err);
+          }
+        }
+        if (priority === "last" && Number.isFinite(limit) && generation > limit) {
+          const old = this.paths.resolveMultiTarget(pathHint, drawName, "uniforms", generation - limit);
+          if (old.directoryMode) {
+            await this.server.put("/clear-generation", old.path, "", { prefix: drawName + "_" });
+          } else {
+            const previous = [old, ...serializedOutputs.map((snapshot) => this.paths.resolveMultiTarget(pathHint, drawName, this.paths.safeName(snapshot.outputName), generation - limit))];
+            const folder = old.path.replace(/\/[^/]*$/, "");
+            await this.server.put("/clear-generation", folder, "", {
+              filenames: previous.map((item) => item.path.slice(folder.length + 1))
+            });
+          }
+        }
+        return { ok: true };
+      });
+      this.writes.set(scope, work);
+      void work.then(
+        () => {
+          if (this.writes.get(scope) === work) this.writes.delete(scope);
+        },
+        () => {
+          if (this.writes.get(scope) === work) this.writes.delete(scope);
+        }
+      );
+      return await work;
+    } catch (err) {
+      console.error("[backUp draw] failed", drawKind, pathHint, err);
+      return { ok: false, error: String(err) };
+    }
+  };
+};
+var BackupReader = class {
+  /** Connects API text retrieval with value decoding. */
+  constructor(server, values) {
+    this.server = server;
+    this.values = values;
+  }
+  server;
+  values;
+  /** Reads one backup without changing a target object. */
+  async readBackup(pathHint) {
+    return this.values.decodeValue(await this.server.fetchText(pathHint));
+  }
+  /** Fills a texture or returns an array/scalar from a backup. */
+  restoreInto = async (target, pathHint) => {
+    const value = await this.readBackup(pathHint);
+    if (target && typeof target.fill === "function" && value?.__backupType === "texture2D") {
+      target.fill(new Float32Array(value.data || []), 0, 0, value.w, value.h);
+      return target;
+    }
+    if (value?.__backupType && Array.isArray(value.data)) return new Float32Array(value.data);
+    return value;
+  };
+};
+var BackupConsoleLogger = class {
+  /** Uses the same scoped path and HTTP server as other backup operations. */
+  constructor(paths, server) {
+    this.paths = paths;
+    this.server = server;
+  }
+  paths;
+  server;
+  /** Installs console mirrors for one DSL log destination. */
+  log = async (pathHint) => {
+    const target = this.paths.normalizeScopePath(pathHint);
+    const p = target.path;
+    const prevLog = console.log.bind(console);
+    const prevWarn = console.warn.bind(console);
+    const prevError = console.error.bind(console);
+    const append = (level, args) => {
+      const line = "[" + (/* @__PURE__ */ new Date()).toISOString() + "] " + level + " " + args.map((a) => {
+        try {
+          return typeof a === "string" ? a : JSON.stringify(a);
+        } catch {
+          return String(a);
+        }
+      }).join(" ") + "\n";
+      this.server.put("/append", p, line, target.directoryMode ? { directoryMode: true, suggestedName: "log_" + this.paths.stamp() + ".txt" } : {}).catch(prevError);
+    };
+    console.log = (...args) => {
+      prevLog(...args);
+      append("log", args);
+    };
+    console.warn = (...args) => {
+      prevWarn(...args);
+      append("warn", args);
+    };
+    console.error = (...args) => {
+      prevError(...args);
+      append("error", args);
+    };
+    console.log("[backUp log]", p);
+  };
+};
+var BackupRuntime = class {
+  paths;
+  server;
+  values;
+  generations;
+  draws;
+  reader;
+  logger;
+  taggedValues = /* @__PURE__ */ new Map();
+  /** Connects the browser WebGL context and recomputation state to the backup API. */
+  constructor(gl, TexExamples3, defaultScope, generationContext = () => ({})) {
+    this.paths = new BackupPaths(defaultScope);
+    this.server = new BackupServer(this.paths);
+    this.values = new BackupValues(gl, TexExamples3);
+    this.generations = new BackupGenerations(this.paths, this.server, generationContext);
+    this.draws = new BackupDrawWriter(this.paths, this.server, this.values, this.generations);
+    this.reader = new BackupReader(this.server, this.values);
+    this.logger = new BackupConsoleLogger(this.paths, this.server);
+  }
+  /** Stores one named value at a DSL path hint. */
+  store = async (value, varName, pathHint) => {
+    try {
+      const target = this.paths.normalizeScopePath(pathHint);
+      const result = await this.server.put("/file", target.path, this.values.serializeValue(value, varName), target.directoryMode ? { directoryMode: true, suggestedName: this.paths.defaultPath(value, varName) } : {});
+      console.log("[backUp store]", result.path);
+      return result;
+    } catch (err) {
+      console.error("[backUp store] failed", err);
+      return { ok: false, error: String(err) };
+    }
+  };
+  /** Restores a texture in place or returns decoded scalar/array data. */
+  restoreInto = (target, pathHint) => this.reader.restoreInto(target, pathHint);
+  /** Mirrors console messages to a backup log file. */
+  log = (pathHint) => this.logger.log(pathHint);
+  /** Captures all outputs of one draw block. */
+  storeDrawBlock = (drawKind, pathHint, outputTextures, uniformEntries, program, options = {}) => this.draws.storeDrawBlock(drawKind, pathHint, outputTextures, uniformEntries, program, options);
+  /** Reads one backup value without mutating an existing target. */
+  async readBackup(pathHint) {
+    return this.reader.readBackup(pathHint);
+  }
+  /** Saves the latest value observed at a tagged DSL block, at most once per second. */
+  captureTaggedValue(block, tag, name, value) {
+    const key = [block, tag, name].map(this.paths.safeName).join("_");
+    const previous = this.taggedValues.get(key);
+    const now = Date.now();
+    if (previous?.pending || previous && now - previous.time < 1e3) return;
+    let formatted;
+    try {
+      formatted = JSON.stringify(value) ?? String(value);
+    } catch {
+      formatted = String(value);
+    }
+    if (formatted.length > 4096) formatted = formatted.slice(0, 4096) + "...";
+    if (previous && previous.value === formatted) {
+      previous.time = now;
+      return;
+    }
+    const state = { time: now, pending: true, value: formatted };
+    this.taggedValues.set(key, state);
+    const scope = this.paths.normalizeScopePath("./.dnti-tags/").path.replace(/\/+$/, "");
+    void this.server.put("/file", `${scope}/${key}.json`, JSON.stringify({ block, tag, name, value: formatted, at: new Date(now).toISOString() })).catch(() => {
+      state.time = Date.now() + 3e4;
+      state.value = "";
+    }).finally(() => {
+      state.pending = false;
+    });
+  }
+};
+
 // generated/generatedParserC1.ts
 (async () => {
   const canvas = document.getElementById("trajectory-c1");
@@ -6655,6 +7229,11 @@ var VAO2 = class {
   var lastFillerProgram = null;
   void lastFillerProgram;
   var __globalBlocks = [];
+  const backupRuntime = new BackupRuntime(gl, TexExamples2, "parseTextC1", () => ({
+    recomputeTau: typeof recomputeTau !== "undefined" && !!recomputeTau,
+    tauModelStamp: typeof tauModelStamp !== "undefined" ? tauModelStamp : void 0
+  }));
+  const readBackup = (path) => backupRuntime.readBackup(path);
   var meshProgram = new SolidMeshRenderingProgram(gl, "TexUnit20", [1024, 1024][0], [1024, 1024][1]).includeInWebManList();
   lastUsedProgram = meshProgram;
   await meshProgram.loadProgram(meshProgram.vertPath, meshProgram.fragPath, ((source) => source), ((source) => source));
@@ -6662,11 +7241,20 @@ var VAO2 = class {
   lastUsedProgram = meshProgram;
   let scaleFactor = 1;
   ;
-  meshProgram.initUniforms().setPerXPerY(0.5, 0.5).setDXDY(0.16 * scaleFactor, 0.16 * scaleFactor).setYScale(scaleFactor).setColorHueScale(1);
+  var time = 0;
+  ;
+  meshProgram.initUniforms().smoothColor(false).setPerXPerY(0.5, 0.5).smoothColor(true).setDXDY(0.16 * scaleFactor, 0.16 * scaleFactor).setYScale(scaleFactor).setColorHueScale(0.2).setRepeat(true);
   var surface;
   (() => {
-    let compiledCreateIdealMeshFn = __prepareMathFunction("(x,y)=>{return sin(x/4)*cos(y/4)}");
-    surface = lastUsedProgram?.createIdealTexture?.("TexUnit20", compiledCreateIdealMeshFn);
+    surface = lastUsedProgram?.createIdealTexture?.("TexUnit20");
+    if (surface) {
+      surface.lastPreparedFunc = "(x, y) => { return sin(x / 10 + {time}) * cos(y / 10) * 2 - 30 / (1 + (Math.pow((x-512)*0.03, 2) + Math.pow((y-512)*0.03, 2)) * 0.1); }";
+      surface.meshContext = {
+        get time() {
+          return typeof time !== "undefined" ? time : globalThis.time;
+        }
+      };
+    }
     surface?.bind?.();
   })();
   var camera3D = new Camera3D(new Vector3D2(0, 4, 12));
@@ -6679,8 +7267,7 @@ var VAO2 = class {
   axis3DGroup.setDivisions(4).initUniforms();
   camera3D.bindRKey("z");
   var meshFillerProgram = new MeshFillerProgram(gl, "TexUnit20").includeInWebManList();
-  meshFillerProgram.generateProgram("(x,y)=>{ sin(x/4)*cos(y/4) }", globalThis);
-  await meshFillerProgram.loadProgram?.();
+  await meshFillerProgram.loadFromTexture();
   lastFillerProgram = meshFillerProgram;
   let offset = new Vector2D2(0, 0);
   var demo = webglMan.program(-1, "demo");
@@ -6710,12 +7297,21 @@ var VAO2 = class {
   positionTextureNext.__backupProgram = movePoints?.ID ?? movePoints?.fragPath ?? "movePoints";
   let movePointsFBO = null;
   var __globalBlockFn_0 = async (dt) => {
+    void backupRuntime.captureTaggedValue("tick", "2", "offset", offset);
+    time += dt * 3;
+    ;
     camera3D.tick(dt, keypress, mousepos, mouseclick);
+    await meshFillerProgram.use?.();
+    lastUsedProgram = meshFillerProgram;
+    meshFillerProgram.tick().draw();
     await meshProgram.use?.();
     lastUsedProgram = meshProgram;
     meshProgram.draw(0, 0, 640, 480, camera3D, "TRIANGLE_STRIP");
   };
   __globalBlocks.push({ priority: 10, order: 0, fn: __globalBlockFn_0 });
+  KeyManager.OnKey("f", async (e) => {
+    if (e?.repeat) return;
+  });
   KeyManager.OnKey("a", async (e) => {
     if (e?.repeat) return;
     offset.x += 0.1;

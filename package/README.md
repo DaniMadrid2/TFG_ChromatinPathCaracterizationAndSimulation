@@ -174,7 +174,15 @@ codigo generado apuntan directamente a `parser/registryModules/capsules.js`.
 `SolidMeshProgram input=TexUnit20 1024x1024` usa la misma API que
 `MeshProgram`, pero rellena cada celda con dos triangulos mediante `TRIANGLE_STRIP`.
 Su nombre implicito es `solidMeshProgram`; `draw(..., "LINES")` tambien dibuja
-la malla solida en esta clase.
+la malla solida en esta clase. El color se interpola en el fragment por defecto;
+`solidMeshProgram.smoothColor(false)` recupera el color plano anterior y
+`smoothColor()` lo vuelve a activar.
+
+Dentro de `program`, `tex3D volume RES [w x h x d] RGFloat TexUnit7` crea una
+textura para `sampler3D`. Fuera del bloque se acepta
+`volume = texture3DArray RGFloat {data} "volume" TexUnit7 [w x h x d]`;
+`tex3D` y `tex3DArray` son alias de esa forma. `texture2DArray` conserva la
+semantica de capas independientes para `sampler2DArray`.
 
 `detectUse` puede devolver `true`, `false` o `"Toggled"`. Con `"Toggled"`, el
 modulo se activa si esta nombrado en `dnti.modules.json` del proyecto. El mismo
