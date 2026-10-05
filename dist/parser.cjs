@@ -3982,6 +3982,7 @@ __export(capsules_exports, {
   AxisConesProgram: () => AxisConesProgram,
   AxisGridProgram: () => AxisGridProgram,
   AxisLinesProgram: () => AxisLinesProgram,
+  DynamicSolidMeshRenderingProgram: () => DynamicSolidMeshRenderingProgram,
   MeshFillerProgram: () => MeshFillerProgram,
   MeshRenderingProgram: () => MeshRenderingProgram,
   SolidMeshRenderingProgram: () => SolidMeshRenderingProgram,
@@ -4943,6 +4944,7 @@ var MeshRenderingProgram = class extends WebProgram {
             uniform float yScale;
             uniform bool repeatMesh;
             uniform vec3 offPos;
+            ${this.vertexExtraUniforms()}
 
             uniform mat4 u_viewMatrix;
             uniform mat4 u_projectionMatrix;
@@ -5033,6 +5035,9 @@ var MeshRenderingProgram = class extends WebProgram {
                     y = base % (msdCount - 1);
                     pos = getPoint(x, first ? y : y + 1);
                 }`;
+  }
+  vertexExtraUniforms() {
+    return "";
   }
   setSize(w = this.w, h = this.h) {
     this.w = w;
@@ -5172,6 +5177,339 @@ var SolidMeshRenderingProgram = class extends MeshRenderingProgram {
     return this;
   }
 };
+var DynamicSolidMeshRenderingProgram = class extends SolidMeshRenderingProgram {
+  constructor(gl, valsTexUnit = "TexUnit20", w = 1024, h = 1024) {
+    super(gl, valsTexUnit, w, h);
+    this.gridRadius = 128;
+    this.repeatRadius = 100;
+    this.fullResolutionCells = 48;
+    this.falloff = 2;
+    this.lodOriginXZ = [0, 0];
+    this.priorityWorldPoints = [];
+    this.priorityTexels = [];
+    this.originPerX = 0.5;
+    this.originPerY = 0.5;
+    this.repeatEnabled = true;
+  }
+  vertexExtraUniforms() {
+    return `uniform int lodGridRadius;
+                uniform float lodRepeatRadius;
+                uniform int lodFullResolutionCells;
+                uniform float lodFalloff;
+                uniform vec2 lodOriginXZ;
+                uniform int lodPriorityCount;
+                uniform vec4 lodPriorityPoints[16];
+                uniform int lodPeriodicXCount;
+                uniform int lodPeriodicZCount;
+                uniform float lodPeriodicXPositive[16];
+                uniform float lodPeriodicXNegative[16];
+                uniform float lodPeriodicZPositive[16];
+                uniform float lodPeriodicZNegative[16];
+
+                float lodPhase(int axis, bool negative, int slot) {
+                    if (axis == 0) return negative ? lodPeriodicXNegative[slot] : lodPeriodicXPositive[slot];
+                    return negative ? lodPeriodicZNegative[slot] : lodPeriodicZPositive[slot];
+                }
+
+                int lodAnchorIndex(int anchor, int total, int outerCells) {
+                    if (anchor == 0) return 0;
+                    if (anchor == total) return outerCells;
+                    float t = float(anchor) / float(total);
+                    float density = lodFalloff < 0.0001 ? t :
+                        (1.0 - exp(-lodFalloff * t)) / (1.0 - exp(-lodFalloff));
+                    return anchor + int(floor(float(outerCells - total) * density));
+                }
+
+                float lodAnchorDistance(int anchor, int axis, bool negative, int count,
+                                        int nearCount, float tileSize, float flatDistance) {
+                    if (anchor == 0) return flatDistance;
+                    if (anchor <= nearCount) {
+                        return lodPhase(axis, negative, count - nearCount + anchor - 1);
+                    }
+                    int beyond = anchor - nearCount - 1;
+                    int tile = 1 + beyond / count;
+                    int slot = beyond % count;
+                    return float(tile) * tileSize + lodPhase(axis, negative, slot);
+                }
+
+                float lodAxisPosition(int signedIndex, int axis, float cell, float tileSize,
+                                      float origin, float repeatRadius) {
+                    float center = floor(origin / cell) * cell;
+                    int magnitude = abs(signedIndex);
+                    if (magnitude <= lodFullResolutionCells) return center + float(signedIndex) * cell;
+                    bool negative = signedIndex < 0;
+                    int count = axis == 0 ? lodPeriodicXCount : lodPeriodicZCount;
+                    if (count == 0) {
+                        float fullResolutionDistance = float(lodFullResolutionCells) * cell;
+                        float t = float(magnitude - lodFullResolutionCells) /
+                                  float(lodGridRadius - lodFullResolutionCells);
+                        float curve = lodFalloff < 0.0001 ? t :
+                            (exp(lodFalloff * t) - 1.0) / (exp(lodFalloff) - 1.0);
+                        float distance = fullResolutionDistance + curve *
+                            max(tileSize * repeatRadius - fullResolutionDistance, 0.0);
+                        return center + (negative ? -distance : distance);
+                    }
+                    float fullResolutionDistance = float(lodFullResolutionCells) * cell;
+                    int nearCount = 0;
+                    for (int i = 0; i < 16; i++) {
+                        if (i >= count) break;
+                        if (lodPhase(axis, negative, i) > fullResolutionDistance) nearCount++;
+                    }
+                    int tiles = max(1, int(floor(repeatRadius)));
+                    int zeroCount = lodPhase(axis, negative, 0) < 0.0001 * cell ? 1 : 0;
+                    int total = (tiles - 1) * count + nearCount + zeroCount;
+                    int outerCells = lodGridRadius - lodFullResolutionCells;
+                    int outer = magnitude - lodFullResolutionCells;
+                    int low = 0;
+                    int high = total;
+                    for (int step = 0; step < 12; step++) {
+                        if (low >= high) break;
+                        int mid = (low + high + 1) / 2;
+                        if (lodAnchorIndex(mid, total, outerCells) <= outer) low = mid;
+                        else high = mid - 1;
+                    }
+                    float distance = lodAnchorDistance(low, axis, negative, count, nearCount,
+                                                       tileSize, fullResolutionDistance);
+                    if (low < total) {
+                        int firstIndex = lodAnchorIndex(low, total, outerCells);
+                        int nextIndex = lodAnchorIndex(low + 1, total, outerCells);
+                        float nextDistance = lodAnchorDistance(low + 1, axis, negative,
+                                                                 count, nearCount, tileSize,
+                                                                 fullResolutionDistance);
+                        distance = mix(distance, nextDistance,
+                                       float(outer - firstIndex) / float(nextIndex - firstIndex));
+                    }
+                    return center + (negative ? -distance : distance);
+                }`;
+  }
+  vertexPositionCode() {
+    return `int side = lodGridRadius * 2 + 1;
+                int rowStride = side * 2 + 2;
+                int row = gl_VertexID / rowStride;
+                int inRow = gl_VertexID % rowStride;
+                int ix = min(inRow / 2, side - 1) - lodGridRadius;
+                int iz = row + (inRow % 2) - lodGridRadius;
+                if (inRow == side * 2) {
+                    iz = row + 1 - lodGridRadius;
+                } else if (inRow == side * 2 + 1) {
+                    ix = -lodGridRadius;
+                    iz = row + 1 - lodGridRadius;
+                }
+                vec2 cell = max(abs(vec2(dx, dy)), vec2(0.000001));
+                vec2 worldXZ = vec2(
+                    lodAxisPosition(ix, 0, cell.x, float(msdLength) * cell.x,
+                                    lodOriginXZ.x, lodRepeatRadius),
+                    lodAxisPosition(iz, 1, cell.y, float(msdCount) * cell.y,
+                                    lodOriginXZ.y, lodRepeatRadius));
+                for (int i = 0; i < 16; i++) {
+                    if (i >= lodPriorityCount) break;
+                    vec4 reserved = lodPriorityPoints[i];
+                    if (ix == int(reserved.z)) worldXZ.x = reserved.x;
+                    if (iz == int(reserved.w)) worldXZ.y = reserved.y;
+                }
+                ivec2 texel = ivec2(round(vec2(
+                    worldXZ.x / cell.x + float(msdLength) * (1.0 - xPer),
+                    -worldXZ.y / cell.y + float(msdCount) * (1.0 - yPer))));
+                ivec2 textureSizeXY = ivec2(msdLength, msdCount);
+                ivec2 wrapped = (texel % textureSizeXY + textureSizeXY) % textureSizeXY;
+                float height = texelFetch(values, wrapped, 0).r;
+                vec4 pos = vec4(worldXZ.x, height * yScale, worldXZ.y, 1.0) + vec4(offPos, 0.0);`;
+  }
+  setSize(w = this.w, h = this.h) {
+    super.setSize(w, h);
+    return this.setGridRadius(this.gridRadius);
+  }
+  setGridRadius(radius) {
+    if (radius > 512) console.warn(`DynamicSolidMeshProgram grid radius ${radius} is limited to 512`);
+    this.gridRadius = Math.max(8, Math.min(512, Math.floor(radius)));
+    const side = this.gridRadius * 2 + 1;
+    this.totalSegments = (side + 1) * (side - 1);
+    if (this.program) {
+      this.use();
+      this.uInt("lodGridRadius").set(this.gridRadius);
+    }
+    this.setFullResolutionCells(this.fullResolutionCells);
+    return this.updatePriorityPoints();
+  }
+  setRepeatRadius(radius) {
+    this.repeatRadius = Math.max(1, Math.min(1e4, radius));
+    if (this.program) {
+      this.use();
+      this.uFloat("lodRepeatRadius").set(this.repeatRadius);
+    }
+    return this.updatePriorityPoints();
+  }
+  /** Keep this many grid cells at native spacing around the current LOD center. */
+  setFullResolutionCells(cells) {
+    this.fullResolutionCells = Math.max(0, Math.min(this.gridRadius - 1, Math.floor(cells)));
+    if (this.program) {
+      this.use();
+      this.uInt("lodFullResolutionCells").set(this.fullResolutionCells);
+    }
+    return this.updatePriorityPoints();
+  }
+  /** 0 is linear spacing outside the center; larger values retain detail longer. */
+  setFalloff(amount) {
+    if (amount > 64) console.warn(`DynamicSolidMeshProgram falloff ${amount} is limited to 64`);
+    this.falloff = Math.max(0, Math.min(64, amount));
+    if (this.program) {
+      this.use();
+      this.uFloat("lodFalloff").set(this.falloff);
+    }
+    return this.updatePriorityPoints();
+  }
+  /** Set the LOD center explicitly; texture-priority anchors remain fixed in world space. */
+  setLODOrigin(x, z) {
+    this.lodOriginXZ = [x, z];
+    if (this.program) {
+      this.use();
+      this.uVec("lodOriginXZ", 2).set(this.lodOriginXZ);
+    }
+    return this.updatePriorityPoints();
+  }
+  /** Follow the camera with high-resolution geometry without moving priority samples. */
+  setCameraPosition(position) {
+    const cellX = Math.max(Math.abs(this.dx), 1e-6);
+    const cellZ = Math.max(Math.abs(this.dy), 1e-6);
+    if (Math.floor(position.x / cellX) === Math.floor(this.lodOriginXZ[0] / cellX) && Math.floor(position.z / cellZ) === Math.floor(this.lodOriginXZ[1] / cellZ)) return this;
+    return this.setLODOrigin(position.x, position.z);
+  }
+  setDXDY(dx, dy) {
+    this.dx = dx;
+    this.dy = dy;
+    super.setDXDY(dx, dy);
+    return this.updatePriorityPoints();
+  }
+  setPerXPerY(px = 0.5, py = 0.5) {
+    this.originPerX = px;
+    this.originPerY = py;
+    super.setPerXPerY(px, py);
+    return this.updatePriorityPoints();
+  }
+  /** Reserve exact world-space X/Z coordinates as vertices (up to 16 points). */
+  setPriorityPoints(points) {
+    if (points.length > 16) throw new Error("DynamicSolidMeshProgram supports at most 16 priority points");
+    this.priorityWorldPoints = points.map(([x, z]) => [x, z]);
+    this.priorityTexels = [];
+    return this.updatePriorityPoints();
+  }
+  /** Reserve texture texels; [w/2,h/2] maps to world origin at xPer=yPer=0.5. */
+  setPriorityTexels(points) {
+    if (points.length > 16) throw new Error("DynamicSolidMeshProgram supports at most 16 priority points");
+    if (points.some(([u, v]) => !Number.isFinite(u) || !Number.isFinite(v) || u < 0 || u >= this.w || v < 0 || v >= this.h)) {
+      throw new Error("Priority texels must lie inside the height texture");
+    }
+    this.priorityTexels = points.map(([x, y]) => [x, y]);
+    this.priorityWorldPoints = [];
+    return this.updatePriorityPoints();
+  }
+  axisPosition(index, cell, size, origin) {
+    const count = Math.abs(index);
+    const flat = Math.min(count, this.fullResolutionCells) * cell;
+    const outside = Math.max(0, count - this.fullResolutionCells);
+    const span = Math.max(1, this.gridRadius - this.fullResolutionCells);
+    const t = outside / span;
+    const curve = this.falloff < 1e-4 ? t : Math.expm1(this.falloff * t) / Math.expm1(this.falloff);
+    const reach = Math.max(0, size * cell * this.repeatRadius - this.fullResolutionCells * cell);
+    return Math.floor(origin / cell) * cell + Math.sign(index) * (flat + curve * reach);
+  }
+  nearestAxisIndex(value, cell, size, origin) {
+    let low = -this.gridRadius;
+    let high = this.gridRadius;
+    while (low < high) {
+      const mid = Math.floor((low + high) / 2);
+      if (this.axisPosition(mid, cell, size, origin) < value) low = mid + 1;
+      else high = mid;
+    }
+    if (low > -this.gridRadius && Math.abs(this.axisPosition(low - 1, cell, size, origin) - value) < Math.abs(this.axisPosition(low, cell, size, origin) - value)) low--;
+    return low;
+  }
+  updatePriorityPoints() {
+    const cellX = Math.max(Math.abs(this.dx), 1e-6);
+    const cellZ = Math.max(Math.abs(this.dy), 1e-6);
+    if (this.priorityTexels.length) {
+      const phaseArrays = [];
+      const counts = [];
+      for (const [axis, cell, size, origin] of [
+        [0, cellX, this.w, this.lodOriginXZ[0]],
+        [1, cellZ, this.h, this.lodOriginXZ[1]]
+      ]) {
+        const tileSize = cell * size;
+        const center = Math.floor(origin / cell) * cell;
+        const coords = this.priorityTexels.map(([u, v]) => axis === 0 ? (u - this.w * (1 - this.originPerX)) * cellX : -(v - this.h * (1 - this.originPerY)) * cellZ);
+        for (const negative of [false, true]) {
+          const phases = coords.map((coordinate) => {
+            const distance = negative ? center - coordinate : coordinate - center;
+            const remainder = (distance % tileSize + tileSize) % tileSize;
+            return remainder < cell * 1e-4 || tileSize - remainder < cell * 1e-4 ? 0 : remainder;
+          }).sort((a, b) => a - b).filter((phase, i, values2) => i === 0 || Math.abs(phase - values2[i - 1]) > cell * 1e-4);
+          const nearCount = phases.filter((phase) => phase > this.fullResolutionCells * cell).length;
+          const tiles = Math.max(1, Math.floor(this.repeatRadius));
+          const total = (tiles - 1) * phases.length + nearCount + (phases[0] === 0 ? 1 : 0);
+          if (total > this.gridRadius - this.fullResolutionCells) {
+            throw new Error("Not enough LOD vertices for every repeated priority texel; increase grid radius or reduce repeat radius");
+          }
+          const values = new Float32Array(16);
+          values.set(phases);
+          phaseArrays.push(values);
+          counts.push(phases.length);
+        }
+      }
+      if (this.program) {
+        this.use();
+        this.uInt("lodPriorityCount").set(0);
+        this.uInt("lodPeriodicXCount").set(counts[0]);
+        this.uInt("lodPeriodicZCount").set(counts[2]);
+        for (const [i, name] of [
+          "lodPeriodicXPositive",
+          "lodPeriodicXNegative",
+          "lodPeriodicZPositive",
+          "lodPeriodicZNegative"
+        ].entries()) {
+          this.gl.uniform1fv(this.gl.getUniformLocation(this.program, `${name}[0]`), phaseArrays[i]);
+        }
+      }
+      return this;
+    }
+    const points = this.priorityWorldPoints;
+    if (points.length > 16) throw new Error("DynamicSolidMeshProgram supports at most 16 priority points");
+    const xSlots = /* @__PURE__ */ new Map();
+    const zSlots = /* @__PURE__ */ new Map();
+    const reserved = new Float32Array(16 * 4);
+    points.forEach(([x, z], i) => {
+      if (!Number.isFinite(x) || !Number.isFinite(z)) throw new Error("Priority coordinates must be finite");
+      const ix = this.nearestAxisIndex(x, cellX, this.w, this.lodOriginXZ[0]);
+      const iz = this.nearestAxisIndex(z, cellZ, this.h, this.lodOriginXZ[1]);
+      const edgeX = Math.abs(this.axisPosition(ix, cellX, this.w, this.lodOriginXZ[0]) - x);
+      const edgeZ = Math.abs(this.axisPosition(iz, cellZ, this.h, this.lodOriginXZ[1]) - z);
+      if (Math.abs(ix) === this.gridRadius && edgeX > cellX || Math.abs(iz) === this.gridRadius && edgeZ > cellZ) {
+        throw new Error("Priority point lies outside the LOD mesh; increase repeat radius or move its origin");
+      }
+      if (xSlots.has(ix) && xSlots.get(ix) !== x || zSlots.has(iz) && zSlots.get(iz) !== z) {
+        throw new Error("Priority points need distinct grid slots at this resolution; increase grid radius");
+      }
+      xSlots.set(ix, x);
+      zSlots.set(iz, z);
+      reserved.set([x, z, ix, iz], i * 4);
+    });
+    if (this.program) {
+      this.use();
+      this.uInt("lodPeriodicXCount").set(0);
+      this.uInt("lodPeriodicZCount").set(0);
+      this.uInt("lodPriorityCount").set(points.length);
+      if (points.length) this.gl.uniform4fv(this.gl.getUniformLocation(this.program, "lodPriorityPoints[0]"), reserved);
+    }
+    return this;
+  }
+  initUniforms() {
+    super.initUniforms();
+    return this.setGridRadius(this.gridRadius).setRepeatRadius(this.repeatRadius).setFullResolutionCells(this.fullResolutionCells).setFalloff(this.falloff).setLODOrigin(this.lodOriginXZ[0], this.lodOriginXZ[1]);
+  }
+  draw(x = 0, y = 0, w = 1080, h = 720, camera) {
+    this.use();
+    return super.draw(x, y, w, h, camera);
+  }
+};
 function transpileMeshCallback(callback, parser) {
   const names = /* @__PURE__ */ new Set();
   for (const match of callback.matchAll(/\{\s*([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\s*(?:,\s*(?:float|int|uint|vec[2-4]|mat[2-4]))?\s*\}/g)) {
@@ -5233,7 +5571,7 @@ function transpileCreateIdealMesh(line, declaredVars, parser) {
 }
 function transpileCapsuleObject(line, declaredVars, parser) {
   const { leftAliases, rightAliases, core } = parser.extractAliasesAndCore(line);
-  const kind = core.match(/^(MeshProgram|SolidMeshProgram|MeshFillerProgram|Axis3DGroup)(?:\s+|$)/)?.[1];
+  const kind = core.match(/^(MeshProgram|SolidMeshProgram|DynamicSolidMeshProgram|MeshFillerProgram|Axis3DGroup)(?:\s+|$)/)?.[1];
   if (!kind) return null;
   const names = [...parser.ensureAliasesForClass(leftAliases, kind, declaredVars), ...rightAliases];
   rightAliases.forEach((name) => declaredVars.add(name));
@@ -5242,7 +5580,7 @@ function transpileCapsuleObject(line, declaredVars, parser) {
   const paramsStr = core.slice(kind.length).trim();
   const split = parser.splitParamsAndChainTokens(paramsStr);
   const out = [];
-  if (kind === "MeshProgram" || kind === "SolidMeshProgram") {
+  if (kind === "MeshProgram" || kind === "SolidMeshProgram" || kind === "DynamicSolidMeshProgram") {
     const params = /* @__PURE__ */ new Map();
     const positional = [];
     for (const token of split.params) {
@@ -5253,7 +5591,7 @@ function transpileCapsuleObject(line, declaredVars, parser) {
     const input = params.get("input") ?? positional[0] ?? "undefined";
     const size = positional[0] && params.has("input") ? positional[0] : positional[1] ?? "undefined";
     const dimensions = size.includes("x") ? parser.transpileSizeToken(size) : size.startsWith("[") ? size : parser.transpileExpr(size);
-    const programClass = kind === "SolidMeshProgram" ? "SolidMeshRenderingProgram" : "MeshRenderingProgram";
+    const programClass = kind === "DynamicSolidMeshProgram" ? "DynamicSolidMeshRenderingProgram" : kind === "SolidMeshProgram" ? "SolidMeshRenderingProgram" : "MeshRenderingProgram";
     out.push(`var ${first} = new ${programClass}(gl, ${input}, (${dimensions})[0], (${dimensions})[1]).includeInWebManList();`);
     out.push(`lastUsedProgram = ${first};`);
   } else if (kind === "Axis3DGroup") {
@@ -5305,6 +5643,13 @@ function buildHandlers(parser) {
       SolidMeshProgram: (params, gl) => {
         const [width, height] = params.get(0) || [1024, 1024];
         const program = new SolidMeshRenderingProgram(gl, params.get("input"), width, height).includeInWebManList();
+        parser.lastUsedProgram = program;
+        return program;
+      },
+      //@dnti-createsInternalTexture
+      DynamicSolidMeshProgram: (params, gl) => {
+        const [width, height] = params.get(0) || [1024, 1024];
+        const program = new DynamicSolidMeshRenderingProgram(gl, params.get("input"), width, height).includeInWebManList();
         parser.lastUsedProgram = program;
         return program;
       },
@@ -5950,7 +6295,7 @@ var MeshFillerProgram = class extends WebProgram {
 };
 var id = "MeshCapsule";
 function detectUse4(source) {
-  return /\b(?:MeshProgram|SolidMeshProgram|MeshFillerProgram|Axis3DGroup|createIdealMesh|fillMeshTexture)\b/.test(source) ? true : "Toggled";
+  return /\b(?:MeshProgram|SolidMeshProgram|DynamicSolidMeshProgram|MeshFillerProgram|Axis3DGroup|createIdealMesh|fillMeshTexture)\b/.test(source) ? true : "Toggled";
 }
 function register(parser) {
   return { id, ...buildHandlers(parser) };
@@ -6308,6 +6653,7 @@ var DetailedParser = class _DetailedParser {
       // Clases del usuario (de tus imports)
       MeshRenderingProgram,
       SolidMeshRenderingProgram,
+      DynamicSolidMeshRenderingProgram,
       MeshFillerProgram,
       Axis3DGroup,
       Camera3D,
@@ -7780,6 +8126,7 @@ var DetailedParser = class _DetailedParser {
     const names = m[1].split(",").map((s) => s.trim()).filter(Boolean);
     if (!names.includes("MeshFillerProgram")) names.push("MeshFillerProgram");
     if (!names.includes("SolidMeshRenderingProgram")) names.push("SolidMeshRenderingProgram");
+    if (!names.includes("DynamicSolidMeshRenderingProgram")) names.push("DynamicSolidMeshRenderingProgram");
     imports[idx] = `import { ${[...new Set(names)].join(", ")} } from "/Code/WebGL/parser/registryModules/capsules.js";`;
     return imports;
   }

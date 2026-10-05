@@ -11,7 +11,7 @@ import { MathJaxLoader } from "/Code/MathJax/MathJax.js";
 import { createCanvasNextTo} from "/DNTI_Templates/00_Canvas_Snippet_Creator/Canvas_On_Page.js"
 import {create2DWithAxis} from "/DNTI_Templates/LinearAlgebra/2DLinear.js"
 
-import { Axis3DGroup, MeshRenderingProgram, SolidMeshRenderingProgram, MeshFillerProgram } from "/Code/WebGL/parser/registryModules/capsules.js";
+import { Axis3DGroup, MeshRenderingProgram, SolidMeshRenderingProgram, MeshFillerProgram, DynamicSolidMeshRenderingProgram } from "/Code/WebGL/parser/registryModules/capsules.js";
 import { Camera3D } from "/Code/Game3D/Game3D.js";
 import { BindableTexture, GLMode, TexExamples, TextureUnitType, WebGLMan, WebProgram, parseTexUnitType } from "/Code/WebGL/webglMan.js";
 
@@ -60,20 +60,22 @@ const backupRuntime = new BackupRuntime(gl, TexExamples, "parseTextC1", () => ({
     tauModelStamp: typeof tauModelStamp !== "undefined" ? tauModelStamp : undefined
 }));
 const readBackup = (path: string) => backupRuntime.readBackup(path);
-var meshProgram = new SolidMeshRenderingProgram(gl, "TexUnit20", ([1024, 1024])[0], ([1024, 1024])[1]).includeInWebManList();
+var meshProgram = new DynamicSolidMeshRenderingProgram(gl, "TexUnit20", ([1024, 1024])[0], ([1024, 1024])[1]).includeInWebManList();
 lastUsedProgram = meshProgram;
 await meshProgram.loadProgram(meshProgram.vertPath, meshProgram.fragPath, (source => source), (source => source));
 await meshProgram.use?.();
 lastUsedProgram = meshProgram;
 let scaleFactor = 1;;
 var time = 0;;
-meshProgram.initUniforms().smoothColor(false).setPerXPerY(0.5,0.5).smoothColor(true).setDXDY(0.16*scaleFactor,0.16*scaleFactor).setYScale(scaleFactor).setColorHueScale(0.2).setRepeat(true);
+meshProgram.initUniforms().setDXDY(0.16*scaleFactor,0.16*scaleFactor).setYScale(scaleFactor).setPerXPerY(0.5,0.5).setColorHueScale(0.2).smoothColor(true).setRepeat(true);
+meshProgram.setGridRadius(512).setFullResolutionCells(120).setFalloff(1640).setRepeatRadius(120);
+meshProgram.setLODOrigin(0,0).setPriorityTexels([[512,512]]);
 var surface;
 (()=>{
     // createIdealMesh surface
     surface = lastUsedProgram?.createIdealTexture?.("TexUnit20");
     if (surface) {
-        surface.lastPreparedFunc = "(x, y) => { return sin(x / 10 + {time}) * cos(y / 10) * 2 - 30 / (1 + (Math.pow((x-512)*0.03, 2) + Math.pow((y-512)*0.03, 2)) * 0.1); }";
+        surface.lastPreparedFunc = "(x, y) => { return sin(x / 20 + sin(y / 20 + {time})) * cos(y / 20 + cos(x / 20 + {time})) * 12; }";
         surface.meshContext = {
             get time(){ return (typeof time !== "undefined") ? time : (globalThis as any).time; },
         };
@@ -128,11 +130,13 @@ var __globalBlockFn_0 = async (dt)=>{ // tick
     meshFillerProgram.tick().draw();
     await meshProgram.use?.();
     lastUsedProgram = meshProgram;
+    meshProgram.setCameraPosition(camera3D.position);
     meshProgram.draw(0,0,640,480,(camera3D),"TRIANGLE_STRIP");
 };
 __globalBlocks.push({ priority: 10, order: 0, fn: __globalBlockFn_0 });
 KeyManager.OnKey("f", async (e)=>{ // OnKey
 if((e as any)?.repeat) return;
+    openFullscreen(canvas);
 });
 KeyManager.OnKey("a", async (e)=>{ // OnKey
 if((e as any)?.repeat) return;

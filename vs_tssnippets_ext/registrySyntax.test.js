@@ -54,8 +54,9 @@ test('builds registry highlighting and object rules from TypeScript modules', ()
 
 test('generated metadata includes MeshCapsule internal texture markers', () => {
     const metadata = require('./generated/registrySyntax.json');
-    for (const name of ['MeshProgram', 'SolidMeshProgram']) {
+    for (const name of ['MeshProgram', 'SolidMeshProgram', 'DynamicSolidMeshProgram']) {
         assert.equal(metadata.objects.find((item) => item.name === name)?.tags.createsInternalTexture, true);
     }
     assert.ok(metadata.objects.find((item) => item.name === 'SolidMeshProgram').methods.some((method) => method.name === 'smoothColor'));
+    assert.ok(metadata.objects.find((item) => item.name === 'DynamicSolidMeshProgram').methods.some((method) => method.name === 'setRepeatRadius'));
 });

@@ -41,6 +41,52 @@ test('capsule implementation contributes object and function DSL handlers', asyn
     assert.match(DetailedParser.transpileSimpleStatement('mesh = MeshProgram input=TexUnit20 4x4', new Set()).join('\n'), /new MeshRenderingProgram/);
     assert.match(DetailedParser.transpileSimpleStatement('MeshProgram input=TexUnit20 1024x1024', new Set()).join('\n'), /var meshProgram = new MeshRenderingProgram/);
     assert.match(DetailedParser.transpileSimpleStatement('SolidMeshProgram input=TexUnit20 4x3', new Set()).join('\n'), /var solidMeshProgram = new SolidMeshRenderingProgram/);
+    assert.match(DetailedParser.transpileSimpleStatement('DynamicSolidMeshProgram input=TexUnit20 1024x1024', new Set()).join('\n'), /var dynamicSolidMeshProgram = new DynamicSolidMeshRenderingProgram/);
+    const DynamicMesh = DetailedParser.GlobalContext.DynamicSolidMeshRenderingProgram;
+    const dynamic = new DynamicMesh({}, 'TexUnit20', 1024, 1024);
+    assert.match(dynamic.vertexExtraUniforms(), /lodFullResolutionCells/);
+    assert.match(dynamic.vertexExtraUniforms(), /lodAnchorDistance/);
+    assert.match(dynamic.vertexExtraUniforms(), /lodPeriodicXPositive/);
+    assert.doesNotMatch(dynamic.vertexExtraUniforms(), /\b(?:float|int|vec[234])\s+flat\b/);
+    assert.match(dynamic.vertexPositionCode(), /lodPriorityPoints\[i\]/);
+    assert.doesNotMatch(dynamic.vertexPositionCode(), /lodCameraXZ/);
+    assert.match(dynamic.vertexPositionCode(), /texelFetch\(values, wrapped, 0\)/);
+    assert.match(dynamic.vertexExtraUniforms(), /lodOriginXZ/);
+    assert.equal(dynamic.setGridRadius(128), dynamic);
+    assert.equal(dynamic.totalSegments * 2, (257 * 2 + 2) * 256);
+    assert.equal(dynamic.setRepeatRadius(500), dynamic);
+    assert.equal(dynamic.setFullResolutionCells(48), dynamic);
+    assert.equal(dynamic.setFalloff(8), dynamic);
+    assert.equal(dynamic.setGridRadius(256), dynamic);
+    assert.equal(dynamic.setRepeatRadius(100), dynamic);
+    assert.equal(dynamic.setPriorityTexels([[512, 512]]), dynamic);
+    assert.equal(dynamic.setGridRadius(512), dynamic);
+    assert.equal(dynamic.setPriorityTexels([[512, 512], [508, 512], [516, 512], [512, 508], [512, 516]]), dynamic);
+    assert.equal(dynamic.setLODOrigin(0, 0), dynamic);
+    assert.equal(dynamic.nearestAxisIndex(0, dynamic.dx, dynamic.w, 0), 0);
+    assert.equal(dynamic.setCameraPosition({ x: 50, z: 50 }), dynamic);
+    assert.deepEqual(dynamic.lodOriginXZ, [50, 50]);
+    assert.deepEqual(dynamic.priorityTexels[0], [512, 512]);
+    assert.throws(() => new DynamicMesh({}, 'TexUnit20', 1024, 1024)
+        .setGridRadius(128).setRepeatRadius(100).setPriorityTexels([[512, 512]]),
+        /Not enough LOD vertices/);
+    const outerCells = 512 - 128;
+    const repeatedCenters = 100;
+    const falloff = 64;
+    let previousIndex = -1;
+    for (let tile = 0; tile <= repeatedCenters; tile++) {
+      const density = tile === repeatedCenters ? 1
+        : (1 - Math.exp(-falloff * tile / repeatedCenters)) / (1 - Math.exp(-falloff));
+      const index = tile === repeatedCenters ? outerCells
+        : tile + Math.floor((outerCells - repeatedCenters) * density);
+      assert.ok(index > previousIndex, `tile ${tile} must have its own vertex`);
+      previousIndex = index;
+      const texel = Math.round(tile * 1024 * 0.16 / 0.16 + 512);
+      assert.equal(((texel % 1024) + 1024) % 1024, 512);
+      const negativeTexel = Math.round(-tile * 1024 * 0.16 / 0.16 + 512);
+      assert.equal(((negativeTexel % 1024) + 1024) % 1024, 512);
+    }
+    assert.throws(() => dynamic.setPriorityPoints(Array.from({ length: 17 }, (_, i) => [i, i])), /at most 16/);
     const cameraAliases = DetailedParser.transpileSimpleStatement('Camera3D camera2D|cam3D pos=vec3(0,4,20) |= cam2|cam4,cam5', new Set()).join('\n');
     assert.match(cameraAliases, /var camera2D = new Camera3D/);
     assert.match(cameraAliases, /var cam3D = camera2D;/);
@@ -220,10 +266,13 @@ test('solid mesh compiles with a direct capsule import', async () => {
     await fs.writeFile(path.join(snippets, 'commonImports.snippet.ts'),
       'import { MeshRenderingProgram } from "/Code/WebGL/webglCapsules.js";\n');
     await fs.writeFile(path.join(root, 'parseTextC1.shaderdsl.ts'),
-      '<Pre/>\nSolidMeshProgram input=TexUnit20 4x3\n<Pos>\n');
+      '<Pre/>\nSolidMeshProgram input=TexUnit20 4x3\nDynamicSolidMeshProgram input=TexUnit21 4x3\ndynamicSolidMeshProgram.setRepeatRadius(100).setGridRadius(64)\n<Pos>\n');
     const [output] = await parseFiles(['parseTextC1.shaderdsl.ts'], { cwd: root });
     const generated = await fs.readFile(output.tsFile, 'utf8');
     assert.match(generated, /new SolidMeshRenderingProgram\(/);
+    assert.match(generated, /new DynamicSolidMeshRenderingProgram\(/);
+    assert.match(generated, /dynamicSolidMeshProgram\.setRepeatRadius\(100\)\.setGridRadius\(64\)/);
+    assert.match(generated, /import \{[^}]*DynamicSolidMeshRenderingProgram[^}]*\} from "\/Code\/WebGL\/parser\/registryModules\/capsules\.js"/);
     assert.match(generated, /from "\/Code\/WebGL\/parser\/registryModules\/capsules\.js"/);
     assert.doesNotMatch(generated, /from "\/Code\/WebGL\/webglCapsules\.js"/);
     await fs.access(output.jsFile);

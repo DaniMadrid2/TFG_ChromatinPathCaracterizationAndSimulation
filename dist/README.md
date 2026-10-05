@@ -178,6 +178,29 @@ la malla solida en esta clase. El color se interpola en el fragment por defecto;
 `solidMeshProgram.smoothColor(false)` recupera el color plano anterior y
 `smoothColor()` lo vuelve a activar.
 
+`DynamicSolidMeshProgram input=TexUnit20 1024x1024` hereda de la malla solida.
+`dynamicSolidMeshProgram.initUniforms().setGridRadius(128).setFullResolutionCells(64).setFalloff(2).setRepeatRadius(100)`
+
+`setFullResolutionCells(n)` keeps native texel spacing for `n` cells in each direction around the LOD center. Beyond that, `setFalloff(0)` distributes remaining vertices linearly; higher values (clamped to 64) keep more detail near the camera before spacing grows. `setRepeatRadius(r)` sets outer reach in texture tiles, not vertex count. Increasing `setGridRadius` adds vertices and GPU cost.
+
+`draw(0,0,640,480,{camera3D})` mueve la vista. Si quieres que la resolucion
+alta siga a la camara, llama a `setCameraPosition(camera3D.position)` en `tick`;
+la posicion se redondea a la celda de la textura para evitar actualizaciones
+subcelda. `setLODOrigin(x,z)` fija el centro manualmente.
+`setPriorityTexels([[512,512]])` reserva un vertice exacto para ese texel de la
+textura **en cada repeticion**; `setPriorityPoints([[x,z]])` reserva puntos
+fijos en coordenadas X/Z del mundo. Se admiten hasta 16 puntos. Si faltan
+vertices para todas las copias, aumenta `setGridRadius` o reduce
+`setRepeatRadius`. Los vertices generales pueden cambiar de sitio con el LOD,
+pero las muestras prioritarias siguen en el mismo punto del mundo en cada copia.
+Un solo texel prioritario, por ejemplo `[[512,512]]`, reserva el centro de
+cada copia sin gastar vertices adicionales en vecinos inmediatos. Para mantener
+mas detalle cerca de la camara aumenta `setFullResolutionCells` o `setFalloff`.
+Cambiar la textura de alturas sigue cambiando la superficie;
+los puntos prioritarios solo evitan que el muestreo espacial los omita.
+La geometria sigue siendo finita: el radio cuenta repeticiones a cada lado
+(hasta 10000), y `camera3D.far` tambien limita el horizonte visible.
+
 Dentro de `program`, `tex3D volume RES [w x h x d] RGFloat TexUnit7` crea una
 textura para `sampler3D`. Fuera del bloque se acepta
 `volume = texture3DArray RGFloat {data} "volume" TexUnit7 [w x h x d]`;

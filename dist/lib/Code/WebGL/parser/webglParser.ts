@@ -15,7 +15,7 @@ import {Funcion, Arrow, Field,Axis,Axis2D,Funcion2D,Funcion3D,MatrixObject,axisp
 import {addFunc, start, startAsync, stop, Timer} from "../../Start/start.js"
 import { MathJaxLoader } from "../../MathJax/MathJax.js";
 
-import { Axis3DGroup, MeshRenderingProgram, SolidMeshRenderingProgram, MeshFillerProgram } from "./registryModules/capsules.js";
+import { Axis3DGroup, MeshRenderingProgram, SolidMeshRenderingProgram, DynamicSolidMeshRenderingProgram, MeshFillerProgram } from "./registryModules/capsules.js";
 import { Camera3D } from "../../Game3D/Game3D.js";
 import { WebGLMan, WebProgram, BindableTexture, parseTexUnitType, TexExamples } from "../webglMan.js";
 
@@ -155,6 +155,7 @@ export class DetailedParser {
         // Clases del usuario (de tus imports)
         MeshRenderingProgram,
         SolidMeshRenderingProgram,
+        DynamicSolidMeshRenderingProgram,
         MeshFillerProgram,
         Axis3DGroup,
         Camera3D,
@@ -1806,6 +1807,7 @@ export class DetailedParser {
             .filter(Boolean);
         if (!names.includes("MeshFillerProgram")) names.push("MeshFillerProgram");
         if (!names.includes("SolidMeshRenderingProgram")) names.push("SolidMeshRenderingProgram");
+        if (!names.includes("DynamicSolidMeshRenderingProgram")) names.push("DynamicSolidMeshRenderingProgram");
         imports[idx] = `import { ${[...new Set(names)].join(", ")} } from "/Code/WebGL/parser/registryModules/capsules.js";`;
         return imports;
     }

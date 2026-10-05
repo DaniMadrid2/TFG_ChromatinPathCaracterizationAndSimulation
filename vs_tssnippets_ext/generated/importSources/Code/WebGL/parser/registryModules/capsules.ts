@@ -15,6 +15,9 @@ import type { RegistryModule } from "./types.js";
 export class MeshRenderingProgram extends WebProgram{
     public totalSegments:number;
     protected smoothColorEnabled = true;
+    protected repeatEnabled = false;
+    private repeatTexture: BindableTexture | null = null;
+    private repeatTextureState: boolean | null = null;
     constructor(gl:WebGL2RenderingContext, public valsTexUnit:TextureUnitType="TexUnit20", public w=1024, public h=1024, public dx=0.015, public dy=0.015){
         super(gl, "", "");
     }
@@ -33,7 +36,9 @@ export class MeshRenderingProgram extends WebProgram{
             uniform float xPer;
             uniform float yPer;
             uniform float yScale;
+            uniform bool repeatMesh;
             uniform vec3 offPos;
+            ${this.vertexExtraUniforms()}
 
             uniform mat4 u_viewMatrix;
             uniform mat4 u_projectionMatrix;
@@ -43,7 +48,9 @@ export class MeshRenderingProgram extends WebProgram{
 
             vec4 getPoint(int x, int yTexel) {
                 // Ahora la textura tiene un único canal (RED)
-                float val = texelFetch(values, ivec2(x, yTexel), 0).r;
+                float val = repeatMesh
+                    ? texture(values, (vec2(float(x), float(yTexel)) + 0.5) / vec2(textureSize(values, 0))).r
+                    : texelFetch(values, ivec2(x, yTexel), 0).r;
 
                 float px = dx * float(x) - dx * float(msdLength) * (1.0 - xPer);
                 float py = val * yScale;
@@ -125,6 +132,8 @@ export class MeshRenderingProgram extends WebProgram{
                 }`;
     }
 
+    protected vertexExtraUniforms(): string { return ""; }
+
     setSize(w=this.w,h=this.h){
         this.w=w; this.h=h;
         let totalY = h;
@@ -164,6 +173,28 @@ export class MeshRenderingProgram extends WebProgram{
         this.uInt("smoothColor").set(is ? 1 : 0);
         return this;
     }
+    setRepeat(repeat: boolean = true): this {
+        this.repeatEnabled = repeat;
+        if (this.program) {
+            this.use();
+            this.uInt("repeatMesh").set(repeat ? 1 : 0);
+        }
+        const texture = this.getTextureByUnit(this.valsTexUnit);
+        if (!texture || this.repeatTexture === texture && this.repeatTextureState === repeat) return this;
+        const gl = this.gl;
+        const previousUnit = gl.getParameter(gl.ACTIVE_TEXTURE);
+        gl.activeTexture(gl.TEXTURE0 + parseTexUnitType(this.valsTexUnit));
+        const previousTexture = gl.getParameter(gl.TEXTURE_BINDING_2D);
+        gl.bindTexture(gl.TEXTURE_2D, texture);
+        const wrap = repeat ? gl.REPEAT : gl.CLAMP_TO_EDGE;
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, wrap);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, wrap);
+        gl.bindTexture(gl.TEXTURE_2D, previousTexture);
+        gl.activeTexture(previousUnit);
+        this.repeatTexture = texture;
+        this.repeatTextureState = repeat;
+        return this;
+    }
     setYScale(scale=0.5){
         this.uFloat("yScale").set(scale);
         return this;
@@ -173,6 +204,7 @@ export class MeshRenderingProgram extends WebProgram{
         this.setSize(this.w,this.h).setOffset(0,0,0).setDXDY(this.dx,this.dy)
         .setPerXPerY().setColorHueScale().setYScale();
         this.smoothColor(this.smoothColorEnabled);
+        this.setRepeat(this.repeatEnabled);
         return this;
     }
 
@@ -181,6 +213,7 @@ export class MeshRenderingProgram extends WebProgram{
      */
     draw(x=0,y=0,w=1080,h=720,camera?:Camera3D, mode:GLMode="LINES"){
         this.initDepthBefDraw();
+        if (this.repeatTexture !== this.getTextureByUnit(this.valsTexUnit)) this.setRepeat(this.repeatEnabled);
         this.bindTexName2TexUnit("values", this.valsTexUnit);
         if(camera){
             camera.calculateMatrices().setUniformsProgram(this as any);
@@ -193,11 +226,13 @@ export class MeshRenderingProgram extends WebProgram{
     }
     /** Allocates the height texture; MeshFillerProgram evaluates its function on the GPU. */
     createIdealTexture(texUnit=this.valsTexUnit, w=this.w, h=this.h){
-        return this.texture2D({
+        const texture = this.texture2D({
             format:TexExamples.RFloat,
             size:[w, h],
             texUnit: texUnit
-        })
+        });
+        if (parseTexUnitType(texUnit) === parseTexUnitType(this.valsTexUnit)) this.setRepeat(this.repeatEnabled);
+        return texture;
     }
     fillMeshTexture(texture2D:BindableTexture, data?:any|((x:number,y:number)=>number), w=this.w, h=this.h){
         let arrdata;
@@ -243,6 +278,99 @@ export class SolidMeshRenderingProgram extends MeshRenderingProgram {
     override draw(x=0, y=0, w=1080, h=720, camera?:Camera3D, _mode:GLMode="TRIANGLE_STRIP") {
         super.draw(x, y, w, h, camera, "TRIANGLE_STRIP");
         return this;
+    }
+}
+
+/** Camera-centered terrain with logarithmic vertex spacing and a repeated height texture. */
+export class DynamicSolidMeshRenderingProgram extends SolidMeshRenderingProgram {
+    private gridRadius = 128;
+    private repeatRadius = 100;
+    private cameraXZ: [number, number] = [0, 0];
+
+    constructor(gl: WebGL2RenderingContext, valsTexUnit: TextureUnitType = "TexUnit20", w = 1024, h = 1024) {
+        super(gl, valsTexUnit, w, h);
+        this.repeatEnabled = true;
+    }
+
+    protected override vertexExtraUniforms(): string {
+        return `uniform int lodGridRadius;
+                uniform float lodRepeatRadius;
+                uniform vec2 lodCameraXZ;`;
+    }
+
+    protected override vertexPositionCode(): string {
+        return `int side = lodGridRadius * 2 + 1;
+                int rowStride = side * 2 + 2;
+                int row = gl_VertexID / rowStride;
+                int inRow = gl_VertexID % rowStride;
+                int ix = min(inRow / 2, side - 1) - lodGridRadius;
+                int iz = row + (inRow % 2) - lodGridRadius;
+                if (inRow == side * 2) {
+                    iz = row + 1 - lodGridRadius;
+                } else if (inRow == side * 2 + 1) {
+                    ix = -lodGridRadius;
+                    iz = row + 1 - lodGridRadius;
+                }
+                vec2 cell = max(abs(vec2(dx, dy)), vec2(0.000001));
+                vec2 tileSize = vec2(msdLength, msdCount) * cell;
+                vec2 reach = tileSize * lodRepeatRadius;
+                vec2 growth = log(vec2(1.0) + reach / cell);
+                vec2 index = vec2(float(ix), float(iz));
+                vec2 distanceXZ = sign(index) * cell *
+                    (exp(growth * abs(index) / float(lodGridRadius)) - vec2(1.0));
+                vec2 center = floor(lodCameraXZ / cell) * cell;
+                vec2 worldXZ = center + distanceXZ;
+                vec2 uv = vec2(worldXZ.x / cell.x + float(msdLength) * (1.0 - xPer),
+                               -worldXZ.y / cell.y + float(msdCount) * (1.0 - yPer)) /
+                          vec2(msdLength, msdCount);
+                float height = texture(values, uv).r;
+                vec4 pos = vec4(worldXZ.x, height * yScale, worldXZ.y, 1.0) + vec4(offPos, 0.0);`;
+    }
+
+    override setSize(w = this.w, h = this.h): this {
+        super.setSize(w, h);
+        return this.setGridRadius(this.gridRadius);
+    }
+
+    setGridRadius(radius: number): this {
+        this.gridRadius = Math.max(8, Math.min(512, Math.floor(radius)));
+        const side = this.gridRadius * 2 + 1;
+        this.totalSegments = (side + 1) * (side - 1);
+        if (this.program) {
+            this.use();
+            this.uInt("lodGridRadius").set(this.gridRadius);
+        }
+        return this;
+    }
+
+    setRepeatRadius(radius: number): this {
+        this.repeatRadius = Math.max(1, Math.min(10000, radius));
+        if (this.program) {
+            this.use();
+            this.uFloat("lodRepeatRadius").set(this.repeatRadius);
+        }
+        return this;
+    }
+
+    setCameraPosition(position: Vector3D): this {
+        this.cameraXZ = [position.x, position.z];
+        if (this.program) {
+            this.use();
+            this.uVec("lodCameraXZ", 2).set(this.cameraXZ);
+        }
+        return this;
+    }
+
+    override initUniforms(): this {
+        super.initUniforms();
+        return this.setGridRadius(this.gridRadius).setRepeatRadius(this.repeatRadius)
+            .setCameraPosition({ x: this.cameraXZ[0], z: this.cameraXZ[1] } as Vector3D);
+    }
+
+    override draw(x = 0, y = 0, w = 1080, h = 720, camera?: Camera3D): this {
+        this.use();
+        if (camera) this.setCameraPosition(camera.position);
+        return super.draw(x, y, w, h, camera);
     }
 }
 
@@ -316,7 +444,7 @@ function transpileCreateIdealMesh(line: string, declaredVars: Set<string>, parse
 
 function transpileCapsuleObject(line: string, declaredVars: Set<string>, parser: any): string[] | null {
     const { leftAliases, rightAliases, core } = parser.extractAliasesAndCore(line);
-    const kind = core.match(/^(MeshProgram|SolidMeshProgram|MeshFillerProgram|Axis3DGroup)(?:\s+|$)/)?.[1];
+    const kind = core.match(/^(MeshProgram|SolidMeshProgram|DynamicSolidMeshProgram|MeshFillerProgram|Axis3DGroup)(?:\s+|$)/)?.[1];
     if (!kind) return null;
     const names = [...parser.ensureAliasesForClass(leftAliases, kind, declaredVars), ...rightAliases];
     rightAliases.forEach((name: string) => declaredVars.add(name));
@@ -326,7 +454,7 @@ function transpileCapsuleObject(line: string, declaredVars: Set<string>, parser:
     const split = parser.splitParamsAndChainTokens(paramsStr);
     const out: string[] = [];
 
-    if (kind === "MeshProgram" || kind === "SolidMeshProgram") {
+    if (kind === "MeshProgram" || kind === "SolidMeshProgram" || kind === "DynamicSolidMeshProgram") {
         const params = new Map<string, string>();
         const positional: string[] = [];
         for (const token of split.params) {
@@ -338,7 +466,8 @@ function transpileCapsuleObject(line: string, declaredVars: Set<string>, parser:
         const size = positional[0] && params.has("input") ? positional[0] : positional[1] ?? "undefined";
         const dimensions = size.includes("x") ? parser.transpileSizeToken(size)
             : size.startsWith("[") ? size : parser.transpileExpr(size);
-        const programClass = kind === "SolidMeshProgram" ? "SolidMeshRenderingProgram" : "MeshRenderingProgram";
+        const programClass = kind === "DynamicSolidMeshProgram" ? "DynamicSolidMeshRenderingProgram"
+            : kind === "SolidMeshProgram" ? "SolidMeshRenderingProgram" : "MeshRenderingProgram";
         out.push(`var ${first} = new ${programClass}(gl, ${input}, (${dimensions})[0], (${dimensions})[1]).includeInWebManList();`);
         out.push(`lastUsedProgram = ${first};`);
     } else if (kind === "Axis3DGroup") {
@@ -393,6 +522,14 @@ function buildHandlers(parser: any) {
             SolidMeshProgram: (params: Map<string | number, any>, gl: WebGL2RenderingContext) => {
                 const [width, height] = params.get(0) || [1024, 1024];
                 const program = new SolidMeshRenderingProgram(gl, params.get("input"), width, height)
+                    .includeInWebManList();
+                parser.lastUsedProgram = program;
+                return program;
+            },
+            //@dnti-createsInternalTexture
+            DynamicSolidMeshProgram: (params: Map<string | number, any>, gl: WebGL2RenderingContext) => {
+                const [width, height] = params.get(0) || [1024, 1024];
+                const program = new DynamicSolidMeshRenderingProgram(gl, params.get("input"), width, height)
                     .includeInWebManList();
                 parser.lastUsedProgram = program;
                 return program;
@@ -1196,7 +1333,7 @@ export class MeshFillerProgram extends WebProgram {
 export const id = "MeshCapsule";
 
 export function detectUse(source: string): boolean | "Toggled" {
-    return /\b(?:MeshProgram|SolidMeshProgram|MeshFillerProgram|Axis3DGroup|createIdealMesh|fillMeshTexture)\b/.test(source)
+    return /\b(?:MeshProgram|SolidMeshProgram|DynamicSolidMeshProgram|MeshFillerProgram|Axis3DGroup|createIdealMesh|fillMeshTexture)\b/.test(source)
         ? true : "Toggled";
 }
 

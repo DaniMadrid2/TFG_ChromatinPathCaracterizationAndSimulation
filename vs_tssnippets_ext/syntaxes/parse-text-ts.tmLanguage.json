@@ -89,7 +89,7 @@
     },
     {
       "name": "support.class.registry-generated.parse-text-ts",
-      "match": "\\b(?:Axis3DGroup|Camera3D|MeshFillerProgram|MeshProgram|Program|SolidMeshProgram)\\b"
+      "match": "\\b(?:Axis3DGroup|Camera3D|DynamicSolidMeshProgram|MeshFillerProgram|MeshProgram|Program|SolidMeshProgram)\\b"
     },
     {
       "name": "support.function.registry-generated.parse-text-ts",
