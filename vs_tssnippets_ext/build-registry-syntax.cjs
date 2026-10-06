@@ -177,6 +177,11 @@ const metadata = Object.fromEntries(Object.entries(entries).map(([kind, names]) 
     [kind, [...names.values()].sort((a, b) => a.name.localeCompare(b.name))]));
 const generatedDir = path.join(extensionRoot, 'generated');
 fs.mkdirSync(generatedDir, { recursive: true });
+const toggleSource = fs.readFileSync(path.join(parserRoot, 'toggleLines.ts'), 'utf8');
+const toggleModule = ts.transpileModule(toggleSource, {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 },
+}).outputText;
+fs.writeFileSync(path.join(generatedDir, 'toggleLines.cjs'), toggleModule);
 fs.writeFileSync(path.join(generatedDir, 'registrySyntax.json'), JSON.stringify(metadata, null, 2) + '\n');
 
 const grammarPath = path.join(extensionRoot, 'syntaxes', 'parse-text-ts.tmLanguage.json');

@@ -29,6 +29,34 @@ test('discovers registry modules without editing the parser', async () => {
   });
 });
 
+test('toggle choices are resolved before importing or transpiling DSL', async () => {
+  await temporaryWorkspace(async (root) => {
+    const { DetailedParser } = await loadParser(root);
+    const source = [
+      '-> import <Missing> from "./missing.txt"',
+      '+>|let selected = 1',
+      '  |let continued = 2',
+      'tick {',
+      '  -> let alternate = 3',
+      '}',
+    ].join('\n');
+    const resolved = await DetailedParser.resolveParseTextImports(source, root);
+    assert.doesNotMatch(resolved, /missing\.txt|alternate/);
+    assert.match(resolved, /let selected = 1\nlet continued = 2/);
+    const generated = await DetailedParser.transpileToFile(source, path.join(root, 'generated.ts'));
+    assert.match(generated, /selected = 1/);
+    assert.match(generated, /continued = 2/);
+    assert.doesNotMatch(generated, /alternate = 3|missing\.txt/);
+    const entry = path.join(root, 'parseTextC1.shaderdsl.ts');
+    await fs.writeFile(entry, '-> import <Missing> from "./missing.shaderdsl.ts"\n<Pre/>\n+> let chosen = 4\n<Pos>\n');
+    const outputs = await parseFiles([entry], { cwd: root });
+    assert.equal(outputs.length, 1);
+    const bundled = await fs.readFile(outputs[0].tsFile, 'utf8');
+    assert.match(bundled, /chosen = 4/);
+    assert.doesNotMatch(bundled, /missing\.shaderdsl\.ts/);
+  });
+});
+
 test('capsule implementation contributes object and function DSL handlers', async () => {
   await temporaryWorkspace(async (root) => {
     const { DetailedParser } = await loadParser(root);
@@ -52,6 +80,8 @@ test('capsule implementation contributes object and function DSL handlers', asyn
     assert.doesNotMatch(dynamic.vertexPositionCode(), /lodCameraXZ/);
     assert.match(dynamic.vertexPositionCode(), /texelFetch\(values, wrapped, 0\)/);
     assert.match(dynamic.vertexExtraUniforms(), /lodOriginXZ/);
+    assert.match(dynamic.vertexExtraUniforms(), /anchor \* minimumSteps/);
+    assert.match(dynamic.vertexExtraUniforms(), /lodMaxLOD/);
     assert.equal(dynamic.setGridRadius(128), dynamic);
     assert.equal(dynamic.totalSegments * 2, (257 * 2 + 2) * 256);
     assert.equal(dynamic.setRepeatRadius(500), dynamic);
@@ -69,7 +99,29 @@ test('capsule implementation contributes object and function DSL handlers', asyn
     assert.deepEqual(dynamic.priorityTexels[0], [512, 512]);
     assert.throws(() => new DynamicMesh({}, 'TexUnit20', 1024, 1024)
         .setGridRadius(128).setRepeatRadius(100).setPriorityTexels([[512, 512]]),
-        /Not enough LOD vertices/);
+        /needs more vertices/);
+    const capped = new DynamicMesh({}, 'TexUnit20', 1024, 1024)
+        .setGridRadius(512).setFullResolutionCells(120).setRepeatRadius(120)
+        .setPriorityTexels([[512, 512]]);
+    assert.equal(capped.setMaxLOD(512), capped);
+    assert.throws(() => capped.setMaxLOD(256), /Maximum LOD needs more vertices/);
+    assert.equal(capped.maxLOD, 512);
+    assert.throws(() => capped.setMaxLOD(-1), /Maximum LOD must be/);
+    assert.equal(capped.setMaxLOD(0), capped);
+    const outerSlots = 512 - 120;
+    const repeats = 120;
+    const minimumSteps = Math.ceil(1024 / 512);
+    let previousCenter = 0;
+    for (let repeat = 1; repeat <= repeats; repeat++) {
+      const density = repeat === repeats ? 1 :
+        (1 - Math.exp(-64 * repeat / repeats)) / (1 - Math.exp(-64));
+      const center = repeat * minimumSteps +
+        Math.floor((outerSlots - repeats * minimumSteps) * density);
+      assert.ok(center - previousCenter >= minimumSteps);
+      if (repeat > 80) assert.equal(center - previousCenter, minimumSteps);
+      previousCenter = center;
+    }
+    assert.equal(previousCenter, outerSlots);
     const outerCells = 512 - 128;
     const repeatedCenters = 100;
     const falloff = 64;
@@ -591,11 +643,13 @@ drawLineStrip -> [] size [8,8] {
 test('parseAll skips imported shared DSL files', async () => {
   await temporaryWorkspace(async (root) => {
     await fs.writeFile(path.join(root, 'parseTextC12.shaderdsl.ts'), 'program demo "demo" {\n}\n');
+    await fs.writeFile(path.join(root, 'parseTextC3.shaderdsl.ts'), '<Pre/>\nlet independent = 1\n<Pos>\n');
     await fs.writeFile(path.join(root, 'parseTextC1.shaderdsl.ts'),
-      '<Pre/>\nimport <Mid> from ./parseTextC12.shaderdsl.ts\n<Pos>\n');
+      '<Pre/>\n+> import <Mid> from ./parseTextC12.shaderdsl.ts\n->\nimport <Ignored> from ./parseTextC3.shaderdsl.ts\n<-\n<Pos>\n');
     const outputs = await parseAll({ cwd: root });
-    assert.equal(outputs.length, 1);
+    assert.equal(outputs.length, 2);
     assert.match(outputs[0].tsFile, /generatedParserC1\.ts$/);
+    assert.match(outputs[1].tsFile, /generatedParserC3\.ts$/);
   });
 });
 

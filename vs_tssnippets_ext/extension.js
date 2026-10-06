@@ -4,6 +4,7 @@ const { renderBackupPanel } = require("./backupPanel");
 const registrySyntax = require("./generated/registrySyntax.json");
 const { declarationAliases, inlineTagSpans, registryBindings, latestAssignment, staticValuePreview, stripComment } = require("./registryIntelligence");
 const { importedSnippetSymbols, invalidateSnippetImports, invalidateSnippetImportsForSource } = require("./snippetImports");
+const { analyzeToggleLines, choiceAtLine, selectToggleChoice } = require("./generated/toggleLines.cjs");
 
 const internalTextureObjects = registrySyntax.objects
     .filter((entry) => entry.tags.createsInternalTexture)
@@ -93,6 +94,64 @@ const branchDecoration = vscode.window.createTextEditorDecorationType({
     color: "#8b949e",
     fontStyle: "italic",
 });
+const inactiveToggleDecoration = vscode.window.createTextEditorDecorationType({ color: "#aeb7c2" });
+const activeToggleDecoration = vscode.window.createTextEditorDecorationType({ color: "#8bd9b2", fontWeight: "700" });
+const toggleEditsInFlight = new Set();
+
+async function applyToggleSelection(document, lineNumber, removeComment = false, allowDisable = true) {
+    const uri = document.uri.toString();
+    if (toggleEditsInFlight.has(uri)) return;
+    const before = document.getText().split(/\r?\n/);
+    const candidate = before.slice();
+    if (removeComment) candidate[lineNumber] = candidate[lineNumber].replace(/^(\s*)\/\/ ?/, "$1");
+    const choice = choiceAtLine(analyzeToggleLines(candidate.join("\n")).choices, lineNumber);
+    if (!choice) return;
+    const after = selectToggleChoice(candidate.join("\n"), lineNumber, allowDisable).split("\n");
+    const edit = new vscode.WorkspaceEdit();
+    for (let index = 0; index < before.length; index++) {
+        if (before[index] !== after[index]) {
+            edit.replace(document.uri, document.lineAt(index).range, after[index]);
+        }
+    }
+    if (!edit.size) return;
+    toggleEditsInFlight.add(uri);
+    try {
+        await vscode.workspace.applyEdit(edit);
+    } finally {
+        toggleEditsInFlight.delete(uri);
+    }
+}
+
+function handleToggleDocumentChange(event) {
+    if (event.document.languageId !== "parse-text-ts" || toggleEditsInFlight.has(event.document.uri.toString())) return;
+    for (const change of event.contentChanges) {
+        const lineNumber = change.range.start.line;
+        if (lineNumber >= event.document.lineCount) continue;
+        const line = event.document.lineAt(lineNumber).text;
+        if (/^\s*\/\/ ?(?:(?:\S+\s*)?[+-]>(?:\|)?|\|)/.test(line)) {
+            void applyToggleSelection(event.document, lineNumber, true);
+            return;
+        }
+        if (/^\s*(?:\S+\s*)?\+>/.test(line)) {
+            void applyToggleSelection(event.document, lineNumber, false, false);
+            return;
+        }
+    }
+}
+
+function toggleDefinition(document, position) {
+    const line = document.lineAt(position.line).text;
+    const { choices } = analyzeToggleLines(document.getText());
+    const choice = choiceAtLine(choices, position.line);
+    if (!choice || choice.start !== position.line || choice.enabled ||
+        position.character < choice.markerStart || position.character >= choice.markerEnd) return null;
+    const active = choices.find((item) => item.scope === choice.scope && item.enabled);
+    if (!active) {
+        vscode.window.showInformationMessage("This toggle group has no active alternative (+>).");
+        return null;
+    }
+    return new vscode.Location(document.uri, new vscode.Position(active.start, active.markerStart));
+}
 
 const derivedKeywordDecoration = vscode.window.createTextEditorDecorationType(DERIVED_STYLE);
 const derivedVariableDecoration = vscode.window.createTextEditorDecorationType(DERIVED_STYLE);
@@ -267,6 +326,8 @@ function activate(context) {
         ...rebindSquareDecorations,
         delimiterDecoration,
         branchDecoration,
+        inactiveToggleDecoration,
+        activeToggleDecoration,
         derivedKeywordDecoration,
         derivedVariableDecoration,
         implicitObjectNameDecoration,
@@ -307,6 +368,12 @@ function activate(context) {
             }
             await vscode.languages.setTextDocumentLanguage(editor.document, "parse-text-ts");
             refreshEditorDecorations(editor);
+        }),
+        vscode.commands.registerCommand("vsTSSnippets.selectToggleAlternative", async () => {
+            const editor = vscode.window.activeTextEditor;
+            if (editor?.document.languageId === "parse-text-ts") {
+                await applyToggleSelection(editor.document, editor.selection.active.line);
+            }
         }),
         vscode.commands.registerCommand("vsTSSnippets.toggleDrawBackupPreview", async () => {
             const editor = vscode.window.activeTextEditor;
@@ -492,7 +559,7 @@ function activate(context) {
         }),
         vscode.languages.registerDefinitionProvider(SHADERDSL_SELECTOR, {
             provideDefinition(document, position) {
-                return provideSnippetDefinition(document, position);
+                return toggleDefinition(document, position) || provideSnippetDefinition(document, position);
             },
         }),
         vscode.languages.registerReferenceProvider(SNIPPET_SELECTOR, {
@@ -571,6 +638,7 @@ function activate(context) {
         vscode.window.onDidChangeActiveTextEditor((editor) => refreshEditorDecorations(editor)),
         vscode.window.onDidChangeVisibleTextEditors(refreshAllEditors),
         vscode.workspace.onDidChangeTextDocument((event) => {
+            handleToggleDocumentChange(event);
             if (/\.snippet\.ts$/i.test(event.document.fileName || "")) invalidateSnippetImports(getProjectRootPath(event.document));
             else if (/\.[cm]?[jt]sx?$/i.test(event.document.fileName || "") && !/\.shaderdsl\.ts$/i.test(event.document.fileName || "")) {
                 invalidateSnippetImportsForSource(event.document.fileName);
@@ -3686,6 +3754,22 @@ function refreshEditorDecorations(editor) {
         for (const [name, ranges] of rangesByName) {
             editor.setDecorations(registryColorByName.get(name).decoration, ranges);
         }
+    }
+    if (isShaderDsl) {
+        const inactiveRanges = [];
+        const activeRanges = [];
+        for (const choice of analyzeToggleLines(text).choices) {
+            if (choice.enabled) {
+                activeRanges.push(new vscode.Range(choice.start, choice.markerStart,
+                    choice.start, choice.markerEnd));
+            } else {
+                for (let lineNumber = choice.start; lineNumber <= choice.end; lineNumber++) {
+                    inactiveRanges.push(editor.document.lineAt(lineNumber).range);
+                }
+            }
+        }
+        editor.setDecorations(inactiveToggleDecoration, inactiveRanges);
+        editor.setDecorations(activeToggleDecoration, activeRanges);
     }
 }
 

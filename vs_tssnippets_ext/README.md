@@ -16,6 +16,31 @@ Extensión local de VS Code para dos modos de lenguaje:
   - `Set Language Mode: Shader DSL`
 - definición y referencias básicas para ambos lenguajes
 
+## Alternativas del Shader DSL
+
+`->` desactiva una linea; `+>` la activa. Las alternativas sin nombre compiten
+solo dentro del mismo bloque `{ ... }`. Un nombre delante del marcador, como
+`comidas->`, agrupa alternativas de todo el documento.
+
+```text
+comidas+> let plato = "pez"
+comidas-> let plato = "carne"
+
+->|let primero = 1
+  |let segundo = 2
+
+->
+let variante = 3
+<-
+```
+
+El prefijo `|` agrega lineas al mismo grupo; `->` hasta `<-` agrupa un tramo.
+Sobre cualquiera de sus lineas, `Toggle Line Comment` selecciona esa
+alternativa usando el atajo configurado en VS Code. La unica alternativa de un
+grupo no se desactiva con ese atajo. El comando `Shader DSL: Select Toggle
+Alternative` hace lo mismo. Ctrl+clic sobre `->` salta al `+>` del grupo, o
+avisa si no hay ninguno.
+
 ## Probar en desarrollo
 
 1. Abre la carpeta `TFG_ChromatinPathCaracterizationAndSimulation` en VS Code.
@@ -35,7 +60,7 @@ npm run package
 Eso genera un `.vsix` con el nombre real del paquete y su versión, por ejemplo:
 
 ```text
-dnti-snippets-and-shader-dsl-ext-1.2.2-0.vsix
+dnti-snippets-and-shader-dsl-ext-1.2.2-12.vsix
 ```
 
 Luego puedes instalarlo con una de estas dos formas:
@@ -43,7 +68,7 @@ Luego puedes instalarlo con una de estas dos formas:
 ### Opción 1. Desde terminal
 
 ```powershell
-code --install-extension .\dnti-snippets-and-shader-dsl-ext-1.2.2-0.vsix
+code --install-extension .\dnti-snippets-and-shader-dsl-ext-1.2.2-12.vsix --force
 ```
 
 ### Opción 2. Desde VS Code

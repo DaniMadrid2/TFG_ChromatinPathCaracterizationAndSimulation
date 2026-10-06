@@ -13,6 +13,8 @@ test('builds registry highlighting and object rules from TypeScript modules', ()
         fs.mkdirSync(path.join(parser, 'registryModules'), { recursive: true });
         fs.mkdirSync(path.join(parser, 'objects'));
         fs.mkdirSync(path.join(parser, 'functions'));
+        fs.copyFileSync(path.join(__dirname, '..', 'src', 'dependencies', 'Code', 'WebGL', 'parser', 'toggleLines.ts'),
+            path.join(parser, 'toggleLines.ts'));
         fs.mkdirSync(path.join(extension, 'syntaxes'), { recursive: true });
         fs.writeFileSync(path.join(extension, 'syntaxes', 'parse-text-ts.tmLanguage.json'),
             JSON.stringify({ patterns: [{ name: 'support.function.parser-helpers.parse-text-ts', match: 'draw' }] }));

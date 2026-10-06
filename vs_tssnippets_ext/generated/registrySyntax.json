@@ -5,7 +5,7 @@
       "tags": {},
       "definition": {
         "file": "WebGL/parser/registryModules/capsules.ts",
-        "line": 547,
+        "line": 850,
         "character": 12
       },
       "className": "Axis3DGroup",
@@ -23,7 +23,7 @@
           "parameterTypes": [],
           "definition": {
             "file": "WebGL/parser/registryModules/capsules.ts",
-            "line": 919,
+            "line": 1222,
             "character": 4
           },
           "choices": []
@@ -38,7 +38,7 @@
           ],
           "definition": {
             "file": "WebGL/parser/registryModules/capsules.ts",
-            "line": 958,
+            "line": 1261,
             "character": 4
           },
           "choices": [
@@ -59,7 +59,7 @@
           ],
           "definition": {
             "file": "WebGL/parser/registryModules/capsules.ts",
-            "line": 987,
+            "line": 1290,
             "character": 4
           },
           "choices": [
@@ -80,7 +80,7 @@
           ],
           "definition": {
             "file": "WebGL/parser/registryModules/capsules.ts",
-            "line": 996,
+            "line": 1299,
             "character": 4
           },
           "choices": [
@@ -98,7 +98,7 @@
           ],
           "definition": {
             "file": "WebGL/parser/registryModules/capsules.ts",
-            "line": 1008,
+            "line": 1311,
             "character": 4
           },
           "choices": [
@@ -115,7 +115,7 @@
           ],
           "definition": {
             "file": "WebGL/parser/registryModules/capsules.ts",
-            "line": 1022,
+            "line": 1325,
             "character": 4
           },
           "choices": [
@@ -132,7 +132,7 @@
           ],
           "definition": {
             "file": "WebGL/parser/registryModules/capsules.ts",
-            "line": 1030,
+            "line": 1333,
             "character": 4
           },
           "choices": [
@@ -145,7 +145,7 @@
           "parameterTypes": [],
           "definition": {
             "file": "WebGL/parser/registryModules/capsules.ts",
-            "line": 1035,
+            "line": 1338,
             "character": 4
           },
           "choices": []
@@ -156,7 +156,7 @@
           "parameterTypes": [],
           "definition": {
             "file": "WebGL/parser/registryModules/capsules.ts",
-            "line": 1044,
+            "line": 1347,
             "character": 10
           },
           "choices": []
@@ -167,7 +167,7 @@
           "parameterTypes": [],
           "definition": {
             "file": "WebGL/parser/registryModules/capsules.ts",
-            "line": 1053,
+            "line": 1356,
             "character": 4
           },
           "choices": []
@@ -558,7 +558,7 @@
       },
       "definition": {
         "file": "WebGL/parser/registryModules/capsules.ts",
-        "line": 529,
+        "line": 832,
         "character": 12
       },
       "className": "DynamicSolidMeshRenderingProgram",
@@ -1537,7 +1537,7 @@
           ],
           "definition": {
             "file": "WebGL/parser/registryModules/capsules.ts",
-            "line": 329,
+            "line": 431,
             "character": 13
           },
           "choices": [
@@ -1575,13 +1575,13 @@
             "dy"
           ],
           "parameterTypes": [
-            null,
-            null
+            "number",
+            "number"
           ],
           "definition": {
             "file": "WebGL/parser/registryModules/capsules.ts",
-            "line": 151,
-            "character": 4
+            "line": 518,
+            "character": 13
           },
           "choices": [
             null,
@@ -1600,8 +1600,8 @@
           ],
           "definition": {
             "file": "WebGL/parser/registryModules/capsules.ts",
-            "line": 161,
-            "character": 4
+            "line": 525,
+            "character": 13
           },
           "choices": [
             null,
@@ -1682,7 +1682,7 @@
           "parameterTypes": [],
           "definition": {
             "file": "WebGL/parser/registryModules/capsules.ts",
-            "line": 363,
+            "line": 665,
             "character": 13
           },
           "choices": []
@@ -1705,7 +1705,7 @@
           ],
           "definition": {
             "file": "WebGL/parser/registryModules/capsules.ts",
-            "line": 369,
+            "line": 673,
             "character": 13
           },
           "choices": [
@@ -1775,7 +1775,7 @@
           ],
           "definition": {
             "file": "WebGL/parser/registryModules/capsules.ts",
-            "line": 334,
+            "line": 436,
             "character": 4
           },
           "choices": [
@@ -1792,10 +1792,81 @@
           ],
           "definition": {
             "file": "WebGL/parser/registryModules/capsules.ts",
-            "line": 345,
+            "line": 449,
             "character": 4
           },
           "choices": [
+            null
+          ]
+        },
+        {
+          "name": "setFullResolutionCells",
+          "parameters": [
+            "cells"
+          ],
+          "parameterTypes": [
+            "number"
+          ],
+          "definition": {
+            "file": "WebGL/parser/registryModules/capsules.ts",
+            "line": 459,
+            "character": 4
+          },
+          "choices": [
+            null
+          ]
+        },
+        {
+          "name": "setFalloff",
+          "parameters": [
+            "amount"
+          ],
+          "parameterTypes": [
+            "number"
+          ],
+          "definition": {
+            "file": "WebGL/parser/registryModules/capsules.ts",
+            "line": 469,
+            "character": 4
+          },
+          "choices": [
+            null
+          ]
+        },
+        {
+          "name": "setMaxLOD",
+          "parameters": [
+            "texelsPerCell"
+          ],
+          "parameterTypes": [
+            "number"
+          ],
+          "definition": {
+            "file": "WebGL/parser/registryModules/capsules.ts",
+            "line": 480,
+            "character": 4
+          },
+          "choices": [
+            null
+          ]
+        },
+        {
+          "name": "setLODOrigin",
+          "parameters": [
+            "x",
+            "z"
+          ],
+          "parameterTypes": [
+            "number",
+            "number"
+          ],
+          "definition": {
+            "file": "WebGL/parser/registryModules/capsules.ts",
+            "line": 500,
+            "character": 4
+          },
+          "choices": [
+            null,
             null
           ]
         },
@@ -1809,7 +1880,41 @@
           ],
           "definition": {
             "file": "WebGL/parser/registryModules/capsules.ts",
-            "line": 354,
+            "line": 510,
+            "character": 4
+          },
+          "choices": [
+            null
+          ]
+        },
+        {
+          "name": "setPriorityPoints",
+          "parameters": [
+            "points"
+          ],
+          "parameterTypes": [
+            "Array<[number, number]>"
+          ],
+          "definition": {
+            "file": "WebGL/parser/registryModules/capsules.ts",
+            "line": 533,
+            "character": 4
+          },
+          "choices": [
+            null
+          ]
+        },
+        {
+          "name": "setPriorityTexels",
+          "parameters": [
+            "points"
+          ],
+          "parameterTypes": [
+            "Array<[number, number]>"
+          ],
+          "definition": {
+            "file": "WebGL/parser/registryModules/capsules.ts",
+            "line": 541,
             "character": 4
           },
           "choices": [
@@ -1843,7 +1948,7 @@
       "tags": {},
       "definition": {
         "file": "WebGL/parser/registryModules/capsules.ts",
-        "line": 536,
+        "line": 839,
         "character": 12
       },
       "className": "MeshFillerProgram",
@@ -1861,7 +1966,7 @@
           ],
           "definition": {
             "file": "WebGL/parser/registryModules/capsules.ts",
-            "line": 1091,
+            "line": 1394,
             "character": 19
           },
           "choices": [
@@ -2818,7 +2923,7 @@
           ],
           "definition": {
             "file": "WebGL/parser/registryModules/capsules.ts",
-            "line": 1078,
+            "line": 1381,
             "character": 10
           },
           "choices": [
@@ -2831,7 +2936,7 @@
           "parameterTypes": [],
           "definition": {
             "file": "WebGL/parser/registryModules/capsules.ts",
-            "line": 1109,
+            "line": 1412,
             "character": 4
           },
           "choices": []
@@ -2848,7 +2953,7 @@
           ],
           "definition": {
             "file": "WebGL/parser/registryModules/capsules.ts",
-            "line": 1128,
+            "line": 1431,
             "character": 4
           },
           "choices": [
@@ -2862,7 +2967,7 @@
           "parameterTypes": [],
           "definition": {
             "file": "WebGL/parser/registryModules/capsules.ts",
-            "line": 1287,
+            "line": 1590,
             "character": 4
           },
           "choices": []
@@ -2895,7 +3000,7 @@
       },
       "definition": {
         "file": "WebGL/parser/registryModules/capsules.ts",
-        "line": 513,
+        "line": 816,
         "character": 12
       },
       "className": "MeshRenderingProgram",
@@ -4153,7 +4258,7 @@
       },
       "definition": {
         "file": "WebGL/parser/registryModules/capsules.ts",
-        "line": 521,
+        "line": 824,
         "character": 12
       },
       "className": "SolidMeshRenderingProgram",
@@ -5401,7 +5506,7 @@
       "tags": {},
       "definition": {
         "file": "WebGL/parser/registryModules/capsules.ts",
-        "line": 557,
+        "line": 860,
         "character": 12
       }
     },
@@ -5446,7 +5551,7 @@
       "tags": {},
       "definition": {
         "file": "WebGL/parser/registryModules/capsules.ts",
-        "line": 570,
+        "line": 873,
         "character": 12
       }
     },

@@ -11,6 +11,8 @@ test("backup panels render matrices, isolate selectors, and open the selected fi
     let completionProvider;
     let definitionProvider;
     let visibleEditorsChanged;
+    let documentChanged;
+    const messages = [];
     const disposable = () => ({ dispose() {} });
     const root = path.resolve("fixture");
     const vscode = {
@@ -23,6 +25,11 @@ test("backup panels render matrices, isolate selectors, and open the selected fi
         MarkdownString: class { constructor(value = "") { this.value = value; } appendMarkdown(value) { this.value += value; } },
         Position: class { constructor(line, character) { this.line = line; this.character = character; } },
         Range: class { constructor(start, end) { this.start = start; this.end = end; } },
+        WorkspaceEdit: class {
+            constructor() { this.replacements = []; }
+            replace(_uri, range, value) { this.replacements.push({ range, value }); }
+            get size() { return this.replacements.length; }
+        },
         DecorationRangeBehavior: { ClosedClosed: 0 },
         InlayHintKind: { Other: 0 },
         ViewColumn: { Beside: 2 },
@@ -40,6 +47,7 @@ test("backup panels render matrices, isolate selectors, and open the selected fi
             },
             async showTextDocument(document) { opened.push(document); },
             async showQuickPick(items) { return items.find((item) => item.label === "texA"); },
+            showInformationMessage(message) { messages.push(message); },
         },
         languages: new Proxy({}, { get: (_, name) => name === "registerHoverProvider"
             ? (_, provider) => { hoverProvider = provider; return disposable(); }
@@ -53,9 +61,13 @@ test("backup panels render matrices, isolate selectors, and open the selected fi
             findFiles: async () => [],
             getWorkspaceFolder: () => ({ uri: { fsPath: root } }),
             openTextDocument: async (uri) => uri,
+            async applyEdit(edit) {
+                for (const { range, value } of edit.replacements) toggleLines[range.start.line] = value;
+                return true;
+            },
             textDocuments: [],
             registerTextDocumentContentProvider: disposable,
-            onDidChangeTextDocument: disposable,
+            onDidChangeTextDocument(callback) { documentChanged = callback; return disposable(); },
             onDidCloseTextDocument: disposable,
             onDidCreateFiles: disposable,
             onDidDeleteFiles: disposable,
@@ -84,6 +96,7 @@ test("backup panels render matrices, isolate selectors, and open the selected fi
             : files[path.basename(file).match(/^draw(?:Triangles|Lines)_(.+?)_\d+\.txt$/)?.[1]] || ""; },
     };
     const source = "use demo\ndrawTriangles -> [texA, texB] size [2,1] {\n  backUp: /parseTextC23/tau/\n}";
+    const toggleLines = ['tick {', '  -> let choice = 1', '  +> let choice = 2', '}'];
     const lines = source.split("\n");
     const document = {
         languageId: "parse-text-ts", fileName: path.join(root, "parseTextC23.shaderdsl.ts"),
@@ -181,6 +194,32 @@ test("backup panels render matrices, isolate selectors, and open the selected fi
         assert.ok(modeItems.some((item) => item.label === 'TRIANGLE_STRIP' && item.insertText === '"TRIANGLE_STRIP"'));
         const drawLocation = await definitionProvider.provideDefinition(registryDoc, { line: 7, character: registryLines[7].indexOf('draw') + 2 });
         assert.match(drawLocation.uri.fsPath, /registrySources[\\/]WebGL[\\/]parser[\\/]registryModules[\\/]capsules\.ts$/);
+        const toggleDoc = {
+            ...registryDoc,
+            uri: vscode.Uri.file(path.join(root, 'toggle.shaderdsl.ts')),
+            getText() { return toggleLines.join('\n'); },
+            lineAt(line) { return { text: toggleLines[line], range: {
+                start: new vscode.Position(line, 0), end: new vscode.Position(line, toggleLines[line].length),
+            } }; },
+        };
+        const toggleLocation = definitionProvider.provideDefinition(toggleDoc, { line: 1, character: 3 });
+        assert.equal(toggleLocation.range.line, 2);
+        toggleLines[1] = '  // -> let choice = 1';
+        documentChanged({ document: toggleDoc, contentChanges: [{ range: { start: { line: 1 } }, text: '// ' }] });
+        await new Promise(setImmediate);
+        assert.equal(toggleLines[1], '  +> let choice = 1');
+        assert.equal(toggleLines[2], '  -> let choice = 2');
+        toggleLines[2] = '  +> let choice = 2';
+        documentChanged({ document: toggleDoc, contentChanges: [{ range: { start: { line: 2 } }, text: '+' }] });
+        await new Promise(setImmediate);
+        assert.equal(toggleLines[1], '  -> let choice = 1');
+        toggleLines[2] = '  -> let choice = 2';
+        assert.equal(await definitionProvider.provideDefinition(toggleDoc, { line: 1, character: 3 }), null);
+        assert.match(messages.at(-1), /no active alternative/);
+        toggleLines.splice(0, toggleLines.length, '  // +> let only = 1');
+        documentChanged({ document: toggleDoc, contentChanges: [{ range: { start: { line: 0 } }, text: '// ' }] });
+        await new Promise(setImmediate);
+        assert.equal(toggleLines[0], '  +> let only = 1');
         const unitHover = hoverProvider.provideHover(registryDoc, { line: 0, character: registryLines[0].indexOf('TexUnit20') + 2 });
         assert.match(unitHover.contents.value, /positionTexture/);
         const aliasHover = hoverProvider.provideHover(registryDoc, { line: 3, character: registryLines[3].length - 2 });

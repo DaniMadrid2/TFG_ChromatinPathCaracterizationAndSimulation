@@ -1,7 +1,7 @@
 {
   "name": "dnti-snippets-and-shader-dsl-ext",
   "displayName": "DNTI TS Snippets and Shader DSL language support",
-  "version": "1.2.2-11",
+  "version": "1.2.2-12",
   "description": "VS Code language mode for .snippet.ts and .shaderdsl.ts files syntax highlighting.",
   "publisher": "danimadrid2",
   "main": "./extension.js",
@@ -17,9 +17,9 @@
   ],
   "scripts": {
     "build:syntax": "node build-registry-syntax.cjs",
-    "test": "npm run build:syntax && node --test backupHover.test.js extensionHover.test.js registrySyntax.test.js registryIntelligence.test.js snippetImports.test.js",
+    "test": "npm run build:syntax && node --test backupHover.test.js extensionHover.test.js registrySyntax.test.js registryIntelligence.test.js snippetImports.test.js toggleLines.test.js",
     "package": "npm run build:syntax && vsce package --allow-missing-repository",
-    "install-vsix": "code --install-extension .\\dnti-snippets-and-shader-dsl-ext-1.2.2-0.vsix"
+    "install-vsix": "code --install-extension .\\dnti-snippets-and-shader-dsl-ext-1.2.2-12.vsix --force"
   },
   "contributes": {
     "commands": [
@@ -30,6 +30,10 @@
       {
         "command": "vsTSSnippets.setShaderDslLanguage",
         "title": "Set Language Mode: Shader DSL"
+      },
+      {
+        "command": "vsTSSnippets.selectToggleAlternative",
+        "title": "Shader DSL: Select Toggle Alternative"
       },
       {
         "command": "vsTSSnippets.toggleDrawBackupPreview",

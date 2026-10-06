@@ -3,6 +3,7 @@ import { detectUse as detectBackupUse } from "../runtime/BackupRuntime.js";
 import { detectUse as detectRuntimeLetUse } from "../runtime/RuntimeLetSource.js";
 import { detectUse as detectShaderFiltersUse } from "../runtime/ShaderFilterSet.js";
 import type { RuntimeFeature, RuntimeFeatureRegistration } from "./runtimeFeature.js";
+import { analyzeToggleLines } from "./toggleLines.js";
 import {Camera2D, createCanvas, createLayer, GameObject, ImgLoader, ModernCtx, Scene,MouseManager, ListenerManager, openFullscreen, keypress, mousepos, mouseclick, KeyManager, W, H, MCTX} from "../../Game/Game.js";
 import { Matrix2D, MatrixStack2D, Vector2D, Vector3D } from "../../Matrix/Matrix.js";
 import {loadShaders, loadShadersFromString, __prepareMathFunction, __mountGlobalBlocks} 
@@ -1685,6 +1686,10 @@ export class DetailedParser {
         await fs.writeFile(filePath, content, "utf8");
     }
 
+    static normalizeToggleLines(source: string): string {
+        return analyzeToggleLines(source).output;
+    }
+
     static async resolveParseTextImports(source: string, baseDir?: string, seen = new Set<string>()): Promise<string> {
         const req = DetailedParser.getNodeRequire();
         const pathMod = req ? req("path") : await import("node:path");
@@ -1696,7 +1701,7 @@ export class DetailedParser {
             }
         })();
         const rootDir = baseDir || cwd;
-        const lines = source.split(/\r?\n/);
+        const lines = DetailedParser.normalizeToggleLines(source).split(/\r?\n/);
         const out: string[] = [];
 
         for (const line of lines) {

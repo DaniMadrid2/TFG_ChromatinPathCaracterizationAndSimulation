@@ -143,12 +143,12 @@ function directive(line) {
   return { pattern: new RegExp(match[1], match[2]), replacement };
 }
 
-async function resolveDsl(file, inherited = [], ancestors = new Set()) {
+async function resolveDsl(file, inherited = [], ancestors = new Set(), normalizeToggles = (source) => source) {
   const absolute = path.resolve(file);
   if (ancestors.has(absolute)) throw new Error(`Circular Shader DSL import: ${absolute}`);
   const nextAncestors = new Set(ancestors);
   nextAncestors.add(absolute);
-  const source = (await fs.readFile(absolute, 'utf8')).replace(/^\uFEFF/, '');
+  const source = normalizeToggles((await fs.readFile(absolute, 'utf8')).replace(/^\uFEFF/, ''));
   const lines = source.split(/\r?\n/);
   const active = [...inherited, ...lines.map(directive).filter(Boolean)];
   const output = [];
@@ -157,7 +157,7 @@ async function resolveDsl(file, inherited = [], ancestors = new Set()) {
     const imported = line.match(/^\s*import\s*<([A-Za-z_][\w-]*)>\s+from\s+(.+?)\s*$/);
     if (imported && /\.shaderdsl\.ts["']?$/.test(imported[2])) {
       const target = imported[2].trim().replace(/^["']|["']$/g, '');
-      const importedSource = await resolveDsl(path.resolve(path.dirname(absolute), target), active, nextAncestors);
+      const importedSource = await resolveDsl(path.resolve(path.dirname(absolute), target), active, nextAncestors, normalizeToggles);
       output.push(importedSource.split(/\r?\n/).filter((importedLine) =>
         !/^\s*<(?:Pre\/?|Pos\/?)>\s*$/.test(importedLine)).join('\n'));
       continue;
@@ -276,7 +276,7 @@ function applySnippets(source, snippets, config = {}, id = '') {
 async function parseFiles(files, options = {}) {
   const cwd = path.resolve(options.cwd || process.cwd());
   const outDir = path.resolve(cwd, options.outDir || 'generated');
-  const { DetailedParser, localParser, localMan } = await loadParser(cwd);
+  const { DetailedParser, localParser, localMan } = options.parserBundle || await loadParser(cwd);
   const configPath = path.join(cwd, 'shaderdsl.config.json');
   const config = await exists(configPath) ? JSON.parse(await fs.readFile(configPath, 'utf8')) : {};
   const projectModules = await loadProjectModules(cwd, DetailedParser);
@@ -287,7 +287,8 @@ async function parseFiles(files, options = {}) {
     if (!dslSuffix.test(fileName)) throw new Error(`Expected *.shaderdsl.ts: ${input}`);
     const match = dslName.exec(fileName);
     const id = match ? match[1] : fileName.replace(dslSuffix, '').replace(/[^A-Za-z0-9_-]/g, '_');
-    const source = await resolveDsl(absolute);
+    const source = await resolveDsl(absolute, [], new Set(), (text) =>
+      typeof DetailedParser.normalizeToggleLines === 'function' ? DetailedParser.normalizeToggleLines(text) : text);
     const basename = `generatedParser${id}`;
     const tsFile = path.join(outDir, basename + '.ts');
     const jsFile = path.join(outDir, basename + '.js');
@@ -315,6 +316,7 @@ async function parseFiles(files, options = {}) {
 
 async function parseAll(options = {}) {
   const cwd = path.resolve(options.cwd || process.cwd());
+  const parserBundle = await loadParser(cwd);
   const files = (await fs.readdir(cwd, { withFileTypes: true }))
     .filter((entry) => entry.isFile() && dslSuffix.test(entry.name))
     .map((entry) => entry.name)
@@ -322,14 +324,16 @@ async function parseAll(options = {}) {
   if (!files.length) throw new Error(`No *.shaderdsl.ts files found in ${cwd}`);
   const imported = new Set();
   for (const file of files) {
-    const source = await fs.readFile(path.join(cwd, file), 'utf8');
+    const raw = await fs.readFile(path.join(cwd, file), 'utf8');
+    const source = typeof parserBundle.DetailedParser.normalizeToggleLines === 'function'
+      ? parserBundle.DetailedParser.normalizeToggleLines(raw) : raw;
     for (const match of source.matchAll(/^\s*import\s*<[^>]+>\s+from\s+(.+?\.shaderdsl\.ts)\s*$/gm)) {
       imported.add(path.resolve(cwd, match[1].trim().replace(/^["']|["']$/g, '')));
     }
   }
   const entryPoints = files.filter((file) => !imported.has(path.join(cwd, file)));
   if (!entryPoints.length) throw new Error(`No top-level Shader DSL entry points found in ${cwd}`);
-  return parseFiles(entryPoints, { ...options, cwd, outDir: options.outDir || 'generated' });
+  return parseFiles(entryPoints, { ...options, cwd, outDir: options.outDir || 'generated', parserBundle });
 }
 
 module.exports = { parseFiles, parseAll, resolveDsl, loadParser, loadProjectModules };

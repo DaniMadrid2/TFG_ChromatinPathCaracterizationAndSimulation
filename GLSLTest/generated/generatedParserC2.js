@@ -4609,6 +4609,7 @@ var DynamicSolidMeshRenderingProgram = class extends SolidMeshRenderingProgram {
     __publicField(this, "repeatRadius", 100);
     __publicField(this, "fullResolutionCells", 48);
     __publicField(this, "falloff", 2);
+    __publicField(this, "maxLOD", 0);
     __publicField(this, "lodOriginXZ", [0, 0]);
     __publicField(this, "priorityWorldPoints", []);
     __publicField(this, "priorityTexels", []);
@@ -4621,6 +4622,7 @@ var DynamicSolidMeshRenderingProgram = class extends SolidMeshRenderingProgram {
                 uniform float lodRepeatRadius;
                 uniform int lodFullResolutionCells;
                 uniform float lodFalloff;
+                uniform float lodMaxLOD;
                 uniform vec2 lodOriginXZ;
                 uniform int lodPriorityCount;
                 uniform vec4 lodPriorityPoints[16];
@@ -4636,13 +4638,14 @@ var DynamicSolidMeshRenderingProgram = class extends SolidMeshRenderingProgram {
                     return negative ? lodPeriodicZNegative[slot] : lodPeriodicZPositive[slot];
                 }
 
-                int lodAnchorIndex(int anchor, int total, int outerCells) {
+                int lodAnchorIndex(int anchor, int total, int outerCells, int minimumSteps) {
                     if (anchor == 0) return 0;
                     if (anchor == total) return outerCells;
                     float t = float(anchor) / float(total);
                     float density = lodFalloff < 0.0001 ? t :
                         (1.0 - exp(-lodFalloff * t)) / (1.0 - exp(-lodFalloff));
-                    return anchor + int(floor(float(outerCells - total) * density));
+                    return anchor * minimumSteps +
+                        int(floor(float(outerCells - total * minimumSteps) * density));
                 }
 
                 float lodAnchorDistance(int anchor, int axis, bool negative, int count,
@@ -4668,7 +4671,7 @@ var DynamicSolidMeshRenderingProgram = class extends SolidMeshRenderingProgram {
                         float fullResolutionDistance = float(lodFullResolutionCells) * cell;
                         float t = float(magnitude - lodFullResolutionCells) /
                                   float(lodGridRadius - lodFullResolutionCells);
-                        float curve = lodFalloff < 0.0001 ? t :
+                        float curve = lodMaxLOD > 0.0 || lodFalloff < 0.0001 ? t :
                             (exp(lodFalloff * t) - 1.0) / (exp(lodFalloff) - 1.0);
                         float distance = fullResolutionDistance + curve *
                             max(tileSize * repeatRadius - fullResolutionDistance, 0.0);
@@ -4684,20 +4687,22 @@ var DynamicSolidMeshRenderingProgram = class extends SolidMeshRenderingProgram {
                     int zeroCount = lodPhase(axis, negative, 0) < 0.0001 * cell ? 1 : 0;
                     int total = (tiles - 1) * count + nearCount + zeroCount;
                     int outerCells = lodGridRadius - lodFullResolutionCells;
+                    int minimumSteps = lodMaxLOD > 0.0 ?
+                        max(1, int(ceil(float(axis == 0 ? msdLength : msdCount) / lodMaxLOD))) : 1;
                     int outer = magnitude - lodFullResolutionCells;
                     int low = 0;
                     int high = total;
                     for (int step = 0; step < 12; step++) {
                         if (low >= high) break;
                         int mid = (low + high + 1) / 2;
-                        if (lodAnchorIndex(mid, total, outerCells) <= outer) low = mid;
+                        if (lodAnchorIndex(mid, total, outerCells, minimumSteps) <= outer) low = mid;
                         else high = mid - 1;
                     }
                     float distance = lodAnchorDistance(low, axis, negative, count, nearCount,
                                                        tileSize, fullResolutionDistance);
                     if (low < total) {
-                        int firstIndex = lodAnchorIndex(low, total, outerCells);
-                        int nextIndex = lodAnchorIndex(low + 1, total, outerCells);
+                        int firstIndex = lodAnchorIndex(low, total, outerCells, minimumSteps);
+                        int nextIndex = lodAnchorIndex(low + 1, total, outerCells, minimumSteps);
                         float nextDistance = lodAnchorDistance(low + 1, axis, negative,
                                                                  count, nearCount, tileSize,
                                                                  fullResolutionDistance);
@@ -4783,6 +4788,25 @@ var DynamicSolidMeshRenderingProgram = class extends SolidMeshRenderingProgram {
     }
     return this.updatePriorityPoints();
   }
+  /** Cap the distance between outer vertices, in texture texels; 0 disables the cap. */
+  setMaxLOD(texelsPerCell) {
+    if (!Number.isFinite(texelsPerCell) || texelsPerCell < 0) {
+      throw new Error("Maximum LOD must be a non-negative number of texels per cell");
+    }
+    const previous = this.maxLOD;
+    this.maxLOD = texelsPerCell;
+    try {
+      this.updatePriorityPoints();
+    } catch (error) {
+      this.maxLOD = previous;
+      throw error;
+    }
+    if (this.program) {
+      this.use();
+      this.uFloat("lodMaxLOD").set(this.maxLOD);
+    }
+    return this;
+  }
   /** Set the LOD center explicitly; texture-priority anchors remain fixed in world space. */
   setLODOrigin(x, z) {
     this.lodOriginXZ = [x, z];
@@ -4852,6 +4876,14 @@ var DynamicSolidMeshRenderingProgram = class extends SolidMeshRenderingProgram {
   updatePriorityPoints() {
     const cellX = Math.max(Math.abs(this.dx), 1e-6);
     const cellZ = Math.max(Math.abs(this.dy), 1e-6);
+    if (this.maxLOD > 0 && !this.priorityTexels.length) {
+      for (const size of [this.w, this.h]) {
+        const outerCells = this.gridRadius - this.fullResolutionCells;
+        if ((size * this.repeatRadius - this.fullResolutionCells) / outerCells > this.maxLOD) {
+          throw new Error("Maximum LOD needs more vertices; increase grid radius, reduce full-resolution cells or repeat radius, or raise max LOD");
+        }
+      }
+    }
     if (this.priorityTexels.length) {
       const phaseArrays = [];
       const counts = [];
@@ -4871,8 +4903,9 @@ var DynamicSolidMeshRenderingProgram = class extends SolidMeshRenderingProgram {
           const nearCount = phases.filter((phase) => phase > this.fullResolutionCells * cell).length;
           const tiles = Math.max(1, Math.floor(this.repeatRadius));
           const total = (tiles - 1) * phases.length + nearCount + (phases[0] === 0 ? 1 : 0);
-          if (total > this.gridRadius - this.fullResolutionCells) {
-            throw new Error("Not enough LOD vertices for every repeated priority texel; increase grid radius or reduce repeat radius");
+          const minimumSteps = this.maxLOD > 0 ? Math.max(1, Math.ceil(size / this.maxLOD)) : 1;
+          if (total * minimumSteps > this.gridRadius - this.fullResolutionCells) {
+            throw new Error("Maximum LOD needs more vertices for repeated priority texels; increase grid radius, reduce full-resolution cells or repeat radius, or raise max LOD");
           }
           const values = new Float32Array(16);
           values.set(phases);
@@ -4928,7 +4961,7 @@ var DynamicSolidMeshRenderingProgram = class extends SolidMeshRenderingProgram {
   }
   initUniforms() {
     super.initUniforms();
-    return this.setGridRadius(this.gridRadius).setRepeatRadius(this.repeatRadius).setFullResolutionCells(this.fullResolutionCells).setFalloff(this.falloff).setLODOrigin(this.lodOriginXZ[0], this.lodOriginXZ[1]);
+    return this.setGridRadius(this.gridRadius).setRepeatRadius(this.repeatRadius).setFullResolutionCells(this.fullResolutionCells).setFalloff(this.falloff).setMaxLOD(this.maxLOD).setLODOrigin(this.lodOriginXZ[0], this.lodOriginXZ[1]);
   }
   draw(x = 0, y = 0, w = 1080, h = 720, camera) {
     this.use();
@@ -7591,19 +7624,20 @@ var BackupRuntime = class {
   var time = 0;
   ;
   meshProgram.initUniforms().setDXDY(0.16 * scaleFactor, 0.16 * scaleFactor).setYScale(scaleFactor).setPerXPerY(0.5, 0.5).setColorHueScale(0.223).smoothColor(true).setRepeat(true);
-  meshProgram.setGridRadius(512).setFullResolutionCells(120).setFalloff(1640).setRepeatRadius(120);
-  meshProgram.setLODOrigin(0, 0).setPriorityTexels([[512, 512]]);
+  meshProgram.setGridRadius(512).setFullResolutionCells(120).setFalloff(1640 * 4 * 16 * 16).setRepeatRadius(30);
+  meshProgram.setLODOrigin(0, 0).setPriorityTexels([[512, 512]]).setMaxLOD(128);
   var surface;
   (() => {
     surface = lastUsedProgram?.createIdealTexture?.("TexUnit20");
     if (surface) {
-      surface.lastPreparedFunc = "(x, y) => {let dx = (x - 512) * 0.05;let dy = (y - 512) * 0.05;let r = Math.sqrt(dx * dx + dy * dy);if (r === 0) return 10; return (cos(r + {time}) / r) * 15;}";
+      surface.lastPreparedFunc = "(x, y) => { let dx1 = (x - 300) * 0.05; let dy1 = (y - 300) * 0.05; let r1 = Math.sqrt(dx1*dx1 + dy1*dy1); let dx2 = (x - 700) * 0.04; let dy2 = (y - 600) * 0.04; let r2 = Math.sqrt(dx2*dx2 + dy2*dy2); return (sin(r1 - {time} * 3) / (1 + r1 * 0.1) + cos(r2 - {time} * 4) / (1 + r2 * 0.08)) * 8; }";
       surface.meshContext = {
         get time() {
           return typeof time !== "undefined" ? time : globalThis.time;
         }
       };
     }
+    surface?.bind?.();
   })();
   var camera3D = new Camera3D(new Vector3D2(0, 4, 12));
   camera3D.direction = new Vector3D2(0, -0.3, -1);

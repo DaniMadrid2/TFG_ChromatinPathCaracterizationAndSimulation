@@ -52,6 +52,15 @@ dnti_shaderdsl runserver
 `parse .` (o `parseAll`) detecta los archivos `parseText<ID>.shaderdsl.ts`
 del directorio actual y omite los que solo se importan como DSL compartido.
 
+En un `.shaderdsl.ts`, `-> codigo` descarta una alternativa y `+> codigo`
+la incluye. Las alternativas sin nombre compiten dentro del bloque `{ ... }`
+que las contiene; `nombre-> codigo` y `nombre+> codigo` compiten en todo el
+documento. `->| codigo` seguido de lineas `| codigo` forma una alternativa
+de varias lineas. Para un tramo sin prefijo en cada linea, usa `->` o `+>`
+en una linea y cierra con `<-`. El parser omite las importaciones desactivadas.
+La extension permite seleccionar con Toggle Line Comment y navegar desde
+`->` hasta el `+>` del mismo grupo.
+
 `--watch` regenera al cambiar cualquier `.ts` del proyecto, incluidos snippets
 y librerias locales; excluye `generated/`, `dist/`, `node_modules/` y backups.
 `--serve [port]` sirve el proyecto despues del primer parseo. Su puerto
@@ -182,6 +191,8 @@ la malla solida en esta clase. El color se interpola en el fragment por defecto;
 `dynamicSolidMeshProgram.initUniforms().setGridRadius(128).setFullResolutionCells(64).setFalloff(2).setRepeatRadius(100)`
 
 `setFullResolutionCells(n)` keeps native texel spacing for `n` cells in each direction around the LOD center. Beyond that, `setFalloff(0)` distributes remaining vertices linearly; higher values (clamped to 64) keep more detail near the camera before spacing grows. `setRepeatRadius(r)` sets outer reach in texture tiles, not vertex count. Increasing `setGridRadius` adds vertices and GPU cost.
+
+`setMaxLOD(n)` limits outer vertex spacing to at most `n` texture texels. For example, `.setPriorityTexels([[512,512]]).setMaxLOD(512)` keeps the center texel of every repeated tile and gives each tile at least two outer grid intervals per axis; after reaching that spacing, distant tiles stop losing resolution. `setMaxLOD(0)` disables the limit. The native-resolution center remains at one texel per cell. A fixed grid cannot cover arbitrarily many repeats at an arbitrarily fine limit: if the requested spacing needs more vertices than `setGridRadius` supplies, the method throws with guidance to increase the grid or reduce the covered area. Call `setMaxLOD` after `setPriorityTexels` when using both.
 
 `draw(0,0,640,480,{camera3D})` mueve la vista. Si quieres que la resolucion
 alta siga a la camara, llama a `setCameraPosition(camera3D.position)` en `tick`;
