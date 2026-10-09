@@ -1,0 +1,209 @@
+Perfecto — vamos a convertir esa idea en una **receta práctica, matemática y programable** para estimar
+[
+V(x,y)=V_x(x)+V_y(y)+V_{xy}(x,y)+\sum_{k=1}^{K} V_{u_k}(x-a_k y)
+]
+a partir de dos series observadas (x[n],y[n]). Te doy:
+
+1. la formulación matemática (cómo cada término contribuye al **drift** y qué hay que estimar),
+2. una estrategia para construir las matrices de diseño (bases) y resolver para los coeficientes,
+3. variantes prácticas (lineal vs no lineal; regularización; AFP/tiempo finito) y
+4. comprobaciones y advertencias.
+
+---
+
+## 1) Relación potencial ↔ drift (y difusión)
+
+Si la dinámica es overdamped (ruido aditivo o débiles correlaciones):
+
+[
+\dot{\mathbf r} = -\nabla V(x,y) + \text{ruido}
+\quad\text{o en componentes}\quad
+\begin{cases}
+\dot x = -\partial_x V(x,y) + \eta_x(t) \
+\dot y = -\partial_y V(x,y) + \eta_y(t)
+\end{cases}
+]
+
+Si (V) se descompone en suma de términos, la **linealidad del gradiente** implica que el drift es suma de contribuciones de cada término. Por tanto basta modelar cada término potencial y sus derivadas parciales.
+
+Para cada familia de términos:
+
+* (V_x(x)=\sum_j c^{(x)}_j \phi^{(x)}_j(x)) → contribución al drift:
+  [
+  f_x^{(x)}(x)= -\sum_j c^{(x)}_j \phi_j^{(x)'}(x),\qquad f_y^{(x)}(x)=0
+  ]
+* (V_y(y)=\sum_j c^{(y)}_j \phi^{(y)}_j(y)):
+  [
+  f_y^{(y)}(y)= -\sum_j c^{(y)}_j \phi_j^{(y)'}(y),\qquad f_x^{(y)}(y)=0
+  ]
+* (V_{xy}(x,y)=\sum_j c^{(xy)}_j \psi_j(x,y)) (por ejemplo productos de bases) → derivadas:
+  [
+  f_x^{(xy)}(x,y)= -\sum_j c^{(xy)}_j \partial_x \psi_j(x,y),\quad
+  f_y^{(xy)}(x,y)= -\sum_j c^{(xy)}_j \partial_y \psi_j(x,y)
+  ]
+* Para términos (V_{u_k}(u_k)) con (u_k = x - a_k y), si usamos una base (\chi^{(k)}*j(u)):
+  [
+  V*{u_k}(x,y)=\sum_j c^{(k)}_j \chi^{(k)}_j(u_k)
+  ]
+  entonces por la regla de la cadena
+  [
+  \partial_x \chi^{(k)}_j(u_k) = \chi^{(k)'}_j(u_k),\qquad
+  \partial_y \chi^{(k)}_j(u_k) = -a_k ,\chi^{(k)'}_j(u_k),
+  ]
+  y las contribuciones al drift son
+  [
+  f_x^{(k)}(x,y)= -\sum_j c^{(k)}_j \chi^{(k)'}_j(u_k),\quad
+  f_y^{(k)}(x,y)= +\sum_j c^{(k)}_j a_k, \chi^{(k)'}_j(u_k).
+  ]
+
+**Conclusión importante:** si eliges bases para los potenciales ({\phi,\psi,\chi}), las columnas de la *matriz de diseño para el drift* son las **derivadas de esas bases** evaluadas en los puntos observados.
+
+---
+
+## 2) Estrategia práctica — construir el sistema lineal
+
+### Paso A — elegir bases
+
+* Para (V_x(x)), elige una base ({\phi^{(x)}_j(x)}): polinomios, splines, gaussianas RBF, etc.
+* Para (V_y(y)), base ({\phi^{(y)}_j(y)}).
+* Para (V_{xy}(x,y)), base de productos ({\psi_{mn}(x,y)=\phi^{(x)}_m(x)\phi^{(y)}_n(y)}) o términos específicos (x y, x^2 y, ...).
+* Para cada (k), para (V_{u_k}) usar base ({\chi^{(k)}_j(u)}) definida en (u=x-a_k y) (polinomios en (u) o RBF centradas en esa combinación).
+
+### Paso B — evaluación en datos
+
+Para cada observación temporal (n) (o para cada bin/centro de malla si trabajas en bins):
+
+* Evalúa todas las derivadas de las funciones base:
+
+  * por ejemplo, columna para (\phi^{(x)}_j) en la ecuación de (f_x) es (-\phi^{(x)'}_j(x[n])).
+  * para la misma (\phi^{(x)}_j) no tienes columna en la ecuación de (f_y).
+  * para una base (\chi^{(k)}_j) en término (u_k):
+
+    * columna en (f_x): (-\chi^{(k)'}_j(u_k[n]))
+    * columna en (f_y): (+a_k ,\chi^{(k)'}_j(u_k[n]))
+
+Organizas dos matrices de diseño (o una bloqueada):
+
+* ( \mathbf{F}_x = \mathbf{D}_x , \mathbf{c} ) donde (\mathbf{D}_x) tiene columnas = (-\partial_x) de todas las bases evaluadas,
+* ( \mathbf{F}_y = \mathbf{D}_y , \mathbf{c} ) donde (\mathbf{D}_y) tiene columnas = (-\partial_y) de todas las bases evaluadas.
+
+Aquí (\mathbf{c}) es el vector columna que concatena todos los coeficientes (c^{(x)}, c^{(y)}, c^{(xy)}, c^{(k)}).
+
+### Paso C — estimar los drifts observados (KM) y formar el problema
+
+Estimaciones empíricas condicionales (Kramers–Moyal) para cada punto/bin (usar tu `fast_KM_avg` o binned estimators):
+
+* ( \hat f_x(x_i,y_i) ) y ( \hat f_y(x_i,y_i) ) (o bien si reduces a 1D en (u) usas marginals).
+  Luego la ecuación lineal aproximada por mínimos cuadrados ponderados:
+
+[
+\min_{\mathbf{c}} \sum_{n} w_x[n] \big( (\mathbf{D}_x \mathbf{c})_n - \hat f_x[n] \big)^2
+
+* \sum_{n} w_y[n] \big( (\mathbf{D}_y \mathbf{c})_n - \hat f_y[n] \big)^2
+  ]
+
+o en forma matricial (pesos en (W)):
+[
+\min_{\mathbf{c}} | W_x^{1/2} (\mathbf{D}_x \mathbf{c} - \hat f_x) |_2^2
+
+* | W_y^{1/2} (\mathbf{D}_y \mathbf{c} - \hat f_y) |_2^2.
+  ]
+
+Si (\mathbf{D} = \begin{bmatrix}W_x^{1/2}\mathbf{D}_x \ W_y^{1/2}\mathbf{D}_y \end{bmatrix}) y (\mathbf{b} = \begin{bmatrix}W_x^{1/2}\hat f_x \ W_y^{1/2}\hat f_y \end{bmatrix}), es un problema lineal (\min | \mathbf{D} \mathbf{c} - \mathbf{b} |_2^2).
+
+**Esto es directo si modelas el drift linealmente en los coeficientes (sí lo es).**
+
+---
+
+## 3) Difusión: cómo incluirla
+
+* Si el término de difusión (a(x,y)) lo modelas **independientemente** (como combinación lineal de bases), puedes estimarlo igual que el drift: construir (\mathbf{D}_a) con bases y solucionar otra regresión para (a).
+* En tu código previo, modelabas (a = 0.5 (s(x))^2). Eso hace que la relación sea **no lineal** en coeficientes si (s) es lineal en (\mathbf{c}). Dos opciones:
+
+  * **Modela directamente (a(x,y)) linealmente**: (a = \sum d_j \phi_j). Entonces se mantiene lineal.
+  * **Iteración**: inicializa (a), resuelve coeficientes del drift, reestima (a), etc. (alternating).
+  * **Optimización no lineal**: minimizar coste total (drift+KL) con optimizador no lineal (Levenberg–Marquardt, L-BFGS), pasando por AFP si necesitas corrección por (\tau).
+
+---
+
+## 4) Regularización / sparsity / identifiability
+
+* **Colinealidad** entre columnas (bases parecidas) hará el sistema mal condicionado → usar regularización:
+
+  * Ridge: (\min |D c - b|^2 + \lambda |c|^2).
+  * LASSO o SINDy (sparse regression) si quieres seleccionar pocas funciones.
+* **Escala de bases**: normaliza columnas para que penalizaciones y selección funcionen bien.
+* **Elección de (a_k)**: si no conoces (a_k) a priori, son parámetros no lineales — necesitas buscarlos por grid search o incluirlos en optimización no lineal (aumenta complejidad). Alternativa práctica: probar un conjunto candidato de (a_k) y dejar que la regresión escoja coeficientes pequeños para irrelevantes.
+* **Regularización KL**: si además quieres que la densidad estacionaria concuerde, añade término (\lambda_{KL} D_{KL}(p_{\text{data}} | p_{\text{model}})) como en tu `cost()` y optimiza.
+
+---
+
+## 5) Algoritmo completo propuesto (paso a paso)
+
+1. Preprocesado:
+
+   * Filtra/normaliza series (x[n],y[n]).
+   * Test de Markov (tu `markov_test_b`) para decidir si AFP/FP 1D es válido o necesitas 2D.
+2. Elegir bases ({\phi^{(x)}}, {\phi^{(y)}}, {\psi^{(xy)}}, {\chi^{(k)}}). Decidir (a_k) candidatos.
+3. Construir matrices de diseño (\mathbf{D}_x, \mathbf{D}_y): evalúa **derivadas** de bases en cada punto (o en malla/bins).
+4. Estimar (\hat f_x, \hat f_y, \hat a) por Kramers–Moyal en cada bin/centro usando `fast_KM_avg`.
+5. Resolver regresión ponderada (Ridge/LASSO/SINDy) para los coeficientes (\mathbf{c}).
+6. (Opcional) Refina usando optimización no lineal con AFP y KL:
+
+   * arma `cost(Xi, params)` y optimiza Xi (coeficientes y/o a_k).
+7. Validación: reconstruir (V), comparar distribuciones estacionarias, bootstrap para intervalos de confianza, comprobar residuals (ruido, términos cruzados no modelados).
+
+---
+
+## 6) Ejemplo rápido (término (V(x-a y)) polinómico)
+
+Supongamos solo un término (V_{u}(u)=\sum_{m=0}^M c_m u^{m+1}/(m+1)) (potencial expresado por polinomios en (u)). Su derivada es (V'_u(u)=\sum c_m u^m).
+
+Entonces para cada observación (n), con (u[n]=x[n]-a y[n]):
+
+* columna (m) en (D_x) = (- u[n]^m) (porque (f_x) recibe (-V'(u))),
+* columna (m) en (D_y) = (+a, u[n]^m).
+
+Concatenando estas columnas con las de otras familias obtienes (D_x, D_y) y resuelves.
+
+---
+
+## 7) Advertencias / puntos prácticos
+
+* Si incluyes demasiadas familias (productos (xy), muchos (a_k), polinomios altos) puedes **sobreajustar**; usa regularización y selección de modelo.
+* Si (a_k) son desconocidos, la estimación se vuelve **no lineal** (coeficiente en la entrada de la base): puedes hacer grid search sobre (a_k) y resolver linealmente para coeficientes; es frecuentemente eficaz.
+* Si la difusión es fuertemente dependiente de (x,y), necesitas estimarla correctamente o la reconstrucción del potencial estacionario será errónea (usar la fórmula general de la estacionaria).
+* Siempre inspecciona: residuales del ajuste del drift (¿queda dependencia en la variable ortogonal?), D_K entre densidades, bootstrap.
+
+---
+
+## 8) Pseudocódigo condensado
+
+```python
+# 1) Construir bases y sus derivadas para cada muestra n
+# Ejemplo: bases_x: [phi1(x), phi2(x), ...] -> derivs_x: [phi1'(x), ...]
+# bases_uk: [chi1(u_k), ...] with u_k = x - a_k*y -> derivs_uk: [chi1'(u_k), ...]
+
+# 2) Formar D_x (n x p) y D_y (n x p) concatenando columnas:
+#    D_x[:,col_for_term] = - derivative_term_evaluated_at_points
+#    D_y[:,col_for_term] = - derivative_term_wrt_y_evaluated (careful signs for u_k)
+
+# 3) Get KM estimates fhat_x, fhat_y and weights Wx, Wy
+
+# 4) Solve weighted least squares (ridge)
+D = np.vstack([Wx_sqrt @ D_x, Wy_sqrt @ D_y])
+b = np.concatenate([Wx_sqrt @ fhat_x, Wy_sqrt @ fhat_y])
+c_est = np.linalg.solve(D.T @ D + lambda_ridge * I, D.T @ b)
+
+# 5) Reconstruct V components from c_est
+```
+
+---
+
+Si quieres, hago lo siguiente ahora (elige una opción):
+
+* A) Te doy **código completo** (numpy) que monta (\mathbf{D}_x,\mathbf{D}_y) para las familias que propusiste (V(x), V(y), V(xy), y K términos V(x-a_k y)), y resuelve por Ridge;
+* B) Te muestro cómo **incorporar selección de (a_k)** por grid search (ejecutable);
+* C) Te genero un **ejemplo sintético** (simulo x,y con potencial conocido que incluya un término (V(x-a y))) y te muestro la reconstrucción de (V) para comparar.
+
+Dime cuál prefieres y lo pongo ya en código y resultados.

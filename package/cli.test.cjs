@@ -72,72 +72,41 @@ test('capsule implementation contributes object and function DSL handlers', asyn
     assert.match(DetailedParser.transpileSimpleStatement('DynamicSolidMeshProgram input=TexUnit20 1024x1024', new Set()).join('\n'), /var dynamicSolidMeshProgram = new DynamicSolidMeshRenderingProgram/);
     const DynamicMesh = DetailedParser.GlobalContext.DynamicSolidMeshRenderingProgram;
     const dynamic = new DynamicMesh({}, 'TexUnit20', 1024, 1024);
-    assert.match(dynamic.vertexExtraUniforms(), /lodFullResolutionCells/);
-    assert.match(dynamic.vertexExtraUniforms(), /lodAnchorDistance/);
-    assert.match(dynamic.vertexExtraUniforms(), /lodPeriodicXPositive/);
-    assert.doesNotMatch(dynamic.vertexExtraUniforms(), /\b(?:float|int|vec[234])\s+flat\b/);
-    assert.match(dynamic.vertexPositionCode(), /lodPriorityPoints\[i\]/);
-    assert.doesNotMatch(dynamic.vertexPositionCode(), /lodCameraXZ/);
+    assert.match(dynamic.vertexPositionCode(), /texelFetch\(lodAxes/);
     assert.match(dynamic.vertexPositionCode(), /texelFetch\(values, wrapped, 0\)/);
-    assert.match(dynamic.vertexExtraUniforms(), /lodOriginXZ/);
-    assert.match(dynamic.vertexExtraUniforms(), /anchor \* minimumSteps/);
-    assert.match(dynamic.vertexExtraUniforms(), /lodMaxLOD/);
-    assert.equal(dynamic.setGridRadius(128), dynamic);
-    assert.equal(dynamic.totalSegments * 2, (257 * 2 + 2) * 256);
-    assert.equal(dynamic.setRepeatRadius(500), dynamic);
-    assert.equal(dynamic.setFullResolutionCells(48), dynamic);
-    assert.equal(dynamic.setFalloff(8), dynamic);
-    assert.equal(dynamic.setGridRadius(256), dynamic);
-    assert.equal(dynamic.setRepeatRadius(100), dynamic);
-    assert.equal(dynamic.setPriorityTexels([[512, 512]]), dynamic);
-    assert.equal(dynamic.setGridRadius(512), dynamic);
-    assert.equal(dynamic.setPriorityTexels([[512, 512], [508, 512], [516, 512], [512, 508], [512, 516]]), dynamic);
-    assert.equal(dynamic.setLODOrigin(0, 0), dynamic);
-    assert.equal(dynamic.nearestAxisIndex(0, dynamic.dx, dynamic.w, 0), 0);
-    assert.equal(dynamic.setCameraPosition({ x: 50, z: 50 }), dynamic);
-    assert.deepEqual(dynamic.lodOriginXZ, [50, 50]);
-    assert.deepEqual(dynamic.priorityTexels[0], [512, 512]);
-    assert.throws(() => new DynamicMesh({}, 'TexUnit20', 1024, 1024)
-        .setGridRadius(128).setRepeatRadius(100).setPriorityTexels([[512, 512]]),
-        /needs more vertices/);
-    const capped = new DynamicMesh({}, 'TexUnit20', 1024, 1024)
-        .setGridRadius(512).setFullResolutionCells(120).setRepeatRadius(120)
-        .setPriorityTexels([[512, 512]]);
-    assert.equal(capped.setMaxLOD(512), capped);
-    assert.throws(() => capped.setMaxLOD(256), /Maximum LOD needs more vertices/);
-    assert.equal(capped.maxLOD, 512);
-    assert.throws(() => capped.setMaxLOD(-1), /Maximum LOD must be/);
-    assert.equal(capped.setMaxLOD(0), capped);
-    const outerSlots = 512 - 120;
-    const repeats = 120;
-    const minimumSteps = Math.ceil(1024 / 512);
-    let previousCenter = 0;
-    for (let repeat = 1; repeat <= repeats; repeat++) {
-      const density = repeat === repeats ? 1 :
-        (1 - Math.exp(-64 * repeat / repeats)) / (1 - Math.exp(-64));
-      const center = repeat * minimumSteps +
-        Math.floor((outerSlots - repeats * minimumSteps) * density);
-      assert.ok(center - previousCenter >= minimumSteps);
-      if (repeat > 80) assert.equal(center - previousCenter, minimumSteps);
-      previousCenter = center;
+    assert.doesNotMatch(dynamic.vertexPositionCode(), /lodOriginXZ|lodCameraXZ|lodAxisPosition/);
+    dynamic.setGridRadius(512).setFullResolutionCells(256).setFalloff(4).setRepeatRadius(24);
+    dynamic.setPriorityTexels([[512, 512]]).setMaxLOD(128);
+    const axes = dynamic.axisCoordinates;
+    for (const axis of axes) {
+      assert.ok(axis.length <= 1025);
+      const points = new Set(axis);
+      for (let coordinate = -256; coordinate <= 256; coordinate++) assert.ok(points.has(coordinate));
+      for (let tile = -24; tile <= 24; tile++) assert.ok(points.has(tile * 1024));
+      for (let i = 1; i < axis.length; i++) {
+        assert.ok(axis[i] > axis[i - 1]);
+        assert.ok(axis[i] - axis[i - 1] <= 128);
+        assert.ok(Number.isInteger(axis[i]));
+      }
     }
-    assert.equal(previousCenter, outerSlots);
-    const outerCells = 512 - 128;
-    const repeatedCenters = 100;
-    const falloff = 64;
-    let previousIndex = -1;
-    for (let tile = 0; tile <= repeatedCenters; tile++) {
-      const density = tile === repeatedCenters ? 1
-        : (1 - Math.exp(-falloff * tile / repeatedCenters)) / (1 - Math.exp(-falloff));
-      const index = tile === repeatedCenters ? outerCells
-        : tile + Math.floor((outerCells - repeatedCenters) * density);
-      assert.ok(index > previousIndex, `tile ${tile} must have its own vertex`);
-      previousIndex = index;
-      const texel = Math.round(tile * 1024 * 0.16 / 0.16 + 512);
-      assert.equal(((texel % 1024) + 1024) % 1024, 512);
-      const negativeTexel = Math.round(-tile * 1024 * 0.16 / 0.16 + 512);
-      assert.equal(((negativeTexel % 1024) + 1024) % 1024, 512);
+    dynamic.setCameraPosition({ x: 0.01, z: 0.01 });
+    assert.equal(dynamic.axisCoordinates, axes, 'sub-window camera movement reuses geometry');
+    dynamic.setCameraPosition({ x: dynamic.dx * 64, z: dynamic.dy * 64 });
+    assert.notEqual(dynamic.axisCoordinates, axes);
+    for (const axis of dynamic.axisCoordinates) {
+      const points = new Set(axis);
+      for (let coordinate = 64 - 256; coordinate <= 64 + 256; coordinate++) assert.ok(points.has(coordinate));
+      for (let tile = -23; tile <= 24; tile++) assert.ok(points.has(tile * 1024));
+      const oldPoints = new Set(axes[0]);
+      const shared = axis.filter(coordinate => oldPoints.has(coordinate));
+      assert.ok(shared.length > 400, 'moving the window preserves world-anchored sample positions');
     }
+    assert.equal(dynamic.totalSegments * 2,
+      2 * dynamic.axisCoordinates[0].length * (dynamic.axisCoordinates[1].length - 1) +
+      2 * (dynamic.axisCoordinates[1].length - 2));
+    assert.throws(() => dynamic.setMaxLOD(1), /Maximum LOD needs more vertices/);
+    assert.equal(dynamic.maxLOD, 128);
+    assert.throws(() => dynamic.setMaxLOD(-1), /Maximum LOD must be/);
     assert.throws(() => dynamic.setPriorityPoints(Array.from({ length: 17 }, (_, i) => [i, i])), /at most 16/);
     const cameraAliases = DetailedParser.transpileSimpleStatement('Camera3D camera2D|cam3D pos=vec3(0,4,20) |= cam2|cam4,cam5', new Set()).join('\n');
     assert.match(cameraAliases, /var camera2D = new Camera3D/);

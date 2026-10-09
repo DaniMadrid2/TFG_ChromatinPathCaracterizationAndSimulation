@@ -5,6 +5,7 @@ import { HSLtoRGB } from "../../../Utils/utils.js";
 import { Camera3D } from "../../../Game3D/Game3D.js";
 import { Vector3D } from "../../../Matrix/Matrix.js";
 import type { RegistryModule } from "./types.js";
+import { createStableLODAxis } from "../StableMeshLOD.js";
 
 //! Program Capsules (templates)
 
@@ -281,7 +282,7 @@ export class SolidMeshRenderingProgram extends MeshRenderingProgram {
     }
 }
 
-/** Camera-centered terrain that keeps priority texture samples fixed in world space. */
+/** Terrain LOD uses world-anchored dyadic grids and exact repeated priority texels. */
 export class DynamicSolidMeshRenderingProgram extends SolidMeshRenderingProgram {
     private gridRadius = 128;
     private repeatRadius = 100;
@@ -293,6 +294,13 @@ export class DynamicSolidMeshRenderingProgram extends SolidMeshRenderingProgram 
     private priorityTexels: Array<[number, number]> = [];
     private originPerX = 0.5;
     private originPerY = 0.5;
+    private axisCoordinates: Float32Array[] = [];
+    private axisTexture: WebGLTexture | null = null;
+    private axisTextureWidth = 0;
+    private axisPixels = new Float32Array(0);
+    private axisTextureUnit = -1;
+    private axesDirty = true;
+    private snappedCenter: [number, number] | null = null;
 
     constructor(gl: WebGL2RenderingContext, valsTexUnit: TextureUnitType = "TexUnit20", w = 1024, h = 1024) {
         super(gl, valsTexUnit, w, h);
@@ -300,220 +308,99 @@ export class DynamicSolidMeshRenderingProgram extends SolidMeshRenderingProgram 
     }
 
     protected override vertexExtraUniforms(): string {
-        return `uniform int lodGridRadius;
-                uniform float lodRepeatRadius;
-                uniform int lodFullResolutionCells;
-                uniform float lodFalloff;
-                uniform float lodMaxLOD;
-                uniform vec2 lodOriginXZ;
-                uniform int lodPriorityCount;
-                uniform vec4 lodPriorityPoints[16];
-                uniform int lodPeriodicXCount;
-                uniform int lodPeriodicZCount;
-                uniform float lodPeriodicXPositive[16];
-                uniform float lodPeriodicXNegative[16];
-                uniform float lodPeriodicZPositive[16];
-                uniform float lodPeriodicZNegative[16];
-
-                float lodPhase(int axis, bool negative, int slot) {
-                    if (axis == 0) return negative ? lodPeriodicXNegative[slot] : lodPeriodicXPositive[slot];
-                    return negative ? lodPeriodicZNegative[slot] : lodPeriodicZPositive[slot];
-                }
-
-                int lodAnchorIndex(int anchor, int total, int outerCells, int minimumSteps) {
-                    if (anchor == 0) return 0;
-                    if (anchor == total) return outerCells;
-                    float t = float(anchor) / float(total);
-                    float density = lodFalloff < 0.0001 ? t :
-                        (1.0 - exp(-lodFalloff * t)) / (1.0 - exp(-lodFalloff));
-                    return anchor * minimumSteps +
-                        int(floor(float(outerCells - total * minimumSteps) * density));
-                }
-
-                float lodAnchorDistance(int anchor, int axis, bool negative, int count,
-                                        int nearCount, float tileSize, float flatDistance) {
-                    if (anchor == 0) return flatDistance;
-                    if (anchor <= nearCount) {
-                        return lodPhase(axis, negative, count - nearCount + anchor - 1);
-                    }
-                    int beyond = anchor - nearCount - 1;
-                    int tile = 1 + beyond / count;
-                    int slot = beyond % count;
-                    return float(tile) * tileSize + lodPhase(axis, negative, slot);
-                }
-
-                float lodAxisPosition(int signedIndex, int axis, float cell, float tileSize,
-                                      float origin, float repeatRadius) {
-                    float center = floor(origin / cell) * cell;
-                    int magnitude = abs(signedIndex);
-                    if (magnitude <= lodFullResolutionCells) return center + float(signedIndex) * cell;
-                    bool negative = signedIndex < 0;
-                    int count = axis == 0 ? lodPeriodicXCount : lodPeriodicZCount;
-                    if (count == 0) {
-                        float fullResolutionDistance = float(lodFullResolutionCells) * cell;
-                        float t = float(magnitude - lodFullResolutionCells) /
-                                  float(lodGridRadius - lodFullResolutionCells);
-                        float curve = lodMaxLOD > 0.0 || lodFalloff < 0.0001 ? t :
-                            (exp(lodFalloff * t) - 1.0) / (exp(lodFalloff) - 1.0);
-                        float distance = fullResolutionDistance + curve *
-                            max(tileSize * repeatRadius - fullResolutionDistance, 0.0);
-                        return center + (negative ? -distance : distance);
-                    }
-                    float fullResolutionDistance = float(lodFullResolutionCells) * cell;
-                    int nearCount = 0;
-                    for (int i = 0; i < 16; i++) {
-                        if (i >= count) break;
-                        if (lodPhase(axis, negative, i) > fullResolutionDistance) nearCount++;
-                    }
-                    int tiles = max(1, int(floor(repeatRadius)));
-                    int zeroCount = lodPhase(axis, negative, 0) < 0.0001 * cell ? 1 : 0;
-                    int total = (tiles - 1) * count + nearCount + zeroCount;
-                    int outerCells = lodGridRadius - lodFullResolutionCells;
-                    int minimumSteps = lodMaxLOD > 0.0 ?
-                        max(1, int(ceil(float(axis == 0 ? msdLength : msdCount) / lodMaxLOD))) : 1;
-                    int outer = magnitude - lodFullResolutionCells;
-                    int low = 0;
-                    int high = total;
-                    for (int step = 0; step < 12; step++) {
-                        if (low >= high) break;
-                        int mid = (low + high + 1) / 2;
-                        if (lodAnchorIndex(mid, total, outerCells, minimumSteps) <= outer) low = mid;
-                        else high = mid - 1;
-                    }
-                    float distance = lodAnchorDistance(low, axis, negative, count, nearCount,
-                                                       tileSize, fullResolutionDistance);
-                    if (low < total) {
-                        int firstIndex = lodAnchorIndex(low, total, outerCells, minimumSteps);
-                        int nextIndex = lodAnchorIndex(low + 1, total, outerCells, minimumSteps);
-                        float nextDistance = lodAnchorDistance(low + 1, axis, negative,
-                                                                 count, nearCount, tileSize,
-                                                                 fullResolutionDistance);
-                        distance = mix(distance, nextDistance,
-                                       float(outer - firstIndex) / float(nextIndex - firstIndex));
-                    }
-                    return center + (negative ? -distance : distance);
-                }`;
+        return "uniform sampler2D lodAxes; uniform ivec2 lodAxisCounts;";
     }
 
     protected override vertexPositionCode(): string {
-        return `int side = lodGridRadius * 2 + 1;
-                int rowStride = side * 2 + 2;
+        return `int rowStride = lodAxisCounts.x * 2 + 2;
                 int row = gl_VertexID / rowStride;
                 int inRow = gl_VertexID % rowStride;
-                int ix = min(inRow / 2, side - 1) - lodGridRadius;
-                int iz = row + (inRow % 2) - lodGridRadius;
-                if (inRow == side * 2) {
-                    iz = row + 1 - lodGridRadius;
-                } else if (inRow == side * 2 + 1) {
-                    ix = -lodGridRadius;
-                    iz = row + 1 - lodGridRadius;
+                int ix = min(inRow / 2, lodAxisCounts.x - 1);
+                int iz = row + (inRow % 2);
+                if (inRow == lodAxisCounts.x * 2) {
+                    iz = row + 1;
+                } else if (inRow == lodAxisCounts.x * 2 + 1) {
+                    ix = 0;
+                    iz = row + 1;
                 }
-                vec2 cell = max(abs(vec2(dx, dy)), vec2(0.000001));
-                vec2 worldXZ = vec2(
-                    lodAxisPosition(ix, 0, cell.x, float(msdLength) * cell.x,
-                                    lodOriginXZ.x, lodRepeatRadius),
-                    lodAxisPosition(iz, 1, cell.y, float(msdCount) * cell.y,
-                                    lodOriginXZ.y, lodRepeatRadius));
-                for (int i = 0; i < 16; i++) {
-                    if (i >= lodPriorityCount) break;
-                    vec4 reserved = lodPriorityPoints[i];
-                    if (ix == int(reserved.z)) worldXZ.x = reserved.x;
-                    if (iz == int(reserved.w)) worldXZ.y = reserved.y;
-                }
+                vec2 worldTexel = vec2(texelFetch(lodAxes, ivec2(ix, 0), 0).r,
+                                       texelFetch(lodAxes, ivec2(iz, 1), 0).r);
+                vec2 worldXZ = worldTexel * max(abs(vec2(dx, dy)), vec2(0.000001));
                 ivec2 texel = ivec2(round(vec2(
-                    worldXZ.x / cell.x + float(msdLength) * (1.0 - xPer),
-                    -worldXZ.y / cell.y + float(msdCount) * (1.0 - yPer))));
+                    worldTexel.x + float(msdLength) * (1.0 - xPer),
+                    -worldTexel.y + float(msdCount) * (1.0 - yPer))));
                 ivec2 textureSizeXY = ivec2(msdLength, msdCount);
-                ivec2 wrapped = (texel % textureSizeXY + textureSizeXY) % textureSizeXY;
+                ivec2 wrapped = repeatMesh ? (texel % textureSizeXY + textureSizeXY) % textureSizeXY :
+                    clamp(texel, ivec2(0), textureSizeXY - 1);
                 float height = texelFetch(values, wrapped, 0).r;
                 vec4 pos = vec4(worldXZ.x, height * yScale, worldXZ.y, 1.0) + vec4(offPos, 0.0);`;
     }
 
     override setSize(w = this.w, h = this.h): this {
         super.setSize(w, h);
-        return this.setGridRadius(this.gridRadius);
+        return this.updatePriorityPoints();
     }
 
+    /** Bounds axis vertices; geometry is generated only when its spatial window changes. */
     setGridRadius(radius: number): this {
-        if (radius > 512) console.warn(`DynamicSolidMeshProgram grid radius ${radius} is limited to 512`);
         this.gridRadius = Math.max(8, Math.min(512, Math.floor(radius)));
-        const side = this.gridRadius * 2 + 1;
-        this.totalSegments = (side + 1) * (side - 1);
-        if (this.program) {
-            this.use();
-            this.uInt("lodGridRadius").set(this.gridRadius);
-        }
-        this.setFullResolutionCells(this.fullResolutionCells);
+        this.fullResolutionCells = Math.min(this.fullResolutionCells, this.gridRadius - 1);
         return this.updatePriorityPoints();
     }
 
     setRepeatRadius(radius: number): this {
         this.repeatRadius = Math.max(1, Math.min(10000, radius));
-        if (this.program) {
-            this.use();
-            this.uFloat("lodRepeatRadius").set(this.repeatRadius);
-        }
         return this.updatePriorityPoints();
     }
 
-    /** Keep this many grid cells at native spacing around the current LOD center. */
+    /** Native-resolution radius in texels around the camera's snapped spatial window. */
     setFullResolutionCells(cells: number): this {
         this.fullResolutionCells = Math.max(0, Math.min(this.gridRadius - 1, Math.floor(cells)));
-        if (this.program) {
-            this.use();
-            this.uInt("lodFullResolutionCells").set(this.fullResolutionCells);
-        }
         return this.updatePriorityPoints();
     }
 
-    /** 0 is linear spacing outside the center; larger values retain detail longer. */
+    /** Requests wider transition bands when the vertex budget allows them. */
     setFalloff(amount: number): this {
-        if (amount > 64) console.warn(`DynamicSolidMeshProgram falloff ${amount} is limited to 64`);
         this.falloff = Math.max(0, Math.min(64, amount));
-        if (this.program) {
-            this.use();
-            this.uFloat("lodFalloff").set(this.falloff);
-        }
         return this.updatePriorityPoints();
     }
 
-    /** Cap the distance between outer vertices, in texture texels; 0 disables the cap. */
+    /** Maximum outer spacing in texels; hierarchy uses powers of two below this limit. */
     setMaxLOD(texelsPerCell: number): this {
-        if (!Number.isFinite(texelsPerCell) || texelsPerCell < 0) {
-            throw new Error("Maximum LOD must be a non-negative number of texels per cell");
+        if (!Number.isFinite(texelsPerCell) || texelsPerCell < 0 || texelsPerCell > 0 && texelsPerCell < 1) {
+            throw new Error("Maximum LOD must be zero or at least one texel per cell");
         }
         const previous = this.maxLOD;
         this.maxLOD = texelsPerCell;
         try {
-            this.updatePriorityPoints();
+            return this.updatePriorityPoints();
         } catch (error) {
             this.maxLOD = previous;
             throw error;
         }
-        if (this.program) {
-            this.use();
-            this.uFloat("lodMaxLOD").set(this.maxLOD);
-        }
-        return this;
     }
 
-    /** Set the LOD center explicitly; texture-priority anchors remain fixed in world space. */
     setLODOrigin(x: number, z: number): this {
+        if (!Number.isFinite(x) || !Number.isFinite(z)) throw new Error("LOD origin must be finite");
         this.lodOriginXZ = [x, z];
-        if (this.program) {
-            this.use();
-            this.uVec("lodOriginXZ", 2).set(this.lodOriginXZ);
-        }
         return this.updatePriorityPoints();
     }
 
-    /** Follow the camera with high-resolution geometry without moving priority samples. */
+    /** Camera motion within one window does not rebuild geometry or change sampled texels. */
     setCameraPosition(position: Vector3D): this {
+        const snap = this.cameraSnap();
         const cellX = Math.max(Math.abs(this.dx), 0.000001);
         const cellZ = Math.max(Math.abs(this.dy), 0.000001);
-        if (Math.floor(position.x / cellX) === Math.floor(this.lodOriginXZ[0] / cellX) &&
-            Math.floor(position.z / cellZ) === Math.floor(this.lodOriginXZ[1] / cellZ)) return this;
-        return this.setLODOrigin(position.x, position.z);
+        this.lodOriginXZ = [position.x, position.z];
+        if (this.snappedCenter && Math.abs(position.x / cellX - this.snappedCenter[0]) <= snap * 0.75 &&
+            Math.abs(position.z / cellZ - this.snappedCenter[1]) <= snap * 0.75) return this;
+        const center: [number, number] = [
+            Math.round(position.x / cellX / snap) * snap,
+            Math.round(position.z / cellZ / snap) * snap
+        ];
+        if (this.snappedCenter && center[0] === this.snappedCenter[0] &&
+            center[1] === this.snappedCenter[1]) return this;
+        return this.updatePriorityPoints();
     }
 
     override setDXDY(dx: number, dy: number): this {
@@ -530,18 +417,20 @@ export class DynamicSolidMeshRenderingProgram extends SolidMeshRenderingProgram 
         return this.updatePriorityPoints();
     }
 
-    /** Reserve exact world-space X/Z coordinates as vertices (up to 16 points). */
     setPriorityPoints(points: Array<[number, number]>): this {
         if (points.length > 16) throw new Error("DynamicSolidMeshProgram supports at most 16 priority points");
+        if (points.some(point => point.some(value => !Number.isFinite(value)))) {
+            throw new Error("Priority coordinates must be finite");
+        }
         this.priorityWorldPoints = points.map(([x, z]) => [x, z]);
         this.priorityTexels = [];
         return this.updatePriorityPoints();
     }
 
-    /** Reserve texture texels; [w/2,h/2] maps to world origin at xPer=yPer=0.5. */
+    /** Insert these exact samples in every repeated tile, without displacing neighboring samples. */
     setPriorityTexels(points: Array<[number, number]>): this {
         if (points.length > 16) throw new Error("DynamicSolidMeshProgram supports at most 16 priority points");
-        if (points.some(([u, v]) => !Number.isFinite(u) || !Number.isFinite(v) ||
+        if (points.some(([u, v]) => !Number.isInteger(u) || !Number.isInteger(v) ||
             u < 0 || u >= this.w || v < 0 || v >= this.h)) {
             throw new Error("Priority texels must lie inside the height texture");
         }
@@ -550,130 +439,93 @@ export class DynamicSolidMeshRenderingProgram extends SolidMeshRenderingProgram 
         return this.updatePriorityPoints();
     }
 
-    private axisPosition(index: number, cell: number, size: number, origin: number): number {
-        const count = Math.abs(index);
-        const flat = Math.min(count, this.fullResolutionCells) * cell;
-        const outside = Math.max(0, count - this.fullResolutionCells);
-        const span = Math.max(1, this.gridRadius - this.fullResolutionCells);
-        const t = outside / span;
-        const curve = this.falloff < 0.0001 ? t : Math.expm1(this.falloff * t) / Math.expm1(this.falloff);
-        const reach = Math.max(0, size * cell * this.repeatRadius - this.fullResolutionCells * cell);
-        return Math.floor(origin / cell) * cell + Math.sign(index) * (flat + curve * reach);
+    private cameraSnap(): number {
+        return Math.pow(2, Math.floor(Math.log2(Math.max(1, this.fullResolutionCells / 4))));
     }
 
-    private nearestAxisIndex(value: number, cell: number, size: number, origin: number): number {
-        let low = -this.gridRadius;
-        let high = this.gridRadius;
-        while (low < high) {
-            const mid = Math.floor((low + high) / 2);
-            if (this.axisPosition(mid, cell, size, origin) < value) low = mid + 1;
-            else high = mid;
-        }
-        if (low > -this.gridRadius &&
-            Math.abs(this.axisPosition(low - 1, cell, size, origin) - value) <
-            Math.abs(this.axisPosition(low, cell, size, origin) - value)) low--;
-        return low;
-    }
-
+    /** CPU work only selects coordinates; height generation and sampling stay on the GPU. */
     private updatePriorityPoints(): this {
-        const cellX = Math.max(Math.abs(this.dx), 0.000001);
-        const cellZ = Math.max(Math.abs(this.dy), 0.000001);
-        if (this.maxLOD > 0 && !this.priorityTexels.length) {
-            for (const size of [this.w, this.h]) {
-                const outerCells = this.gridRadius - this.fullResolutionCells;
-                if ((size * this.repeatRadius - this.fullResolutionCells) / outerCells > this.maxLOD) {
-                    throw new Error("Maximum LOD needs more vertices; increase grid radius, reduce full-resolution cells or repeat radius, or raise max LOD");
-                }
+        const snap = this.cameraSnap();
+        const coordinates: Float32Array[] = [];
+        const centers: [number, number] = [0, 0];
+        for (let axis = 0; axis < 2; axis++) {
+            const cell = Math.max(Math.abs(axis === 0 ? this.dx : this.dy), 0.000001);
+            const size = axis === 0 ? this.w : this.h;
+            const center = Math.round(this.lodOriginXZ[axis] / cell / snap) * snap;
+            centers[axis] = center;
+            const reach = size * this.repeatRadius;
+            const priority = this.priorityWorldPoints.map(point => point[axis] / cell);
+            for (const point of this.priorityTexels) {
+                const phase = axis === 0 ? point[0] - this.w * (1 - this.originPerX) :
+                    -(point[1] - this.h * (1 - this.originPerY));
+                const first = Math.ceil((center - reach - phase) / size);
+                const last = Math.floor((center + reach - phase) / size);
+                for (let tile = first; tile <= last; tile++) priority.push(phase + tile * size);
             }
+            coordinates.push(createStableLODAxis({
+                center, size, radius: this.repeatRadius, fullResolution: this.fullResolutionCells,
+                falloff: this.falloff, maxLOD: this.maxLOD, budget: this.gridRadius * 2 + 1, priority
+            }));
         }
-        if (this.priorityTexels.length) {
-            const phaseArrays: Float32Array[] = [];
-            const counts: number[] = [];
-            for (const [axis, cell, size, origin] of [
-                [0, cellX, this.w, this.lodOriginXZ[0]],
-                [1, cellZ, this.h, this.lodOriginXZ[1]]
-            ]) {
-                const tileSize = cell * size;
-                const center = Math.floor(origin / cell) * cell;
-                const coords = this.priorityTexels.map(([u, v]) => axis === 0
-                    ? (u - this.w * (1 - this.originPerX)) * cellX
-                    : -(v - this.h * (1 - this.originPerY)) * cellZ);
-                for (const negative of [false, true]) {
-                    const phases = coords.map(coordinate => {
-                        const distance = (negative ? center - coordinate : coordinate - center);
-                        const remainder = ((distance % tileSize) + tileSize) % tileSize;
-                        return remainder < cell * 0.0001 || tileSize - remainder < cell * 0.0001
-                            ? 0 : remainder;
-                    }).sort((a, b) => a - b).filter((phase, i, values) =>
-                        i === 0 || Math.abs(phase - values[i - 1]) > cell * 0.0001);
-                    const nearCount = phases.filter(phase => phase > this.fullResolutionCells * cell).length;
-                    const tiles = Math.max(1, Math.floor(this.repeatRadius));
-                    const total = (tiles - 1) * phases.length + nearCount + (phases[0] === 0 ? 1 : 0);
-                    const minimumSteps = this.maxLOD > 0 ? Math.max(1, Math.ceil(size / this.maxLOD)) : 1;
-                    if (total * minimumSteps > this.gridRadius - this.fullResolutionCells) {
-                        throw new Error("Maximum LOD needs more vertices for repeated priority texels; increase grid radius, reduce full-resolution cells or repeat radius, or raise max LOD");
-                    }
-                    const values = new Float32Array(16);
-                    values.set(phases);
-                    phaseArrays.push(values);
-                    counts.push(phases.length);
-                }
-            }
-            if (this.program) {
-                this.use();
-                this.uInt("lodPriorityCount").set(0);
-                this.uInt("lodPeriodicXCount").set(counts[0]);
-                this.uInt("lodPeriodicZCount").set(counts[2]);
-                for (const [i, name] of ["lodPeriodicXPositive", "lodPeriodicXNegative",
-                                         "lodPeriodicZPositive", "lodPeriodicZNegative"].entries()) {
-                    this.gl.uniform1fv(this.gl.getUniformLocation(this.program, `${name}[0]`), phaseArrays[i]);
-                }
-            }
-            return this;
-        }
-        const points = this.priorityWorldPoints;
-        if (points.length > 16) throw new Error("DynamicSolidMeshProgram supports at most 16 priority points");
-        const xSlots = new Map<number, number>();
-        const zSlots = new Map<number, number>();
-        const reserved = new Float32Array(16 * 4);
-        points.forEach(([x, z], i) => {
-            if (!Number.isFinite(x) || !Number.isFinite(z)) throw new Error("Priority coordinates must be finite");
-            const ix = this.nearestAxisIndex(x, cellX, this.w, this.lodOriginXZ[0]);
-            const iz = this.nearestAxisIndex(z, cellZ, this.h, this.lodOriginXZ[1]);
-            const edgeX = Math.abs(this.axisPosition(ix, cellX, this.w, this.lodOriginXZ[0]) - x);
-            const edgeZ = Math.abs(this.axisPosition(iz, cellZ, this.h, this.lodOriginXZ[1]) - z);
-            if (Math.abs(ix) === this.gridRadius && edgeX > cellX ||
-                Math.abs(iz) === this.gridRadius && edgeZ > cellZ) {
-                throw new Error("Priority point lies outside the LOD mesh; increase repeat radius or move its origin");
-            }
-            if (xSlots.has(ix) && xSlots.get(ix) !== x || zSlots.has(iz) && zSlots.get(iz) !== z) {
-                throw new Error("Priority points need distinct grid slots at this resolution; increase grid radius");
-            }
-            xSlots.set(ix, x);
-            zSlots.set(iz, z);
-            reserved.set([x, z, ix, iz], i * 4);
-        });
-        if (this.program) {
-            this.use();
-            this.uInt("lodPeriodicXCount").set(0);
-            this.uInt("lodPeriodicZCount").set(0);
-            this.uInt("lodPriorityCount").set(points.length);
-            if (points.length) this.gl.uniform4fv(this.gl.getUniformLocation(this.program, "lodPriorityPoints[0]"), reserved);
-        }
+        this.snappedCenter = centers;
+        this.axisCoordinates = coordinates;
+        this.totalSegments = coordinates[0].length * (coordinates[1].length - 1) +
+            coordinates[1].length - 2;
+        this.axesDirty = true;
         return this;
+    }
+
+    /** Reuse one small R32F coordinate texture instead of allocating a full vertex buffer. */
+    private uploadAxes(): void {
+        const gl = this.gl;
+        if (!this.axisCoordinates.length) this.updatePriorityPoints();
+        if (!this.axisTexture) throw new Error("LOD coordinate texture is not allocated");
+        const width = Math.max(this.axisCoordinates[0].length, this.axisCoordinates[1].length);
+        const resize = width !== this.axisTextureWidth;
+        if (resize) this.axisPixels = new Float32Array(width * 2);
+        this.axisPixels.fill(0);
+        this.axisPixels.set(this.axisCoordinates[0], 0);
+        this.axisPixels.set(this.axisCoordinates[1], width);
+        if (resize) gl.texImage2D(gl.TEXTURE_2D, 0, gl.R32F, width, 2, 0, gl.RED, gl.FLOAT, this.axisPixels);
+        else gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, width, 2, gl.RED, gl.FLOAT, this.axisPixels);
+        this.axisTextureWidth = width;
+        this.axesDirty = false;
     }
 
     override initUniforms(): this {
         super.initUniforms();
-        return this.setGridRadius(this.gridRadius).setRepeatRadius(this.repeatRadius)
-            .setFullResolutionCells(this.fullResolutionCells).setFalloff(this.falloff)
-            .setMaxLOD(this.maxLOD)
-            .setLODOrigin(this.lodOriginXZ[0], this.lodOriginXZ[1]);
+        return this.updatePriorityPoints();
     }
 
     override draw(x = 0, y = 0, w = 1080, h = 720, camera?: Camera3D): this {
         this.use();
-        return super.draw(x, y, w, h, camera);
+        const gl = this.gl;
+        if (this.axisTextureUnit < 0) {
+            this.axisTextureUnit = gl.getParameter(gl.MAX_COMBINED_TEXTURE_IMAGE_UNITS) - 1;
+            if (this.axisTextureUnit === parseTexUnitType(this.valsTexUnit)) this.axisTextureUnit--;
+        }
+        const previousUnit = gl.getParameter(gl.ACTIVE_TEXTURE);
+        gl.activeTexture(gl.TEXTURE0 + this.axisTextureUnit);
+        const previousTexture = gl.getParameter(gl.TEXTURE_BINDING_2D);
+        const newTexture = !this.axisTexture;
+        if (newTexture) this.axisTexture = gl.createTexture();
+        gl.bindTexture(gl.TEXTURE_2D, this.axisTexture);
+        try {
+            if (this.axesDirty) this.uploadAxes();
+            if (newTexture) {
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+            }
+            this.uInt("lodAxes").set(this.axisTextureUnit);
+            this.uVec("lodAxisCounts", 2, false).set(this.axisCoordinates.map(axis => axis.length));
+            return super.draw(x, y, w, h, camera);
+        } finally {
+            gl.activeTexture(gl.TEXTURE0 + this.axisTextureUnit);
+            gl.bindTexture(gl.TEXTURE_2D, previousTexture);
+            gl.activeTexture(previousUnit);
+        }
     }
 }
 

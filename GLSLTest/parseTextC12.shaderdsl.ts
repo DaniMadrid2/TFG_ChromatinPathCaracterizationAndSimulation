@@ -9,15 +9,14 @@ let scaleFactor=1;
 var time=0;
 
 meshProgram.initUniforms().setDXDY(0.16*scaleFactor,0.16*scaleFactor).setYScale(scaleFactor).setPerXPerY(0.5,0.5).setColorHueScale(0.223).smoothColor(true).setRepeat(true)
-meshProgram.setGridRadius(512).setFullResolutionCells(120).setFalloff(1640*4*16*16).setRepeatRadius(30)
+meshProgram.setGridRadius(512).setFullResolutionCells(256).setFalloff(4).setRepeatRadius(24)
 meshProgram.setLODOrigin(0,0).setPriorityTexels([[512,512]]).setMaxLOD(128)
-// surface=createIdealMesh TexUnit20 (x,y)=>{return sin(x/4)*cos(y/4)+-exp(0.00001*((x-512)*(x-512)+(y-512)*(y-512)))*12} .bind()
-// surface=createIdealMesh TexUnit20 (x,y)=>{return sin(x/4)*cos(y/4)+(x+y/2)/100-10} .bind()
-// surface=createIdealMesh TexUnit20 (x, y) => {let dx = (x - 512) * 0.05;let dy = (y - 512) * 0.05;let r = Math.sqrt(dx * dx + dy * dy);if (r === 0) return 10; return (cos(r + {time}) / r) * 15;}
+-> surface=createIdealMesh TexUnit20 (x,y)=>{return sin(x/4)*cos(y/4)+-exp(0.00001*((x-512)*(x-512)+(y-512)*(y-512)))*12} .bind()
++> surface=createIdealMesh TexUnit20 (x,y)=>{return sin(x/4 + {time})*cos(y/4 + {time})+(x+y/2)/100-10} .bind()
+-> surface=createIdealMesh TexUnit20 (x, y) => {let dx = (x - 512) * 0.05;let dy = (y - 512) * 0.05;let r = Math.sqrt(dx * dx + dy * dy);if (r === 0) return 10; return (cos(r + {time}) / r) * 15;}
 
-// surface=createIdealMesh TexUnit20 (x, y) => { return (sin(x / 16+ {time}) + sin(y / 16+ {time}) * cos((x / 16+ {time}) / 2)) * 8; } .bind()
-// surface=createIdealMesh TexUnit20 (x, y) => { return sin(x / 10 + {time}) * cos(y / 10) * 2 - 30 / (1 + (Math.pow((x-512)*0.03, 2) + Math.pow((y-512)*0.03, 2)) * 0.1); }.bind()
-
+-> surface=createIdealMesh TexUnit20 (x, y) => { return (sin(x / 16+ {time}) + sin(y / 16+ {time}) * cos((x / 16+ {time}) / 2)) * 8; } .bind()
+-> surface=createIdealMesh TexUnit20 (x, y) => { return sin(x / 10 + {time}) * cos(y / 10) * 2 - 30 / (1 + (Math.pow((x-512)*0.03, 2) + Math.pow((y-512)*0.03, 2)) * 0.1); }.bind()
 
 // ==========================================
 // 🌊 EFECTOS AGUA Y MAREAS AVANZADAS
@@ -27,7 +26,7 @@ meshProgram.setLODOrigin(0,0).setPriorityTexels([[512,512]]).setMaxLOD(128)
 -> surface=createIdealMesh TexUnit20 (x, y) => { return (sin(x / 8 + {time} * 2) * cos(y / 12 - {time}) + sin(y / 6 + {time} * 1.5) * cos(x / 14 + {time})) * 4; }.bind()
 
 // 2. Ondas Concéntricas de Múltiples Impactos (Interferencia de dos gotas cayendo en puntos distintos)
-+>| surface=createIdealMesh TexUnit20 (x, y) => { let dx1 = (x - 300) * 0.05; let dy1 = (y - 300) * 0.05; let r1 = Math.sqrt(dx1*dx1 + dy1*dy1); let dx2 = (x - 700) * 0.04; let dy2 = (y - 600) * 0.04; let r2 = Math.sqrt(dx2*dx2 + dy2*dy2); return (sin(r1 - {time} * 3) / (1 + r1 * 0.1) + cos(r2 - {time} * 4) / (1 + r2 * 0.08)) * 8; }.bind()
+->| surface=createIdealMesh TexUnit20 (x, y) => { let dx1 = (x - 300) * 0.05; let dy1 = (y - 300) * 0.05; let r1 = Math.sqrt(dx1*dx1 + dy1*dy1); let dx2 = (x - 700) * 0.04; let dy2 = (y - 600) * 0.04; let r2 = Math.sqrt(dx2*dx2 + dy2*dy2); return (sin(r1 - {time} * 3) / (1 + r1 * 0.1) + cos(r2 - {time} * 4) / (1 + r2 * 0.08)) * 8; }.bind()
   | //Linea 2
 
 // ==========================================
@@ -36,6 +35,7 @@ meshProgram.setLODOrigin(0,0).setPriorityTexels([[512,512]]).setMaxLOD(128)
 
 // 3. Cadena de Montañas Estilo Ruido Fractal (Crestas afiladas superpuestas a diferentes escalas)
 -> surface=createIdealMesh TexUnit20 (x, y) => { let h1 = sin(x / 40) * cos(y / 40) * 20; let h2 = Math.abs(sin(x / 15)) * Math.abs(cos(y / 15)) * 8; let h3 = sin(x / 5 + {time}) * 1.5; return h1 + h2 + h3 - 10; }.bind()
+
 
 // 4. Cañón o Valle Profundo (Un gran abismo en el centro flanqueado por mesetas accidentadas)
 -> surface=createIdealMesh TexUnit20 (x, y) => { let distAlCentro = Math.abs(x - 512) * 0.02; let valle = -25 / (1 + distAlCentro * distAlCentro); let ruidoRoca = sin(x / 10 + {time}) * cos(y / 10) * 3; return valle + ruidoRoca; }.bind()

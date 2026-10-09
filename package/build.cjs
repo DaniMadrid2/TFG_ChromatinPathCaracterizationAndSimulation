@@ -90,6 +90,9 @@ async function main() {
   const capsulesTarget = path.join(output, 'lib', 'Code', 'WebGL', 'parser', 'registryModules', 'capsules.js');
   await fs.mkdir(path.dirname(capsulesTarget), { recursive: true });
   await fs.writeFile(capsulesTarget, capsulesJs.code);
+  const lodSource = await fs.readFile(path.join(parserRoot, 'StableMeshLOD.ts'), 'utf8');
+  const lodJs = await esbuild.transform(lodSource, { loader: 'ts', format: 'esm', target: 'es2020' });
+  await fs.writeFile(path.join(output, 'lib', 'Code', 'WebGL', 'parser', 'StableMeshLOD.js'), lodJs.code);
   for (const name of ['cli.cjs', 'runner.cjs', 'registry-loader.cjs', 'watch.cjs', 'initializer.cjs', 'tutorial.cjs', 'README.md', 'EXTENSION_SYNTAX_PENDING.md']) {
     await fs.copyFile(path.join(__dirname, name), path.join(output, name));
   }

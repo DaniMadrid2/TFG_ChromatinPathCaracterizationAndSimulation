@@ -1,0 +1,14 @@
+Callaham mostró sólo una gráfica de D_K, porque tenía datos sintéticos, que está mal calculada. 
+Este código implementa para la función de coste un parámetro adicional al sumatorio de la diferencia cuadrática de los m(1) y m(2)
+ equivalentes a la A (desplazamiento) y la D (difusión) + D_K(****) + .... Este término depende de x-x_sintética/óptima.
+
+Así comparando la una y la otra (P y otra) que no son iguales pero sí varían igual, te salen resultados parecidos a diferencia de callaham que solo muestra una.
+
+Aún así las "mejores" seleccionadas según el código no son todas o ninguna las más óptimas de verdad.
+
+__Una implementación interesante__ podría ser __mejorar__ la __función de coste__.
+
+
+En los archivos de simulación que salen, si la partícula se encuentra en un potencial convexo esta aumentará su posición iterativamente 
+resultando en un mayor tamaño de archivo.
+
